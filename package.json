@@ -1,23 +1,64 @@
 {
   "name": "kami-reader-app",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "main": "index.ts",
   "scripts": {
     "start": "expo start",
-    "android": "expo start --android",
-    "ios": "expo start --ios",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
     "web": "expo start --web"
   },
   "dependencies": {
+    "@react-native-async-storage/async-storage": "^1.24.0",
+    "@react-native-ml-kit/text-recognition": "^1.5.2",
+    "@react-native-picker/picker": "^2.11.0",
+    "@react-navigation/drawer": "^7.3.12",
+    "@react-navigation/native": "^7.1.9",
+    "@react-navigation/stack": "^7.3.2",
+    "@shopify/flash-list": "1.7.6",
+    "axios": "^1.9.0",
+    "class-variance-authority": "^0.7.1",
     "expo": "~53.0.9",
+    "expo-constants": "^17.1.6",
+    "expo-dev-client": "~5.1.8",
+    "expo-image": "~2.1.7",
+    "expo-image-picker": "^16.1.4",
+    "expo-linear-gradient": "^14.1.4",
     "expo-status-bar": "~2.2.3",
+    "firebase": "^11.7.3",
+    "lucide-react-native": "^0.511.0",
     "react": "19.0.0",
-    "react-native": "0.79.2"
+    "react-native": "0.79.2",
+    "react-native-canvas": "^0.1.40",
+    "react-native-dropdown-picker": "^5.4.6",
+    "react-native-gesture-handler": "~2.24.0",
+    "react-native-google-mobile-ads": "^15.2.0",
+    "react-native-iap": "^12.16.2",
+    "react-native-reanimated": "^3.17.5",
+    "react-native-safe-area-context": "5.4.0",
+    "react-native-screens": "~4.10.0",
+    "react-native-svg": "15.11.2",
+    "react-native-vector-icons": "^10.2.0",
+    "react-native-webview": "13.13.5",
+    "tailwind-merge": "^3.3.0"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",
+    "@types/lodash": "^4.17.16",
+    "@types/node": "^22.15.19",
     "@types/react": "~19.0.10",
+    "@types/react-native-vector-icons": "^6.4.18",
+    "autoprefixer": "^10.4.21",
+    "postcss": "^8.5.3",
+    "tailwindcss": "^4.1.7",
     "typescript": "~5.8.3"
   },
-  "private": true
+  "private": true,
+  "expo": {
+    "doctor": {
+      "reactNativeDirectoryCheck": {
+        "listUnknownPackages": false
+      }
+    }
+  }
 }

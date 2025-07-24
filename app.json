@@ -1,29 +1,45 @@
 {
   "expo": {
-    "name": "kami-reader-app",
+    "name": "KamiReader",
     "slug": "kami-reader-app",
-    "version": "1.0.0",
+    "scheme": "kami-reader-app",
+    "version": "1.0.2",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
-    "newArchEnabled": true,
     "splash": {
-      "image": "./assets/splash-icon.png",
+      "image": "./assets/icon.png",
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
+    "updates": {
+      "fallbackToCacheTimeout": 0
+    },
+    "assetBundlePatterns": ["**/*"],
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.yourusername.kamireader"
     },
     "android": {
+      "package": "com.yourusername.kamireader",
+      "versionCode": 1,
       "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
+        "foregroundImage": "./assets/icon.png",
         "backgroundColor": "#ffffff"
       },
-      "edgeToEdgeEnabled": true
+      "config": {
+        "googleMobileAdsAppId": "ca-app-pub-6584977537844104~7818843904"
+      },
+      "permissions": [],
+      "softwareKeyboardLayoutMode": "pan"
     },
     "web": {
-      "favicon": "./assets/favicon.png"
+      "favicon": "./assets/icon.png"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "5cd6ecff-6004-4696-b780-172ff5ca8a22"
+      }
     }
   }
 }
