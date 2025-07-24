@@ -1,0 +1,26 @@
+{
+  "cli": {
+    "version": ">= 16.6.1",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal"
+    },
+    "preview": {
+      "distribution": "internal"
+    },
+    "production": {
+      "autoIncrement": true,
+      "android": {
+        // Add this Android configuration block
+        "flavor": "play",
+        "buildType": "apk" // This tells EAS to build an APK instead of an AAB
+      }
+    }
+  },
+  "submit": {
+    "production": {}
+  }
+}

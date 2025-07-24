@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "352507635034",
+    "project_id": "habits-44ab9",
+    "storage_bucket": "habits-44ab9.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:352507635034:android:a528fab9e538c966577f63",
+        "android_client_info": {
+          "package_name": "com.jesusberrioscortez.habits"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyA851AkAEZMd9HN8CYrJkqZyQ8re_U1s8k"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
