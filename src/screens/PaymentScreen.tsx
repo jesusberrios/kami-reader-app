@@ -5,8 +5,10 @@ import Icon from 'react-native-vector-icons/MaterialIcons';
 import * as RNIap from 'react-native-iap';
 import type {
     Product as RNIapProduct,
+    Subscription as RNIapSubscription, // Import Subscription explicitly
     PurchaseError as RNIapPurchaseError,
     Purchase,
+    SubscriptionAndroid, // Import SubscriptionAndroid for specific type checking
 } from 'react-native-iap';
 
 // Import Firebase components
@@ -16,20 +18,21 @@ import { doc, updateDoc } from 'firebase/firestore';
 // Get screen dimensions for responsive design
 const { width } = Dimensions.get('window');
 
-// Define types for store products
+// Define types for store products (your local representation)
 interface Product {
     id: string;
     title: string;
     description: string;
-    price: string; // This will be updated by RNIap's localizedPrice
+    price: string; // This will be updated by RNIap's localizedPrice / formattedPrice
     durationMonths: number; // Added duration in months
-    type?: 'subscription' | 'consumable' | 'nonConsumable'; // Optional type for clarity
+    type: 'subscription' | 'consumable' | 'nonConsumable'; // Explicitly define type
 }
 
 // Define your product IDs - ENSURE THESE MATCH EXACTLY WITH GOOGLE PLAY CONSOLE (FOR ANDROID) AND APP STORE CONNECT (FOR iOS)
+// !! IMPORTANT: Replace with your actual product IDs !!
 const productIds: string[] = [
-    Platform.OS === 'ios' ? 'your_ios_monthly_sub_id' : 'premium-mensual', // ✅ ID del PLAN BÁSICO mensual para Android
-    Platform.OS === 'ios' ? 'your_ios_yearly_sub_id' : 'premium-anual',    // ✅ ID del PLAN BÁSICO anual para Android
+    Platform.OS === 'ios' ? 'your_ios_monthly_sub_id' : 'your_android_monthly_sub_id',
+    Platform.OS === 'ios' ? 'your_ios_yearly_sub_id' : 'your_android_yearly_sub_id',
     // Add your gift product ID here if applicable, e.g., Platform.OS === 'ios' ? 'your_ios_gift_sub_id' : 'your_android_gift_sub_id',
 ];
 
@@ -52,12 +55,12 @@ const products: Product[] = [
     },
     // Add your gift product here if applicable
     // {
-    //     id: productIds[2], // Adjust index if you add more
-    //     title: 'Regalar Suscripción Premium (1 mes)',
-    //     description: 'Regala 1 mes de suscripción Premium a un amigo.',
-    //     price: 'Cargando...',
-    //     durationMonths: 1,
-    //     type: 'nonConsumable', // Or 'consumable' if it can be bought multiple times per user
+    //    id: productIds[2], // Adjust index if you add more
+    //    title: 'Regalar Suscripción Premium (1 mes)',
+    //    description: 'Regala 1 mes de suscripción Premium a un amigo.',
+    //    price: 'Cargando...',
+    //    durationMonths: 1,
+    //    type: 'nonConsumable', // Or 'consumable' if it can be bought multiple times per user
     // },
 ];
 
@@ -65,7 +68,8 @@ const PaymentScreen = () => {
     const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
     const [purchaseStatus, setPurchaseStatus] = useState<'idle' | 'processing' | 'success' | 'failure'>('idle');
     const [errorMessage, setErrorMessage] = useState<string | null>(null);
-    const [availableProducts, setAvailableProducts] = useState<RNIapProduct[]>([]);
+    // Correct type: availableProducts should store RNIapSubscription[]
+    const [availableProducts, setAvailableProducts] = useState<RNIapSubscription[]>([]);
     const [productsLoading, setProductsLoading] = useState(true);
 
     // Use useRef to store listeners for proper cleanup
@@ -81,17 +85,26 @@ const PaymentScreen = () => {
                 console.log(connected ? 'RNIap: Conexión a la tienda exitosa.' : 'RNIap: No se pudo conectar a la tienda.');
 
                 if (connected) {
-                    // Fetch available products from the store
-                    const fetchedProducts = await RNIap.getProducts({ skus: productIds });
-                    setAvailableProducts(fetchedProducts);
-                    console.log('RNIap: Productos disponibles:', fetchedProducts.map(p => ({ id: p.productId, title: p.title, price: p.localizedPrice })));
+                    // Fetch subscriptions using the SKUs
+                    const fetchedSubscriptions: RNIapSubscription[] = await RNIap.getSubscriptions({ skus: productIds });
+
+                    // Now, fetchedSubscriptions is correctly typed as RNIapSubscription[]
+                    setAvailableProducts(fetchedSubscriptions);
+
+                    console.log('RNIap: Suscripciones disponibles (fetched):', fetchedSubscriptions.map(p => ({
+                        id: p.productId,
+                        title: p.title,
+                        price: getProductPrice(p.productId), // Usa la función de precio para mostrarlo
+                        // For Android, show subscriptionOfferDetails for debugging
+                        subscriptionOfferDetails: Platform.OS === 'android' ? (p as SubscriptionAndroid).subscriptionOfferDetails : undefined
+                    })));
 
                     // Check for any pending purchases
                     const purchases = await RNIap.getAvailablePurchases();
                     if (purchases.length > 0) {
                         console.log('RNIap: Compras pendientes encontradas:', purchases);
-                        // You might want to process the latest pending purchase here
-                        // For simplicity, we'll just log it. Your `purchaseUpdatedListener` should handle it.
+                        // The `purchaseUpdatedListener` should already handle this automatically.
+                        // You might want to process the most recent pending purchase here if not already handled.
                     }
                 }
             } catch (error: any) {
@@ -109,7 +122,6 @@ const PaymentScreen = () => {
         purchaseUpdateListenerRef.current = RNIap.purchaseUpdatedListener(
             async (purchase: Purchase) => {
                 console.log('RNIap: Compra actualizada recibida:', purchase);
-                // Ensure the purchase is valid and has a transaction ID
                 if (purchase.transactionId) {
                     setPurchaseStatus('success');
 
@@ -117,15 +129,13 @@ const PaymentScreen = () => {
                     const currentUser = auth.currentUser;
                     if (currentUser) {
                         const userDocRef = doc(db, 'users', currentUser.uid);
-                        const purchasedProduct = products.find(p => p.id === purchase.productId);
+                        const purchasedProductLocal = products.find(p => p.id === purchase.productId);
 
-                        if (purchasedProduct) {
+                        if (purchasedProductLocal) {
                             // Calculate subscription end date based on durationMonths
                             const now = Date.now();
-                            // For simplicity, add months. For real-world use, consider recurring purchases
-                            // and proper date management (e.g., extend current subscription).
                             const subscriptionEndDate = new Date(now);
-                            subscriptionEndDate.setMonth(subscriptionEndDate.getMonth() + purchasedProduct.durationMonths);
+                            subscriptionEndDate.setMonth(subscriptionEndDate.getMonth() + purchasedProductLocal.durationMonths);
 
                             try {
                                 await updateDoc(userDocRef, {
@@ -149,7 +159,8 @@ const PaymentScreen = () => {
                     // --- End Firestore Update ---
 
                     try {
-                        await RNIap.finishTransaction({ purchase, isConsumable: false }); // Subscriptions are generally not consumable
+                        // For subscriptions, set isConsumable to false
+                        await RNIap.finishTransaction({ purchase, isConsumable: false });
                         console.log('RNIap: Transacción finalizada con éxito.');
                     } catch (finishError) {
                         console.error('RNIap Error al finalizar la transacción:', finishError);
@@ -163,7 +174,6 @@ const PaymentScreen = () => {
                     );
                 } else {
                     console.log('RNIap: Compra recibida sin transactionId, puede ser una compra pendiente o cancelada:', purchase);
-                    // Handle cases where transactionId might be null (e.g., pending payment on Android)
                     setErrorMessage('Tu compra está pendiente o no se pudo completar. Consulta el estado de tu pago.');
                     setPurchaseStatus('failure');
                 }
@@ -231,9 +241,39 @@ const PaymentScreen = () => {
         setErrorMessage(null);
 
         try {
-            // Initiate the purchase process with RNIap library
-            console.log('RNIap: Solicitando compra para SKU:', selectedProduct.id);
-            await RNIap.requestPurchase({ sku: selectedProduct.id });
+            console.log('RNIap: Solicitando compra para SKU:', selectedProduct.id, 'Tipo:', selectedProduct.type);
+
+            if (selectedProduct.type === 'subscription') {
+                if (Platform.OS === 'android') {
+                    // Find the RNIapSubscription object from availableProducts
+                    const productToBuy = availableProducts.find(p => p.productId === selectedProduct.id);
+
+                    // Ensure it's an Android subscription and has offer details
+                    if (productToBuy && 'subscriptionOfferDetails' in productToBuy && productToBuy.subscriptionOfferDetails && productToBuy.subscriptionOfferDetails.length > 0) {
+                        // Take the first available offerToken.
+                        const offerToken = productToBuy.subscriptionOfferDetails[0].offerToken;
+
+                        await RNIap.requestSubscription({
+                            sku: selectedProduct.id,
+                            subscriptionOffers: [{
+                                sku: selectedProduct.id,
+                                offerToken: offerToken
+                            }]
+                        });
+                    } else {
+                        console.error('Android Subscription Error: No subscriptionOfferDetails found or no valid offer for product:', selectedProduct.id);
+                        setErrorMessage('Error: No se encontraron detalles de oferta válidos para este plan en Android. Asegúrate de que las ofertas estén configuradas en Google Play Console.');
+                        setPurchaseStatus('failure');
+                        return;
+                    }
+                } else {
+                    // For iOS, the call is simple as before
+                    await RNIap.requestSubscription({ sku: selectedProduct.id });
+                }
+            } else {
+                // If you had other product types (consumable/non-consumable)
+                await RNIap.requestPurchase({ sku: selectedProduct.id });
+            }
             // The purchaseUpdatedListener will handle the actual purchase completion and Firestore update
         } catch (error: any) {
             console.error('RNIap Error al iniciar la compra:', error);
@@ -257,10 +297,34 @@ const PaymentScreen = () => {
     const titleFont = Platform.OS === 'ios' ? 'HelveticaNeue-Bold' : 'Roboto-Bold';
     const bodyFont = Platform.OS === 'ios' ? 'HelveticaNeue' : 'Roboto';
 
-    // Function to get product price from RNIap's fetched products
+    // Función para obtener el precio compatible con iOS y Android
+    // Función para obtener el precio compatible con iOS y Android
     const getProductPrice = (productId: string) => {
+        // Find the RNIapSubscription object from availableProducts
         const product = availableProducts.find(p => p.productId === productId);
-        return product ? product.localizedPrice : 'Cargando...';
+
+        if (!product) {
+            return 'Cargando...';
+        }
+
+        if (Platform.OS === 'android') {
+            // Type guard to ensure we are dealing with a SubscriptionAndroid type
+            if ('subscriptionOfferDetails' in product && product.subscriptionOfferDetails && product.subscriptionOfferDetails.length > 0) {
+                const defaultOffer = product.subscriptionOfferDetails[0];
+
+                // Check if pricingPhases and pricingPhaseList exist and have elements
+                if (defaultOffer.pricingPhases && defaultOffer.pricingPhases.pricingPhaseList && defaultOffer.pricingPhases.pricingPhaseList.length > 0) {
+                    return defaultOffer.pricingPhases.pricingPhaseList[0].formattedPrice;
+                }
+            }
+        } else if (Platform.OS === 'ios') {
+            // For iOS, localizedPrice is directly on the Product type (which Subscription also extends)
+            if ('localizedPrice' in product && product.localizedPrice) {
+                return product.localizedPrice;
+            }
+        }
+
+        return 'Cargando...'; // Fallback if price is not found or platform mismatch
     };
 
     // Determine if a product is actually available from RNIap
@@ -299,7 +363,7 @@ const PaymentScreen = () => {
                                     No se encontraron planes Premium. Esto puede deberse a:
                                     {"\n"}• IDs de producto incorrectos en el código.
                                     {"\n"}• Productos no publicados o activos en la Google Play Console/App Store Connect.
-                                    {"\n"}• Problemas de conexión.
+                                    {"\n"}• Problemas de conexión o la app no está en una pista de prueba válida.
                                     {"\n\n"}Verifica tu configuración y asegúrate de que tu aplicación esté publicada en una pista de prueba.
                                 </Text>
                             </View>

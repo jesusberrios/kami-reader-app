@@ -152,16 +152,17 @@ function MainDrawerNavigator() {
           ),
         }}
       />
-      <Drawer.Screen
-        name="Premium"
-        component={PaymentScreen}
-        options={{
-          drawerLabel: 'Premium',
-          drawerIcon: ({ color, size }) => (
-            <MaterialCommunityIcons name="crown" size={size} color={color} />
-          ),
-        }}
-      />
+      {userPlan === 'free' && (
+        <Drawer.Screen
+          name="Premium"
+          component={PaymentScreen}
+          options={{
+            drawerLabel: 'Premium',
+            drawerIcon: ({ color, size }) => (
+              <MaterialCommunityIcons name="crown" size={size} color={color} />
+            ),
+          }}
+        />)}
     </Drawer.Navigator>
   );
 }
