@@ -44,7 +44,7 @@ const generatePlaceholderAvatar = (username: string): string => {
 };
 const APP_IDS = {
     ios: '5cd6ecff-6004-4696-b780-172ff5ca8a22',
-    android: 'com.sukisoft.kamireader'
+    android: 'com.yourusername.kamireader'
 };
 const AuthScreen = () => {
     const [email, setEmail] = useState('');
