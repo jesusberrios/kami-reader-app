@@ -40,7 +40,7 @@ const itemHeight = itemWidth * 1.5;
 const adUnitId = __DEV__ ? TestIds.BANNER : 'ca-app-pub-6584977537844104/1888694522';
 const APP_IDS = {
     ios: '5cd6ecff-6004-4696-b780-172ff5ca8a22',
-    android: 'com.yourusername.kamireader' // Asegúrate de cambiar esto por el ID de tu paquete Android
+    android: 'com.sukisoft.kamireader' // Asegúrate de cambiar esto por el ID de tu paquete Android
 };
 
 // Types

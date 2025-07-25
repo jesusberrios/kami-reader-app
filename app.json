@@ -3,7 +3,7 @@
     "name": "KamiReader",
     "slug": "kami-reader-app",
     "scheme": "kami-reader-app",
-    "version": "1.0.2",
+    "version": "1.0.3",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -18,11 +18,11 @@
     "assetBundlePatterns": ["**/*"],
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.yourusername.kamireader"
+      "bundleIdentifier": "com.sukisoft.kamireader"
     },
     "android": {
-      "package": "com.yourusername.kamireader",
-      "versionCode": 1,
+      "package": "com.sukisoft.kamireader",
+      "versionCode": 2,
       "adaptiveIcon": {
         "foregroundImage": "./assets/icon.png",
         "backgroundColor": "#ffffff"
