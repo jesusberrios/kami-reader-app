@@ -20,7 +20,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { db, auth } from '../firebase/config';
-import { doc, setDoc, deleteDoc, onSnapshot, collection, getDocs } from 'firebase/firestore';
+import { doc, setDoc, deleteDoc, onSnapshot, collection, getDocs, getDoc, serverTimestamp } from 'firebase/firestore';
 import { RootStackParamList } from '../navigation/types';
 
 type DetailsScreenRouteProp = RouteProp<RootStackParamList, 'Details'>;
@@ -375,19 +375,25 @@ const DetailsScreen: React.FC = () => {
 
     const onShare = async () => {
         try {
-            if (comic?.title && comic?.slug) {
-                const result = await Share.share({
-                    message: `¡Mira este cómic en Comick Fun: ${comic.title}\nhttps://comick.fun/comic/${comic.slug}`,
-                    url: `https://comick.fun/comic/${comic.slug}`,
-                    title: comic.title,
-                });
-                if (result.action === Share.sharedAction) {
-                    // shared with activity type of result.activityType or without
-                } else if (result.action === Share.dismissedAction) {
-                    // dismissed
+            const playStoreLink = 'https://play.google.com/store/apps/details?id=com.yourusername.kamireader';
+
+            // Combine your main message with the Android link
+            const message = `¡Descarga Kamireader para leer tus cómics favoritos!\n\nAndroid: ${playStoreLink}`;
+
+            const result = await Share.share({
+                message: message, // Use the combined message here
+                title: '¡Descarga Kamireader!', // Title for the share sheet
+                url: playStoreLink, // This URL is used by some sharing apps (e.g., WhatsApp might show a preview)
+            });
+
+            if (result.action === Share.sharedAction) {
+                if (result.activityType) {
+                    // shared with activity type of result.activityType
+                } else {
+                    // shared
                 }
-            } else {
-                Alert.alert('Error', 'No se pudo compartir el cómic.');
+            } else if (result.action === Share.dismissedAction) {
+                // dismissed
             }
         } catch (error: any) {
             Alert.alert('Error al compartir', error.message);
@@ -478,11 +484,11 @@ const DetailsScreen: React.FC = () => {
 
     const toggleReadStatus = async (chapterHid: string, chapterChap: string, currentIsRead: boolean) => {
         if (!currentUserUid) {
-            Alert.alert("Acceso denegado", "Debes iniciar sesión para usar esta función.");
+            /* Alert.alert("Acceso denegado", "Debes iniciar sesión para usar esta función."); */
             return;
         }
         if (isPremium === false) {
-            Alert.alert("Función Premium", "Esta función está disponible solo para usuarios Premium.");
+            /* Alert.alert("Función Premium", "Esta función está disponible solo para usuarios Premium."); */
             return;
         }
         if (!comic?.hid) {
@@ -495,19 +501,103 @@ const DetailsScreen: React.FC = () => {
             const chaptersReadCollectionRef = collection(comicReadDocRef, 'chaptersRead');
             const chapterReadDocRef = doc(chaptersReadCollectionRef, chapterHid);
 
-            if (currentIsRead) {
-                await deleteDoc(chapterReadDocRef);
-                Alert.alert("Actualizado", "Capítulo marcado como no leído.");
-            } else {
-                await setDoc(chapterReadDocRef, { readAt: new Date(), chap: chapterChap });
-                Alert.alert("Actualizado", "Capítulo marcado como leído.");
-            }
+            const inProgressMangaDocRef = doc(db, 'users', currentUserUid, 'inProgressManga', comic.hid);
 
-            await updateLastReadChapterForComic(comic.hid, currentUserUid);
+            if (currentIsRead) {
+                // If marking as unread, delete the chapter read document
+                await deleteDoc(chapterReadDocRef);
+                Alert.alert("Actualizado", "Capítulo marcado como no leído."); // Optional: provide feedback
+
+                // Re-evaluate lastReadChapter for the manga after unmarking
+                await updateLastReadChapterForComic(comic.hid, currentUserUid);
+
+                // If this was the last read chapter, update inProgressManga
+                // A more robust check might be needed if you have a complex 'last read' logic
+                if (lastReadChapterInfo?.hid === chapterHid) {
+                    // Fetch all remaining read chapters to find the *new* highest
+                    const remainingReadChaptersSnapshot = await getDocs(chaptersReadCollectionRef);
+                    let newLastReadHid: string | null = null;
+                    let newLastReadChapNumber: string | null = null;
+                    let highestChapNum = -1;
+
+                    remainingReadChaptersSnapshot.forEach(docSnap => {
+                        const data = docSnap.data();
+                        const chapNum = parseFloat(data.chap || '0');
+                        if (!isNaN(chapNum) && chapNum > highestChapNum) {
+                            highestChapNum = chapNum;
+                            newLastReadHid = docSnap.id;
+                            newLastReadChapNumber = data.chap;
+                        }
+                    });
+
+                    if (newLastReadHid && newLastReadChapNumber) {
+                        await setDoc(inProgressMangaDocRef, {
+                            lastReadChapterHid: newLastReadHid,
+                            lastReadChapterNumber: newLastReadChapNumber,
+                        }, { merge: true });
+                    } else {
+                        // If no chapters are left as read, clear the inProgressManga's lastReadChapter info
+                        await setDoc(inProgressMangaDocRef, {
+                            lastReadChapterHid: null,
+                            lastReadChapterNumber: null,
+                        }, { merge: true });
+                    }
+                }
+
+
+            } else {
+                // If marking as read, set the chapter read document
+                await setDoc(chapterReadDocRef, { readAt: new Date(), chap: chapterChap });
+                Alert.alert("Actualizado", "Capítulo marcado como leído."); // Optional: provide feedback
+
+                // Update the main comic read status with the new last read chapter
+                await updateLastReadChapterForComic(comic.hid, currentUserUid);
+
+                // Update lastReadChapter in the inProgressManga document directly
+                await setDoc(inProgressMangaDocRef, {
+                    lastReadChapterHid: chapterHid,
+                    lastReadChapterNumber: chapterChap,
+                }, { merge: true });
+            }
 
         } catch (e: any) {
             console.error("Error toggling read status:", e);
             Alert.alert("Error", `No se pudo actualizar el estado de lectura: ${e.message}`);
+        }
+    };
+
+    const addMangaToInProgress = async (mangaHid: string, mangaTitle: string, p0: { uid: string; }) => {// Removed 'comic: any' from here
+        // as 'comic' should be available in the component scope
+        if (!currentUserUid) {
+            console.error("No user logged in.");
+            return;
+        }
+
+        // --- Critical check: Is 'comic' defined and does it have the necessary properties? ---
+        if (!comic || !comic.cover_url || !comic.slug) {
+            console.error("Error: Comic data (cover_url or slug) is missing before saving to inProgressManga.");
+            Alert.alert("Error de datos", "No se pudo obtener la información completa del cómic para guardarlo.");
+            return;
+        }
+        // ----------------------------------------------------------------------------------
+
+        const mangaDocRef = doc(db, 'users', currentUserUid, 'inProgressManga', mangaHid);
+
+        try {
+            await setDoc(mangaDocRef, {
+                mangaHid: mangaHid,
+                mangaTitle: mangaTitle,
+                // These are the key additions/corrections:
+                coverUrl: comic.cover_url, // Use the correct property from your 'comic' object
+                slug: comic.slug,         // Use the correct property from your 'comic' object
+                startedAt: serverTimestamp(),
+                lastReadChapterHid: null,
+                lastReadChapterNumber: null,
+            }, { merge: true }); // Always use merge: true when updating parts of a document
+
+        } catch (error) {
+            console.error("Error adding manga to inProgressManga:", error);
+            Alert.alert("Error", `No se pudo guardar el progreso: ${error}`);
         }
     };
 
@@ -582,7 +672,38 @@ const DetailsScreen: React.FC = () => {
         return (
             <TouchableOpacity
                 style={[styles.chapterItem, isChapterRead && styles.chapterItemRead]}
-                onPress={() => navigation.navigate('Reader', { hid: item.hid })}
+                onPress={() => {
+                    if (isChapterRead) {
+                        // If already read, offer to unmark it
+                        Alert.alert(
+                            "Desmarcar como leído",
+                            `¿Estás seguro de que quieres desmarcar el Capítulo ${item.chap} como no leído?`,
+                            [
+                                {
+                                    text: "Cancelar",
+                                    style: "cancel"
+                                },
+                                {
+                                    text: "Sí, desmarcar",
+                                    onPress: () => toggleReadStatus(item.hid, item.chap, true) // Pass true to unmark
+                                }
+                            ]
+                        );
+                    } else {
+                        // If not read, navigate to reader and mark as read
+                        navigation.navigate('Reader', { hid: item.hid });
+                        if (comic && comic.hid && comic.title && currentUserUid) {
+                            // Mark as read when entering the chapter
+                            toggleReadStatus(item.hid, item.chap, false); // Pass false to mark as read
+                            addMangaToInProgress(comic.hid, comic.title, { uid: currentUserUid });
+                        } else {
+                            console.warn("Could not add manga to in-progress: Missing comic details or user UID.");
+                        }
+                    }
+                }}
+                accessible={true}
+                accessibilityLabel={`Capítulo ${item.chap} ${item.title || ''}. ${isChapterRead ? 'Ya leído, tocar para desmarcar' : 'Tocar para leer'}`}
+                accessibilityRole="button"
             >
                 <View style={styles.chapterItemContent}>
                     <Text style={styles.chapterTitle} numberOfLines={1} ellipsizeMode="tail">
@@ -603,32 +724,12 @@ const DetailsScreen: React.FC = () => {
                         Publicado: {formatIsoDateString(item.created_at)}
                     </Text>
                 </View>
-                <TouchableOpacity
-                    style={[
-                        styles.readButton,
-                        isChapterRead && styles.readButtonActive,
-                        !isPremium && styles.readButtonLocked,
-                    ]}
-                    onPress={() => toggleReadStatus(item.hid, item.chap, isChapterRead)}
-                    disabled={!isPremium}
-                    accessible={true}
-                    accessibilityLabel={
-                        isPremium
-                            ? `Marcar capítulo ${item.chap} como ${isChapterRead ? 'no leído' : 'leído'}`
-                            : 'Función Premium: Marcar capítulo como leído'
-                    }
-                    accessibilityRole="button"
-                >
-                    <Ionicons
-                        name={isChapterRead ? "checkmark-circle" : "checkmark-circle-outline"}
-                        size={24}
-                        color={isChapterRead ? "#FFFFFF" : "#B0BEC5"}
-                    />
-                    {!isPremium && (
-                        <Ionicons name="lock-closed" size={16} color="#B0BEC5" style={styles.lockIcon} />
-                    )}
-                </TouchableOpacity>
-                <Ionicons name="chevron-forward-outline" size={24} color="#FF5252" />
+                {/* Display a different icon/indicator based on read status */}
+                {isChapterRead ? (
+                    <Ionicons name="checkmark-circle" size={24} color="#4CAF50" /> // Green check for read
+                ) : (
+                    <Ionicons name="chevron-forward-outline" size={24} color="#FF5252" /> // Arrow for unread
+                )}
             </TouchableOpacity>
         );
     };
@@ -964,7 +1065,7 @@ const DetailsScreen: React.FC = () => {
                                 )}
                                 ListEmptyComponent={() => (
                                     !loadingChapters && !chaptersError && (
-                                        <Text style={styles.emptyChaptersText}>No hay capítulos disponibles.</Text>
+                                        <Text style={styles.emptyChaptersText}>No hay capítulos disponibles en el idioma seleccionado.</Text>
                                     )
                                 )}
                                 scrollEnabled={false}

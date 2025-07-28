@@ -317,8 +317,10 @@ const ProfileScreen = () => {
                                         <ActivityIndicator color="#FFF" />
                                     </View>
                                 ) : (
-                                    <View style={styles.editIcon}>
-                                        <Ionicons name="camera" size={20} color="#FFF" />
+                                    <View style={styles.cameraIconContainer}>
+                                        <View style={styles.cameraIconBackground}>
+                                            <Ionicons name="camera" size={16} color="#FFF" />
+                                        </View>
                                     </View>
                                 )}
                             </TouchableOpacity>
@@ -555,16 +557,6 @@ const styles = StyleSheet.create({
         borderWidth: 1,
         borderColor: 'rgba(255, 255, 255, 0.05)',
     },
-    avatarContainer: {
-        width: 120,
-        height: 120,
-        borderRadius: 60,
-        backgroundColor: 'rgba(40, 40, 60, 0.8)',
-        justifyContent: 'center',
-        alignItems: 'center',
-        marginBottom: 20,
-        overflow: 'hidden',
-    },
     avatar: {
         width: '100%',
         height: '100%',
@@ -783,6 +775,34 @@ const styles = StyleSheet.create({
         color: '#FFF',
         fontSize: 14,
         fontWeight: 'bold',
+    },
+    avatarContainer: {
+        width: 120,
+        height: 120,
+        borderRadius: 60,
+        backgroundColor: 'rgba(40, 40, 60, 0.8)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginBottom: 20,
+        overflow: 'hidden',
+    },
+    cameraIconContainer: {
+        position: 'absolute',
+        bottom: 10,  // Ajustado para que no quede pegado al borde
+        right: 20,   // Ajustado para que no quede pegado al borde
+        width: 30,
+        height: 30,
+        borderRadius: 15,
+        backgroundColor: '#FF6E6E',
+        justifyContent: 'center',
+        alignItems: 'center',
+        borderWidth: 2,
+        borderColor: '#1E1E2D',
+    },
+    cameraIconBackground: {
+        // Este View ahora es opcional, puedes poner el icono directamente en cameraIconContainer
+        justifyContent: 'center',
+        alignItems: 'center',
     },
 });
 

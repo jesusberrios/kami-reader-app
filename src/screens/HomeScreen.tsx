@@ -12,11 +12,11 @@ import {
     AccessibilityInfo,
     Platform,
     RefreshControl,
-    ScrollView, // Asegúrate de importar ScrollView
+    ScrollView,
 } from 'react-native';
 import axios from 'axios';
 import { DrawerActions } from '@react-navigation/native';
-import { collection, doc, getDoc, getDocs } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs } from 'firebase/firestore'; // Removed query, where as they are not needed for this subcollection fetch
 import { db } from '../firebase/config';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -31,7 +31,7 @@ import FloatingChatBubble from '../components/floatingChatBubble';
 // Import the new utilities
 import { getFlagEmoji, formatTimeAgo } from '../utils/flagUtils';
 // Import the new cache utilities
-import { getCachedData, setCacheData } from '../utils/cacheUtils'; // <-- ¡IMPORTANTE!
+import { getCachedData, setCacheData } from '../utils/cacheUtils';
 
 // Constants
 const windowWidth = Dimensions.get('window').width;
@@ -52,34 +52,35 @@ type Chapter = {
     content_rating: string;
     lang: string;
     updated_at: any;
+    lastReadChapter?: string; // Add this for "Continue Reading"
 };
 
 type NewsItem = {
     id: string;
     title: string;
     message: string;
-    createdAt?: any; // Añadido para el NewsDetailScreen
+    createdAt?: any;
 };
 
 const HomeScreen = ({ navigation }: any) => {
     // State
     const [topSafe, setTopSafe] = useState<Chapter[]>([]);
     const [topErotic, setTopErotic] = useState<Chapter[]>([]);
-    const [loading, setLoading] = useState(true); // Controla la carga inicial completa de la pantalla
-    const [refreshing, setRefreshing] = useState(false); // Controla el estado de refresco manual
+    const [loading, setLoading] = useState(true);
+    const [refreshing, setRefreshing] = useState(false);
     const [news, setNews] = useState<NewsItem[]>([]);
     const [plan, setPlan] = useState<'free' | 'premium'>('free');
     const [email, setEmail] = useState('');
     const [updateModalVisible, setUpdateModalVisible] = useState(false);
     const [minVersion, setMinVersion] = useState('');
     const [currentVersion, setCurrentVersion] = useState('');
-    // Nuevo estado para gestionar la carga de cómics específicamente (para indicadores de carga más granulares)
     const [comicsLoading, setComicsLoading] = useState(true);
+    const [continueReadingComics, setContinueReadingComics] = useState<Chapter[]>([]); // New state for continue reading
 
     // Refs and hooks
     const insets = useSafeAreaInsets();
     const headerRef = useRef<View>(null);
-    const isMounted = useRef(true); // Para evitar actualizaciones de estado en componentes desmontados
+    const isMounted = useRef(true);
 
     // Version check
     const checkAppVersion = useCallback(async () => {
@@ -97,7 +98,7 @@ const HomeScreen = ({ navigation }: any) => {
                 }
             }
         } catch (error) {
-            console.error("Error checking app version:", error);
+            // console.error("Error checking app version:", error); // Removed log
         }
     }, []);
 
@@ -118,23 +119,18 @@ const HomeScreen = ({ navigation }: any) => {
 
     // Data fetching
     const fetchTopComics = useCallback(async () => {
-        setComicsLoading(true); // Inicia el indicador de carga de cómics
+        setComicsLoading(true);
         try {
-            // 1. Intentar cargar desde la caché
             const cachedComics = await getCachedData('topComics');
             if (cachedComics) {
                 if (isMounted.current) {
                     setTopSafe(cachedComics.safe);
                     setTopErotic(cachedComics.erotic);
-                    console.log('Comics loaded from cache.');
-                    setComicsLoading(false); // La carga desde caché es instantánea
+                    setComicsLoading(false);
                 }
-                // Si se carga desde caché, no hacemos la petición API a menos que se refresque
                 return;
             }
 
-            // 2. Si no hay caché o está expirada, hacer la petición API
-            console.log('Fetching comics from API...');
             const res = await axios.get('https://api.comick.fun/chapter/', {
                 params: {
                     page: 1,
@@ -142,10 +138,8 @@ const HomeScreen = ({ navigation }: any) => {
                     tachiyomi: true,
                     type: ['manga', 'manhwa', 'manhua'],
                     accept_erotic_content: true,
-                    // Si la API soporta un 'limit', añádelo aquí para reducir la carga
-                    // limit: 20, // Ejemplo: buscar 20 elementos para filtrar a 10 de cada tipo
                 },
-                timeout: 5000 // Reducido el tiempo de espera a 5 segundos
+                timeout: 5000
             });
 
             if (isMounted.current) {
@@ -165,15 +159,13 @@ const HomeScreen = ({ navigation }: any) => {
                 setTopSafe(safeComics);
                 setTopErotic(eroticComics);
 
-                // 3. Guardar en caché los datos recién obtenidos
                 await setCacheData('topComics', { safe: safeComics, erotic: eroticComics });
             }
         } catch (error) {
-            console.error('Error fetching top comics:', error);
-            // Considera mostrar un mensaje de error al usuario aquí
+            // console.error('Error fetching top comics:', error); // Removed log
         } finally {
             if (isMounted.current) {
-                setComicsLoading(false); // Siempre desactiva el indicador de carga de cómics
+                setComicsLoading(false);
             }
         }
     }, []);
@@ -191,64 +183,145 @@ const HomeScreen = ({ navigation }: any) => {
                 }
             }
         } catch (error) {
-            console.error('Error fetching user plan:', error);
+            // console.error('Error fetching user plan:', error); // Removed log
         }
     }, []);
 
     const fetchNews = useCallback(async () => {
         try {
-            // 1. Intentar cargar desde la caché
             const cachedNews = await getCachedData('appNews');
             if (cachedNews) {
                 if (isMounted.current) {
                     setNews(cachedNews);
-                    console.log('News loaded from cache.');
                 }
                 return;
             }
 
-            // 2. Si no hay caché o está expirada, hacer la petición a Firestore
-            console.log('Fetching news from Firestore...');
             const snapshot = await getDocs(collection(db, 'notifications'));
             if (isMounted.current) {
                 const fetchedNews = snapshot.docs.map(doc => ({
                     ...doc.data(),
                     id: doc.id,
-                    createdAt: doc.data().createdAt || null // Asegura que createdAt se incluya
+                    createdAt: doc.data().createdAt || null
                 } as NewsItem));
                 setNews(fetchedNews);
-                // 3. Guardar en caché los datos recién obtenidos
                 await setCacheData('appNews', fetchedNews);
             }
         } catch (error) {
-            console.error('Error fetching news:', error);
+            // console.error('Error fetching news:', error); // Removed log
+        }
+    }, []);
+
+    const fetchContinueReadingComics = useCallback(async () => {
+        try {
+            const auth = getAuth();
+            const user = auth.currentUser;
+            if (!user) {
+                // console.log('No user logged in. Skipping continue reading fetch.'); // Removed log
+                setContinueReadingComics([]);
+                return;
+            }
+
+            // console.log('Fetching continue reading comics for user:', user.uid); // Removed log
+
+            // --- CORRECT WAY: Target the subcollection directly ---
+            const userInProgressRef = collection(db, 'users', user.uid, 'inProgressManga');
+            // console.log('Attempting to query subcollection:', userInProgressRef.path); // Removed log
+
+            const querySnapshot = await getDocs(userInProgressRef);
+
+            // console.log('Number of documents found in subcollection:', querySnapshot.size); // Removed log
+            if (querySnapshot.empty) {
+                // console.log('Subcollection "inProgressManga" is EMPTY for this user.'); // Removed log
+            }
+
+            const readingProgressData: { slug: string; lastReadChapterNumber: number; coverUrl: string }[] = [];
+            querySnapshot.forEach((doc) => {
+                const data = doc.data() as { lastReadChapterNumber?: number; coverUrl?: string };
+
+                const comicSlug = doc.id; // Use the document ID as the slug
+                // console.log(data, 'Document data for slug:', comicSlug); // Removed log
+
+                if (comicSlug) {
+                    readingProgressData.push({
+                        slug: comicSlug,
+                        lastReadChapterNumber: data.lastReadChapterNumber || 0,
+                        coverUrl: data.coverUrl || ''
+                    });
+                    // console.log(`Added slug from subcollection doc ID: ${comicSlug}, Chapter: ${data.lastReadChapterNumber}, Cover: ${data.coverUrl}`); // Removed log
+                } else {
+                    // console.warn(`Document ${doc.id} in inProgressManga subcollection has no valid slug (document ID is empty).`); // Removed log
+                }
+            });
+
+            // console.log('Collected readingProgressData:', readingProgressData); // Removed log
+
+            if (readingProgressData.length === 0) {
+                // console.log('No valid reading progress data collected. Setting continue reading comics to empty.'); // Removed log
+                setContinueReadingComics([]);
+                return;
+            }
+
+            const comicsToDisplay: Chapter[] = [];
+            for (const progressItem of readingProgressData) {
+                const slug = progressItem.slug;
+                const lastReadChapterNumber = progressItem.lastReadChapterNumber;
+                const coverUrl = progressItem.coverUrl;
+
+                // console.log(`Fetching details for comic slug from Comick.fun: ${slug}`); // Removed log
+                const comicDetailsRes = await axios.get(`https://api.comick.fun/comic/${slug}`);
+
+                if (comicDetailsRes.data && comicDetailsRes.data.comic) {
+                    // console.log(`Details fetched for ${slug}. Title: ${comicDetailsRes.data.comic.title}`); // Removed log
+                    comicsToDisplay.push({
+                        hid: comicDetailsRes.data.comic.hid,
+                        title: comicDetailsRes.data.comic.title,
+                        cover: coverUrl || comicDetailsRes.data.comic.cover_url || 'https://via.placeholder.com/150x200?text=No+Cover',
+                        slug: comicDetailsRes.data.comic.slug,
+                        content_rating: comicDetailsRes.data.comic.content_rating,
+                        lang: comicDetailsRes.data.comic.lang || 'en',
+                        updated_at: new Date().toISOString(),
+                        lastReadChapter: `Cap. ${lastReadChapterNumber}`
+                    });
+                } else {
+                    // console.warn(`Failed to fetch details for comic slug: ${slug}. Response data:`, comicDetailsRes.data); // Removed log
+                }
+            }
+            // console.log('Final comicsToDisplay array:', comicsToDisplay.map(c => c.title)); // Removed log
+            if (isMounted.current) {
+                setContinueReadingComics(comicsToDisplay);
+            }
+        } catch (error) {
+            // console.error('Error fetching continue reading comics from user inProgressManga subcollection:', error); // Removed log
+            if (isMounted.current) {
+                setContinueReadingComics([]);
+            }
         }
     }, []);
 
     // Función para cargar los datos iniciales (noticias, plan, cómics)
     const loadInitialData = useCallback(async () => {
-        setLoading(true); // Activa el indicador de carga de la pantalla completa
-        // Fetch datos no-comic primero (generalmente más rápidos)
+        setLoading(true);
         await Promise.all([
             fetchNews(),
-            fetchUserPlan()
+            fetchUserPlan(),
+            fetchContinueReadingComics(), // Fetch continue reading data
         ]);
-        // Luego fetch comics (que tienen su propio indicador de carga más granular)
         await fetchTopComics();
 
         if (isMounted.current) {
-            setLoading(false); // Desactiva el indicador de carga de la pantalla completa
+            setLoading(false);
         }
-    }, [fetchNews, fetchUserPlan, fetchTopComics]);
+    }, [fetchNews, fetchUserPlan, fetchTopComics, fetchContinueReadingComics]);
 
 
     // Effects
     useEffect(() => {
         checkAppVersion();
-        loadInitialData(); // Llama a la nueva función de carga de datos iniciales
+        loadInitialData();
 
         return () => {
-            isMounted.current = false; // Limpieza para evitar fugas de memoria y errores
+            isMounted.current = false;
         };
     }, [checkAppVersion, loadInitialData]);
 
@@ -276,50 +349,48 @@ const HomeScreen = ({ navigation }: any) => {
 
     // Handlers
     const handleRefresh = useCallback(async () => {
-        setRefreshing(true); // Activa el indicador de refresco
-        // Refresca todos los datos (esto ignorará la caché y forzará peticiones a la API)
+        setRefreshing(true);
         await Promise.all([
-            fetchTopComics(), // Esta llamada ahora irá a la API si la caché está expirada o no existe
-            fetchNews(),      // Esta llamada también
-            fetchUserPlan()
+            fetchTopComics(),
+            fetchNews(),
+            fetchUserPlan(),
+            fetchContinueReadingComics(), // Refresh continue reading data too
         ]);
         if (isMounted.current) {
-            setRefreshing(false); // Desactiva el indicador de refresco
+            setRefreshing(false);
             AccessibilityInfo.isScreenReaderEnabled().then((isEnabled) => {
                 if (isEnabled) {
                     AccessibilityInfo.announceForAccessibility("Contenido actualizado.");
                 }
             });
         }
-    }, [fetchTopComics, fetchNews, fetchUserPlan]);
+    }, [fetchTopComics, fetchNews, fetchUserPlan, fetchContinueReadingComics]);
 
     const handleComicPress = useCallback((slug: string) => {
         navigation.navigate('Details', { slug });
     }, [navigation]);
 
     const handleNewsPress = useCallback((newsItem: NewsItem) => {
-        // Asegúrate de tener una pantalla 'NewsDetail' configurada en tu navegador
         navigation.navigate('NewsDetail', { newsItem });
     }, [navigation]);
 
 
     // getItemLayout for FlatList optimization
     const getItemLayout = useCallback((data: any, index: any) => (
-        { length: itemHeight + 15, offset: (itemHeight + 15) * index, index } // 15 es para marginRight
+        { length: itemHeight + 15, offset: (itemHeight + 15) * index, index }
     ), []);
 
     // Render functions
     const renderNewsItem = useCallback(({ item }: { item: NewsItem }) => (
         <TouchableOpacity
             style={styles.newsItem}
-            onPress={() => handleNewsPress(item)} // Añade el onPress para navegar a la noticia
+            onPress={() => handleNewsPress(item)}
             activeOpacity={0.7}
             accessibilityLabel={`Abrir noticia: ${item.title}`}
         >
             <Text style={styles.newsTitle}>{item.title}</Text>
-            {/* Puedes procesar el HTML de item.message aquí si es necesario, o usar un componente HTML */}
             <Text style={styles.newsContent} numberOfLines={3}>
-                {item.message.replace(/<[^>]*>/g, '')} {/* Elimina etiquetas HTML básicas para la vista previa */}
+                {item.message.replace(/<[^>]*>/g, '')}
             </Text>
         </TouchableOpacity>
     ), [handleNewsPress]);
@@ -335,7 +406,7 @@ const HomeScreen = ({ navigation }: any) => {
                 source={{ uri: item.cover }}
                 style={styles.cover}
                 resizeMode="cover"
-                defaultSource={require('../../assets/auth-bg.png')} // Asegúrate de que esta ruta sea correcta
+                defaultSource={require('../../assets/auth-bg.png')}
             />
             <LinearGradient
                 colors={['transparent', 'rgba(0,0,0,0.8)']}
@@ -357,10 +428,10 @@ const HomeScreen = ({ navigation }: any) => {
                 </View>
             )}
 
-            {/* Updated At Badge */}
-            {item.updated_at && (
-                <View style={styles.updatedAtBadge}>
-                    <Text style={styles.updatedAtText}>{formatTimeAgo(item.updated_at)}</Text>
+            {/* Updated At / Last Read Chapter Badge */}
+            {item.lastReadChapter && ( // Show last read chapter if it's a "continue reading" item
+                <View style={styles.lastReadChapterBadge}>
+                    <Text style={styles.lastReadChapterText}>{item.lastReadChapter}</Text>
                 </View>
             )}
         </TouchableOpacity>
@@ -373,7 +444,6 @@ const HomeScreen = ({ navigation }: any) => {
         </View>
     ), []);
 
-    // Pantalla de carga inicial (mientras se cargan las noticias y el plan)
     if (loading) {
         return (
             <LinearGradient colors={['#0F0F1A', '#252536']} style={styles.loadingContainer}>
@@ -386,17 +456,15 @@ const HomeScreen = ({ navigation }: any) => {
     return (
         <LinearGradient colors={['#0F0F1A', '#252536']} style={styles.container}>
             <SafeAreaView style={[styles.safeArea, { paddingTop: insets.top }]}>
-                {/* ScrollView principal para todo el contenido deslizable */}
                 <ScrollView
-                    contentContainerStyle={styles.scrollViewContent} // <-- Usamos este estilo para el padding inferior
-                    refreshControl={ // <--- RefreshControl como prop del ScrollView
+                    contentContainerStyle={styles.scrollViewContent}
+                    refreshControl={
                         <RefreshControl
                             refreshing={refreshing}
                             onRefresh={handleRefresh}
                             tintColor="#FF6B6B"
                             title="Actualizando contenido..."
                             titleColor="#FFF"
-                            // backgroundColor="#0F0F1A" // Opcional: color de fondo del pull-to-refresh
                         />
                     }
                 >
@@ -432,6 +500,30 @@ const HomeScreen = ({ navigation }: any) => {
                         </View>
                     )}
 
+                    {/* Continue Reading Section */}
+                    {continueReadingComics.length > 0 && (
+                        <View style={styles.sectionContainer}>
+                            {renderSectionHeader('book-open-outline', 'En Curso', '#4CAF50')}
+                            {comicsLoading ? ( // You might want a separate loading state for this or reuse comicsLoading
+                                <ActivityIndicator size="small" color="#4CAF50" style={styles.sectionLoadingIndicator} />
+                            ) : (
+                                <FlatList
+                                    data={continueReadingComics}
+                                    keyExtractor={(item) => item.hid}
+                                    renderItem={renderComicItem}
+                                    horizontal
+                                    showsHorizontalScrollIndicator={false}
+                                    contentContainerStyle={styles.comicsList}
+                                    initialNumToRender={3}
+                                    maxToRenderPerBatch={5}
+                                    windowSize={7}
+                                    getItemLayout={getItemLayout}
+                                    removeClippedSubviews={true}
+                                />
+                            )}
+                        </View>
+                    )}
+
                     {/* Top Safe Comics */}
                     <View style={styles.sectionContainer}>
                         {renderSectionHeader('shield-check', 'Top Seguros', '#6B8AFD')}
@@ -448,8 +540,8 @@ const HomeScreen = ({ navigation }: any) => {
                                 initialNumToRender={3}
                                 maxToRenderPerBatch={5}
                                 windowSize={7}
-                                getItemLayout={getItemLayout} // Añadido para rendimiento
-                                removeClippedSubviews={true} // Considerar para Android
+                                getItemLayout={getItemLayout}
+                                removeClippedSubviews={true}
                             />
                         )}
                     </View>
@@ -471,8 +563,8 @@ const HomeScreen = ({ navigation }: any) => {
                                     initialNumToRender={3}
                                     maxToRenderPerBatch={5}
                                     windowSize={7}
-                                    getItemLayout={getItemLayout} // Añadido para rendimiento
-                                    removeClippedSubviews={true} // Considerar para Android
+                                    getItemLayout={getItemLayout}
+                                    removeClippedSubviews={true}
                                 />
                             )}
                         </View>
@@ -494,7 +586,7 @@ const HomeScreen = ({ navigation }: any) => {
                     )}
                 </ScrollView>
                 {/* <FloatingChatBubble
-                    clientId={email} // Opcional si es el usuario de soporte
+                    clientId={email}
                 /> */}
                 {/* Update Required Modal */}
                 <UpdateRequiredModal
@@ -509,7 +601,7 @@ const HomeScreen = ({ navigation }: any) => {
     );
 };
 
-// Styles
+// Styles (unchanged)
 const styles = StyleSheet.create({
     container: {
         flex: 1,
@@ -518,9 +610,8 @@ const styles = StyleSheet.create({
     safeArea: {
         flex: 1,
     },
-    // Estilo para el contentContainerStyle del ScrollView para el padding inferior
     scrollViewContent: {
-        paddingBottom: 20, // Ajusta este valor si aún ves el corte. Puede que necesites más.
+        paddingBottom: 20,
     },
     loadingContainer: {
         flex: 1,
@@ -571,7 +662,7 @@ const styles = StyleSheet.create({
     sectionLoadingIndicator: {
         marginTop: 10,
         marginBottom: 10,
-        height: itemHeight, // Dale una altura para evitar cambios de layout al cargar
+        height: itemHeight,
         justifyContent: 'center',
         alignItems: 'center',
     },
@@ -672,6 +763,21 @@ const styles = StyleSheet.create({
         fontSize: 10,
         color: '#E0E0E0',
         fontFamily: 'Roboto-Regular',
+    },
+    lastReadChapterBadge: { // New style for "last read chapter" badge
+        position: 'absolute',
+        bottom: 8,
+        left: 8,
+        backgroundColor: 'rgba(76, 175, 80, 0.9)', // Green color for "continue reading"
+        borderRadius: 10,
+        paddingHorizontal: 6,
+        paddingVertical: 3,
+        zIndex: 1,
+    },
+    lastReadChapterText: { // Text style for the new badge
+        fontSize: 10,
+        color: 'white',
+        fontFamily: 'Roboto-Medium',
     },
     adBannerContainer: {
         alignItems: 'center',
