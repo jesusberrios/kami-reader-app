@@ -25,6 +25,7 @@ import FavoritesScreen from './src/screens/FavoritesScreen';
 import ChatScreen from './src/screens/ChatScreen';
 import ChatListScreen from './src/screens/ChatListScreen';
 import CommentsScreen from './src/screens/ComentsScreen';
+import InProgressScreen from './src/screens/InProgressScreen';
 
 // Navigation Types
 export type RootStackParamList = {
@@ -43,6 +44,7 @@ export type DrawerParamList = {
   Home: undefined;
   Profile: undefined;
   Library: undefined;
+  InProgress: undefined;
   Favorites: undefined;
   Premium: undefined; // Added Premium screen to DrawerParamList
 };
@@ -142,6 +144,16 @@ function MainDrawerNavigator() {
           }}
         />
       )}
+      <Drawer.Screen
+        name="InProgress"
+        component={InProgressScreen}
+        options={{
+          drawerLabel: 'En Curso',
+          drawerIcon: ({ color, size }) => (
+            <MaterialCommunityIcons name="book-open-outline" size={size} color={color} />
+          ),
+        }}
+      />
       <Drawer.Screen
         name="Profile"
         component={ProfileScreen}

@@ -138,13 +138,13 @@ const CommentsScreen: React.FC = () => {
 
         setSending(true);
         try {
-            const comment: Comment = {
+            const comment = { // Remove the explicit Comment type if it's causing issues with Date object
                 id: Date.now().toString() + Math.random().toString(36).substring(2, 9),
                 userId: currentUser.uid,
                 userName: userData.username || currentUser.email || 'Anónimo',
                 userEmail: currentUser.email || '',
                 text: newComment.trim(),
-                createdAt: serverTimestamp(),
+                createdAt: new Date(), // Use a Date object here
                 avatar: userData.avatar,
                 likes: [] // Initialize likes array
             };
@@ -153,21 +153,23 @@ const CommentsScreen: React.FC = () => {
             const docSnap = await getDoc(docRef);
 
             if (docSnap.exists()) {
+                // When updating, Firebase will convert the Date object in 'comment' to a server timestamp.
                 await updateDoc(docRef, {
                     comments: arrayUnion(comment),
-                    lastUpdated: serverTimestamp()
+                    lastUpdated: serverTimestamp() // This serverTimestamp is fine because it's not in an array
                 });
             } else {
+                // When setting a new document, Firebase will convert the Date object in 'comment' to a server timestamp.
                 await setDoc(docRef, {
                     mangaTitle,
                     comments: [comment],
-                    lastUpdated: serverTimestamp()
+                    lastUpdated: serverTimestamp() // This serverTimestamp is fine because it's not in an array
                 });
             }
 
             setNewComment('');
         } catch (error) {
-            console.error("Error posting comment:", error);
+            console.error("Error posting comment:s", error);
             Alert.alert('Error', 'No se pudo publicar el comentario. Inténtalo de nuevo.');
         } finally {
             setSending(false);

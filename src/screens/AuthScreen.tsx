@@ -73,7 +73,62 @@ const AuthScreen = () => {
     const [minVersion, setMinVersion] = useState('');
     const [currentVersion, setCurrentVersion] = useState('');
     const [emailError, setEmailError] = useState('');
+    // Función para traducir los errores de Firebase
+    const translateFirebaseError = (error: any): string => {
+        switch (error.code) {
+            // Errores de autenticación
+            case 'auth/invalid-email':
+                return 'El correo electrónico no es válido';
+            case 'auth/user-disabled':
+                return 'Esta cuenta ha sido deshabilitada';
+            case 'auth/user-not-found':
+                return 'No existe una cuenta con este correo';
+            case 'auth/wrong-password':
+                return 'Usuario o contraseña incorrectos';
+            case 'auth/email-already-in-use':
+                return 'Este correo ya está registrado';
+            case 'auth/operation-not-allowed':
+                return 'Esta operación no está permitida';
+            case 'auth/weak-password':
+                return 'La contraseña es demasiado débil (mínimo 6 caracteres)';
+            case 'auth/too-many-requests':
+                return 'Demasiados intentos. Por favor espera e intenta más tarde';
+            case 'auth/account-exists-with-different-credential':
+                return 'Ya existe una cuenta con este correo usando otro método de autenticación';
+            case 'auth/requires-recent-login':
+                return 'Esta operación requiere que inicies sesión nuevamente';
+            case 'auth/provider-already-linked':
+                return 'Esta cuenta ya está vinculada con otro proveedor';
+            case 'auth/credential-already-in-use':
+                return 'Estas credenciales ya están en uso por otra cuenta';
+            case 'auth/invalid-credential':
+                return 'Credenciales inválidas o expiradas';
+            case 'auth/invalid-verification-code':
+                return 'Código de verificación inválido';
+            case 'auth/invalid-verification-id':
+                return 'ID de verificación inválido';
+            case 'auth/missing-verification-code':
+                return 'Falta el código de verificación';
+            case 'auth/missing-verification-id':
+                return 'Falta el ID de verificación';
+            case 'auth/network-request-failed':
+                return 'Error de conexión. Por favor verifica tu internet';
+            case 'auth/timeout':
+                return 'Tiempo de espera agotado. Por favor intenta nuevamente';
+            case 'auth/expired-action-code':
+                return 'El enlace ha expirado';
+            case 'auth/invalid-action-code':
+                return 'El enlace es inválido o ya fue usado';
 
+            // Errores de verificación de email
+            case 'auth/missing-email':
+                return 'Falta el correo electrónico';
+
+            // Errores genéricos
+            default:
+                return error.message || 'Ocurrió un error inesperado';
+        }
+    };
     useEffect(() => {
         const checkAppVersion = async () => {
             try {
@@ -176,7 +231,6 @@ const AuthScreen = () => {
 
         return ''; // No hay error
     };
-    // Cambia la firma de la función para aceptar null
     const handleResendVerification = async (user: User | null | undefined) => {
         if (!user) {
             Alert.alert('Error', 'No hay usuario autenticado');
@@ -187,7 +241,7 @@ const AuthScreen = () => {
             await AuthService.sendEmailVerification(user);
             Alert.alert('Correo reenviado', 'Se ha enviado un nuevo correo de verificación');
         } catch (error: any) {
-            Alert.alert('Error', error.message);
+            Alert.alert('Error', translateFirebaseError(error));
         }
     };
     // Function to check if user profile exists in Firestore and navigate
@@ -216,6 +270,8 @@ const AuthScreen = () => {
         }
     };
 
+    // Luego modifica las funciones que muestran errores para usar esta traducción:
+
     const handleLogin = async () => {
         try {
             setLoading(true);
@@ -239,7 +295,7 @@ const AuthScreen = () => {
                     ]
                 );
             } else {
-                Alert.alert('Error de autenticación', error.message);
+                Alert.alert('Error de autenticación', translateFirebaseError(error));
             }
             setLoading(false);
         }
@@ -261,16 +317,14 @@ const AuthScreen = () => {
             const userCredential = await AuthService.register(email, password);
             const user = userCredential.user;
 
-            // Enviar correo de verificación
             await AuthService.sendEmailVerification(user);
 
             const avatarBase64 = generatePlaceholderAvatar(username);
 
-            // Crear perfil de usuario en Firestore
             await setDoc(doc(db, "users", user.uid), {
                 username,
                 email,
-                emailVerified: false, // Añadir campo para verificación
+                emailVerified: false,
                 avatar: avatarBase64,
                 createdAt: new Date(),
                 lastLogin: new Date(),
@@ -288,12 +342,12 @@ const AuthScreen = () => {
                 [
                     {
                         text: 'OK',
-                        onPress: () => setIsLogin(true) // Cambiar a pantalla de login
+                        onPress: () => setIsLogin(true)
                     }
                 ]
             );
         } catch (error: any) {
-            Alert.alert('Error en el registro', error.message);
+            Alert.alert('Error en el registro', translateFirebaseError(error));
         } finally {
             setLoading(false);
         }
@@ -347,7 +401,6 @@ const AuthScreen = () => {
         setResetVisible(!resetVisible);
     };
 
-    // Handle sending reset password email
     const handleSendResetPassword = async () => {
         if (!resetEmail) {
             Alert.alert('Correo requerido', 'Por favor ingresa tu correo electrónico.');
@@ -359,7 +412,7 @@ const AuthScreen = () => {
             Alert.alert('Correo enviado', 'Se ha enviado un correo electrónico a ' + resetEmail + ' con instrucciones para restablecer tu contraseña.');
             setResetVisible(false);
         } catch (error: any) {
-            Alert.alert('Error al restablecer la contraseña', error.message);
+            Alert.alert('Error al restablecer la contraseña', translateFirebaseError(error));
         } finally {
             setLoading(false);
         }

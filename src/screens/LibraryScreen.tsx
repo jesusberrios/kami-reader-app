@@ -169,7 +169,6 @@ const LibraryScreen = ({ navigation }: any) => {
 
             const query = new URLSearchParams(params);
             const url = `https://api.comick.fun/v1.0/search?${query.toString()}`;
-            console.log("Fetching search results from:", url);
 
             const response = await fetch(url);
             if (!response.ok) throw new Error(`Error HTTP: ${response.status}`);
