@@ -109,8 +109,8 @@ android {
         applicationId 'com.yourusername.kamireader' // Asegúrate de que este sea tu Application ID real
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 4 // ¡Incrementa este número para cada nueva versión que subas!
-        versionName "1.0.5" // Versión visible para el usuario
+        versionCode 5 // ¡Incrementa este número para cada nueva versión que subas!
+        versionName "1.0.6" // Versión visible para el usuario
 
         // --- INICIO: Solución para react-native-iap ---
         missingDimensionStrategy 'store', 'play'
