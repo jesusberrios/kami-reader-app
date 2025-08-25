@@ -5,19 +5,19 @@ import {
     StyleSheet,
     Image,
     TouchableOpacity,
-    Alert,
     Dimensions,
     Animated,
-    ActivityIndicator // Import ActivityIndicator
+    ActivityIndicator
 } from 'react-native';
 import { DrawerContentScrollView, DrawerItemList } from '@react-navigation/drawer';
-import { doc, onSnapshot, collection, query, where, updateDoc } from 'firebase/firestore'; // Added query, where, updateDoc
+import { doc, onSnapshot, collection, query, where, updateDoc } from 'firebase/firestore';
 import { db, auth } from '../firebase/config';
 import { signOut } from 'firebase/auth';
 import { MaterialCommunityIcons, Ionicons, Feather } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BannerAd, BannerAdSize, TestIds } from 'react-native-google-mobile-ads';
+import { useAlertContext } from '../contexts/AlertContext'; // Importar el contexto de alertas
 
 type UserData = {
     username?: string;
@@ -25,8 +25,14 @@ type UserData = {
     avatar?: string;
     accountType?: 'free' | 'premium';
     totalReadingTime?: number;
-    subscriptionEndDate?: number; // Added subscriptionEndDate
+    subscriptionEndDate?: number;
 };
+
+interface CustomDrawerContentProps {
+    pendingRequests?: number;
+    unreadMessages?: number;
+    [key: string]: any;
+}
 
 const UserPlanBadge = ({ accountType }: { accountType: 'free' | 'premium' }) => {
     return (
@@ -51,15 +57,20 @@ const UserPlanBadge = ({ accountType }: { accountType: 'free' | 'premium' }) => 
     );
 };
 
-const CustomDrawerContent = (props: any) => {
+const CustomDrawerContent = (props: CustomDrawerContentProps) => {
+    const { pendingRequests = 0, unreadMessages = 0 } = props;
     const [userData, setUserData] = useState<UserData | null>(null);
     const [favoritesCount, setFavoritesCount] = useState<number>(0);
     const [mangasReadCount, setMangasReadCount] = useState<number>(0);
     const [totalReadingTimeMs, setTotalReadingTimeMs] = useState<number>(0);
     const [scaleValue] = useState(new Animated.Value(1));
-    const [drawerLoading, setDrawerLoading] = useState(true); // New loading state for the drawer
+    const [drawerLoading, setDrawerLoading] = useState(true);
+    const [totalPending, setTotalPending] = useState(0);
     const navigation = useNavigation();
     const adUnitId = __DEV__ ? TestIds.BANNER : 'ca-app-pub-6584977537844104/1888694522';
+
+    // Obtener las funciones de alerta del contexto
+    const { alertError, alertConfirm } = useAlertContext();
 
     const formatReadingTime = (milliseconds: number): string => {
         const totalSeconds = Math.floor(milliseconds / 1000);
@@ -76,27 +87,29 @@ const CustomDrawerContent = (props: any) => {
     };
 
     useEffect(() => {
+        setTotalPending(pendingRequests + unreadMessages);
+    }, [pendingRequests, unreadMessages]);
+
+    useEffect(() => {
         const user = auth.currentUser;
         if (!user) {
             setUserData(null);
             setFavoritesCount(0);
             setMangasReadCount(0);
             setTotalReadingTimeMs(0);
-            setDrawerLoading(false); // No user, so loading is complete
+            setDrawerLoading(false);
             return;
         }
 
         const userDocRef = doc(db, "users", user.uid);
         const favoritesCollectionRef = collection(db, 'users', user.uid, 'favorites');
         const readComicsCollectionRef = collection(db, 'users', user.uid, 'readComics');
-        // Query for mangas where isFullMangaRead is true
         const readComicsQuery = query(readComicsCollectionRef, where("isFullMangaRead", "==", true));
 
         let userUnsubscribe: () => void;
         let favoritesUnsubscribe: () => void;
         let readComicsUnsubscribe: () => void;
 
-        // Track loading status of individual data fetches
         let userLoaded = false;
         let favoritesLoaded = false;
         let readComicsLoaded = false;
@@ -113,33 +126,21 @@ const CustomDrawerContent = (props: any) => {
                 setUserData(fetchedUserData);
                 setTotalReadingTimeMs(fetchedUserData.totalReadingTime || 0);
 
-                // --- Subscription Expiration Check ---
-                const currentAccountType = fetchedUserData.accountType;
-                const subscriptionEndDate = fetchedUserData.subscriptionEndDate; // Unix timestamp in milliseconds
-
-                if (currentAccountType === 'premium' && subscriptionEndDate) {
-                    if (Date.now() > subscriptionEndDate) {
-                        console.log('Subscription expired. Reverting to free plan.');
+                if (fetchedUserData.accountType === 'premium' && fetchedUserData.subscriptionEndDate) {
+                    if (Date.now() > fetchedUserData.subscriptionEndDate) {
                         try {
                             await updateDoc(userDocRef, { accountType: 'free' });
                         } catch (error) {
                             console.error("Error reverting subscription to free:", error);
                         }
                     }
-                } else if (currentAccountType === 'premium' && !subscriptionEndDate) {
-                    console.warn('Premium user without subscription end date. Reverting to free for safety.');
+                } else if (fetchedUserData.accountType === 'premium' && !fetchedUserData.subscriptionEndDate) {
                     try {
                         await updateDoc(userDocRef, { accountType: 'free' });
                     } catch (error) {
                         console.error("Error reverting premium user without end date:", error);
                     }
                 }
-                // NOTE: The `subscriptionEndDate` should be set in Firestore when a user
-                // successfully purchases a premium subscription (e.g., in your PaymentScreen).
-                // It should be a Unix timestamp in milliseconds representing when the subscription expires.
-                // Example: `Date.now() + (30 * 24 * 60 * 60 * 1000)` for a 30-day subscription.
-                // --- End Subscription Expiration Check ---
-
             } else {
                 setUserData(null);
                 setTotalReadingTimeMs(0);
@@ -194,28 +195,75 @@ const CustomDrawerContent = (props: any) => {
             }).start();
         });
 
-        Alert.alert(
-            'Cerrar sesión',
+        alertConfirm(
             '¿Estás seguro que deseas salir?',
-            [
-                { text: 'Cancelar', style: 'cancel' },
-                {
-                    text: 'Salir',
-                    onPress: async () => {
-                        try {
-                            await signOut(auth);
-                            navigation.navigate('Auth' as never);
-                        } catch (error) {
-                            Alert.alert('Error', 'No se pudo cerrar la sesión');
-                        }
-                    }
-                },
-            ]
+            async () => {
+                try {
+                    await signOut(auth);
+                    navigation.navigate('Auth' as never);
+                } catch (error) {
+                    alertError('No se pudo cerrar la sesión');
+                }
+            },
+            'Cerrar sesión',
+            'Salir',
+            'Cancelar'
         );
     };
 
     const isPremiumUser = userData?.accountType === 'premium';
     const drawerWidth = Dimensions.get('window').width * 0.65;
+
+    // Función para renderizar íconos personalizados con badges
+    const renderDrawerIcon = (routeName: string, color: string, size: number) => {
+        let iconName: string;
+
+        switch (routeName) {
+            case 'Home':
+                iconName = 'home';
+                break;
+            case 'Library':
+                iconName = 'bookshelf';
+                break;
+            case 'Favorites':
+                iconName = 'heart';
+                break;
+            case 'AddFriends':
+                iconName = 'account-group-outline';
+                break;
+            case 'InProgress':
+                iconName = 'book-open-outline';
+                break;
+            case 'Profile':
+                iconName = 'head';
+                break;
+            case 'Premium':
+                iconName = 'crown';
+                break;
+            default:
+                iconName = 'circle';
+        }
+
+        // Mostrar badge solo en la sección de Amigos si hay pendientes
+        const showBadge = routeName === 'AddFriends' && totalPending > 0;
+
+        return (
+            <View style={{ position: 'relative' }}>
+                <MaterialCommunityIcons
+                    name={iconName as any}
+                    size={size}
+                    color={color}
+                />
+                {showBadge && (
+                    <View style={styles.drawerBadge}>
+                        <Text style={styles.drawerBadgeText}>
+                            {totalPending > 99 ? '99+' : totalPending}
+                        </Text>
+                    </View>
+                )}
+            </View>
+        );
+    };
 
     if (drawerLoading) {
         return (
@@ -319,13 +367,9 @@ const CustomDrawerContent = (props: any) => {
                 {/* Navigation Items */}
                 <View style={styles.navigationContainer}>
                     <DrawerItemList
-                        {...props}
-                        activeBackgroundColor="rgba(255, 110, 110, 0.15)"
-                        inactiveBackgroundColor="transparent"
-                        labelStyle={styles.drawerLabel}
-                        inactiveTintColor="#B0B0C0"
-                        activeTintColor="#FF6E6E"
-                        itemStyle={styles.drawerItem}
+                        state={props.state}
+                        navigation={props.navigation}
+                        descriptors={props.descriptors}
                     />
                 </View>
             </DrawerContentScrollView>
@@ -361,7 +405,7 @@ const CustomDrawerContent = (props: any) => {
                 </Animated.View>
 
                 <View style={styles.versionContainer}>
-                    <Text style={styles.footerText}>Kamireader v1.0.5</Text>
+                    <Text style={styles.footerText}>Kamireader v1.0.6</Text>
                     <Text style={styles.footerText}>© {new Date().getFullYear()} KAMI Studios</Text>
                 </View>
             </View>
@@ -560,16 +604,34 @@ const styles = StyleSheet.create({
         fontSize: 11,
         marginTop: 3,
     },
-    loadingContainer: { // Added loading container style
+    loadingContainer: {
         flex: 1,
         justifyContent: 'center',
         alignItems: 'center',
     },
-    loadingText: { // Added loading text style
+    loadingText: {
         color: '#FFF',
         marginTop: 10,
         fontSize: 16,
         fontFamily: 'Roboto-Medium',
+    },
+    drawerBadge: {
+        position: 'absolute',
+        top: -5,
+        right: -5,
+        backgroundColor: '#FF5252',
+        borderRadius: 10,
+        minWidth: 18,
+        height: 18,
+        justifyContent: 'center',
+        alignItems: 'center',
+        borderWidth: 2,
+        borderColor: '#0F0F1A',
+    },
+    drawerBadgeText: {
+        color: '#FFF',
+        fontSize: 10,
+        fontWeight: 'bold',
     },
 });
 

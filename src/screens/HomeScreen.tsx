@@ -217,16 +217,12 @@ const HomeScreen = ({ navigation }: any) => {
             const auth = getAuth();
             const user = auth.currentUser;
             if (!user) {
-                // console.log('No user logged in. Skipping continue reading fetch.'); // Removed log
                 setContinueReadingComics([]);
                 return;
             }
 
-            // console.log('Fetching continue reading comics for user:', user.uid); // Removed log
-
             // --- CORRECT WAY: Target the subcollection directly ---
             const userInProgressRef = collection(db, 'users', user.uid, 'inProgressManga');
-            // console.log('Attempting to query subcollection:', userInProgressRef.path); // Removed log
 
             const querySnapshot = await getDocs(userInProgressRef);
 
@@ -422,9 +418,12 @@ const HomeScreen = ({ navigation }: any) => {
             )}
 
             {/* Language Badge */}
+            {/* Language Badge */}
             {item.lang && (
                 <View style={styles.languageBadge}>
-                    <Text style={styles.languageText}>{getFlagEmoji(item.lang)}</Text>
+                    <Text style={styles.languageText}>
+                        {item.lang === 'es-419' ? '🇲🇽' : getFlagEmoji(item.lang)}
+                    </Text>
                 </View>
             )}
 

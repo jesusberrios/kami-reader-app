@@ -8,8 +8,6 @@ import {
     TouchableOpacity,
     Image,
     SafeAreaView,
-    Alert,
-    AccessibilityInfo, // Keep for potential future use if needed, though not directly used for delete
     StatusBar,
     Platform,
     Dimensions,
@@ -19,21 +17,22 @@ import Ionicons from 'react-native-vector-icons/Ionicons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { auth, db } from '../firebase/config';
-import { collection, onSnapshot, query, orderBy, deleteDoc, doc } from 'firebase/firestore'; // Import doc and deleteDoc
+import { collection, onSnapshot, query, orderBy, deleteDoc, doc } from 'firebase/firestore';
+import { useAlertContext } from '../contexts/AlertContext'; // Importar el contexto de alertas
 
 // Define the type for an in-progress item
 type InProgressItem = {
-    id: string; // This will be the mangaHid
+    id: string;
     mangaTitle: string;
-    coverUrl: string; // Assuming you'll store coverUrl in inProgressManga
-    slug: string; // Assuming you'll store slug in inProgressManga
+    coverUrl: string;
+    slug: string;
     lastReadChapterHid?: string;
     lastReadChapterNumber?: string;
-    startedAt?: string; // Stored as a timestamp, but fetched as string for display
+    startedAt?: string;
 };
 
 const windowWidth = Dimensions.get('window').width;
-const itemWidth = windowWidth * 0.9; // Wider items for better display
+const itemWidth = windowWidth * 0.9;
 
 export default function InProgressScreen() {
     const navigation = useNavigation<any>();
@@ -41,6 +40,9 @@ export default function InProgressScreen() {
     const [loading, setLoading] = useState(true);
     const [currentUserUid, setCurrentUserUid] = useState<string | null>(null);
     const insets = useSafeAreaInsets();
+
+    // Obtener las funciones de alerta del contexto
+    const { alertError, alertSuccess, alertConfirm } = useAlertContext();
 
     // Effect to listen for authentication state changes
     useEffect(() => {
@@ -60,8 +62,7 @@ export default function InProgressScreen() {
         }
 
         const inProgressCollectionRef = collection(db, 'users', currentUserUid, 'inProgressManga');
-        // Order by 'startedAt' or 'lastReadChapter.readAt' for meaningful order
-        const q = query(inProgressCollectionRef, orderBy('startedAt', 'desc')); // Or 'lastReadChapter.readAt'
+        const q = query(inProgressCollectionRef, orderBy('startedAt', 'desc'));
 
         const unsubscribe = onSnapshot(
             q,
@@ -70,13 +71,13 @@ export default function InProgressScreen() {
                 querySnapshot.forEach((document) => {
                     const data = document.data();
                     inProgress.push({
-                        id: document.id, // The document ID is the mangaHid
+                        id: document.id,
                         mangaTitle: data.mangaTitle,
-                        coverUrl: data.coverUrl, // Ensure you save this when adding to inProgressManga
-                        slug: data.slug,    // Ensure you save this when adding to inProgressManga
+                        coverUrl: data.coverUrl,
+                        slug: data.slug,
                         lastReadChapterHid: data.lastReadChapterHid,
                         lastReadChapterNumber: data.lastReadChapterNumber,
-                        startedAt: data.startedAt?.toDate().toLocaleString(), // Convert Firestore Timestamp to readable string
+                        startedAt: data.startedAt?.toDate().toLocaleString(),
                     });
                 });
                 setInProgressComics(inProgress);
@@ -84,50 +85,41 @@ export default function InProgressScreen() {
             },
             (error) => {
                 console.error("Error fetching in-progress comics: ", error);
-                Alert.alert("Error", "No se pudieron cargar los cómics en curso.");
+                alertError("No se pudieron cargar los cómics en curso.");
                 setLoading(false);
             }
         );
 
         return () => unsubscribe();
-    }, [currentUserUid]);
+    }, [currentUserUid, alertError]);
 
     // Handle press on an in-progress comic item
     const handleInProgressPress = (slug: string) => {
         navigation.navigate('Details', { slug });
     };
 
-    // --- New function to handle deletion ---
+    // Handle deletion using alertConfirm from context
     const handleDeleteComic = (mangaId: string, mangaTitle: string) => {
         if (!currentUserUid) {
-            Alert.alert("Error", "No se pudo eliminar el cómic. No hay usuario autenticado.");
+            alertError("No se pudo eliminar el cómic. No hay usuario autenticado.");
             return;
         }
 
-        Alert.alert(
-            "Confirmar Eliminación",
+        alertConfirm(
             `¿Estás seguro de que quieres eliminar "${mangaTitle}" de tus cómics en curso?`,
-            [
-                {
-                    text: "Cancelar",
-                    style: "cancel"
-                },
-                {
-                    text: "Eliminar",
-                    onPress: async () => {
-                        try {
-                            const comicRef = doc(db, 'users', currentUserUid, 'inProgressManga', mangaId);
-                            await deleteDoc(comicRef);
-                            Alert.alert("Éxito", `'${mangaTitle}' ha sido eliminado.`);
-                        } catch (error) {
-                            console.error("Error deleting comic: ", error);
-                            Alert.alert("Error", `No se pudo eliminar '${mangaTitle}'.`);
-                        }
-                    },
-                    style: "destructive"
+            async () => {
+                try {
+                    const comicRef = doc(db, 'users', currentUserUid, 'inProgressManga', mangaId);
+                    await deleteDoc(comicRef);
+                    alertSuccess(`'${mangaTitle}' ha sido eliminado.`);
+                } catch (error) {
+                    console.error("Error deleting comic: ", error);
+                    alertError(`No se pudo eliminar '${mangaTitle}'.`);
                 }
-            ],
-            { cancelable: true }
+            },
+            "Confirmar Eliminación",
+            "Sí, eliminar",
+            "Cancelar"
         );
     };
 
@@ -244,7 +236,6 @@ export default function InProgressScreen() {
                                     </Text>
                                 )}
                             </View>
-                            {/* New Delete Button */}
                             <TouchableOpacity
                                 style={styles.deleteButton}
                                 onPress={() => handleDeleteComic(item.id, item.mangaTitle)}
@@ -264,6 +255,7 @@ export default function InProgressScreen() {
     );
 }
 
+// Los estilos se mantienen igual que en tu código original
 const styles = StyleSheet.create({
     container: {
         flex: 1,
@@ -279,7 +271,7 @@ const styles = StyleSheet.create({
     loadingText: {
         marginTop: 15,
         fontSize: 16,
-        color: '#6B8AFD', // Changed color to match new theme
+        color: '#6B8AFD',
         fontFamily: 'Roboto-Medium',
     },
     emptyStateContainer: {
@@ -313,11 +305,11 @@ const styles = StyleSheet.create({
     },
     loginButton: {
         marginTop: 30,
-        backgroundColor: '#6B8AFD', // Changed color
+        backgroundColor: '#6B8AFD',
         paddingVertical: 14,
         paddingHorizontal: 40,
         borderRadius: 25,
-        shadowColor: '#6B8AFD', // Changed color
+        shadowColor: '#6B8AFD',
         shadowOffset: { width: 0, height: 4 },
         shadowOpacity: 0.3,
         shadowRadius: 6,
@@ -330,11 +322,11 @@ const styles = StyleSheet.create({
     },
     browseButton: {
         marginTop: 30,
-        backgroundColor: '#FF6B6B', // Changed color
+        backgroundColor: '#FF6B6B',
         paddingVertical: 14,
         paddingHorizontal: 40,
         borderRadius: 25,
-        shadowColor: '#FF6B6B', // Changed color
+        shadowColor: '#FF6B6B',
         shadowOffset: { width: 0, height: 4 },
         shadowOpacity: 0.3,
         shadowRadius: 6,
@@ -414,12 +406,11 @@ const styles = StyleSheet.create({
         fontFamily: 'Roboto-Regular',
         marginTop: 4,
     },
-    // New styles for the delete button and to adjust the forward icon
     deleteButton: {
         padding: 10,
         marginRight: 5,
     },
     forwardIcon: {
-        paddingRight: 15, // Adjust spacing for the forward arrow
+        paddingRight: 15,
     }
 });

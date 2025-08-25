@@ -1,8 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import {
     View,
     TextInput,
-    Alert,
     StyleSheet,
     ActivityIndicator,
     ImageBackground,
@@ -15,7 +14,7 @@ import {
     ScrollView,
     Modal,
     SafeAreaView,
-    Linking, // Import Linking for external URLs
+    Linking,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native/';
 import { StackNavigationProp } from '@react-navigation/stack';
@@ -29,150 +28,217 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import UpdateRequiredModal from '../components/updateRequiredModal';
 import { getAppVersion } from '../utils/versionUtils';
 import { User } from 'firebase/auth';
+import { useAlertContext } from '../contexts/AlertContext';
 
 const { width, height } = Dimensions.get('window');
 
 type AuthScreenNavigationProp = StackNavigationProp<RootStackParamList, 'Auth'>;
 
-// A simple placeholder avatar. In a real app, you might use a more sophisticated
-// service or generate a unique avatar based on the username.
-const generatePlaceholderAvatar = (username: string): string => {
-    // This is a minimal transparent GIF. For a visible placeholder,
-    // you'd typically use a small, pre-made image or generate a simple SVG.
-    // Example: `https://placehold.co/100x100/333333/FFFFFF?text=${username.charAt(0).toUpperCase()}`
-    return 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
-};
 const APP_IDS = {
     ios: '5cd6ecff-6004-4696-b780-172ff5ca8a22',
     android: 'com.yourusername.kamireader'
 };
+
+const ALLOWED_DOMAINS = [
+    'gmail.com',
+    'outlook.com',
+    'hotmail.com',
+    'yahoo.com',
+    'icloud.com',
+    'live.com',
+    'msn.com'
+];
+
+// Componente memoizado para inputs
+const AuthInput = React.memo(({
+    label,
+    value,
+    onChangeText,
+    placeholder,
+    secureTextEntry = false,
+    keyboardType = 'default',
+    autoCapitalize = 'sentences',
+    iconName,
+    error,
+    onBlur,
+    ...props
+}: {
+    label: string;
+    value: string;
+    onChangeText: (text: string) => void;
+    placeholder: string;
+    secureTextEntry?: boolean;
+    keyboardType?: any;
+    autoCapitalize?: any;
+    iconName: string;
+    error?: string;
+    onBlur?: () => void;
+}) => {
+    const [secure, setSecure] = useState(secureTextEntry);
+
+    return (
+        <View style={styles.inputGroup}>
+            <Text style={styles.label}>{label}</Text>
+            <View style={[
+                styles.inputWrapper,
+                error && styles.inputWrapperError
+            ]}>
+                <MaterialCommunityIcons
+                    name={iconName as any}
+                    size={20}
+                    color={error ? '#FF5252' : '#888'}
+                    style={styles.inputIcon}
+                />
+                <TextInput
+                    placeholder={placeholder}
+                    placeholderTextColor="#888"
+                    value={value}
+                    onChangeText={onChangeText}
+                    onBlur={onBlur}
+                    style={styles.input}
+                    keyboardType={keyboardType}
+                    autoCapitalize={autoCapitalize}
+                    autoCorrect={false}
+                    secureTextEntry={secure}
+                    {...props}
+                />
+                {secureTextEntry && (
+                    <TouchableOpacity
+                        onPress={() => setSecure(!secure)}
+                        style={styles.eyeIcon}
+                        accessibilityLabel={secure ? "Mostrar contraseña" : "Ocultar contraseña"}
+                    >
+                        <MaterialCommunityIcons
+                            name={secure ? "eye-off" : "eye"}
+                            size={20}
+                            color="#888"
+                        />
+                    </TouchableOpacity>
+                )}
+            </View>
+            {error && (
+                <Text style={styles.errorText}>
+                    <MaterialCommunityIcons name="alert-circle" size={14} color="#FF5252" /> {error}
+                </Text>
+            )}
+        </View>
+    );
+});
+
 const AuthScreen = () => {
+    const navigation = useNavigation<AuthScreenNavigationProp>();
+    const insets = useSafeAreaInsets();
+    const { alertError, alertSuccess, alertConfirm, alert } = useAlertContext();
+
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [username, setUsername] = useState('');
     const [isLogin, setIsLogin] = useState(true);
-    const [loading, setLoading] = useState(true); // Set to true initially to show loading while checking auth state
-    const [secureEntry, setSecureEntry] = useState(true);
+    const [loading, setLoading] = useState(true);
     const [termsAccepted, setTermsAccepted] = useState(false);
     const [termsVisible, setTermsVisible] = useState(false);
     const [termsContent, setTermsContent] = useState('');
-    const [resetEmail, setResetEmail] = useState(''); // New state for reset password email
-    const [resetVisible, setResetVisible] = useState(false); // New state for reset password modal visibility
-    const navigation = useNavigation<AuthScreenNavigationProp>();
-    const insets = useSafeAreaInsets();
-    const allowedDomains = [
-        'gmail.com',
-        'outlook.com',
-        'hotmail.com',
-        'yahoo.com',
-        'icloud.com',
-        'live.com',
-        'msn.com'
-    ];
+    const [resetEmail, setResetEmail] = useState('');
+    const [resetVisible, setResetVisible] = useState(false);
     const [updateModalVisible, setUpdateModalVisible] = useState(false);
     const [minVersion, setMinVersion] = useState('');
     const [currentVersion, setCurrentVersion] = useState('');
     const [emailError, setEmailError] = useState('');
-    // Función para traducir los errores de Firebase
-    const translateFirebaseError = (error: any): string => {
-        switch (error.code) {
-            // Errores de autenticación
-            case 'auth/invalid-email':
-                return 'El correo electrónico no es válido';
-            case 'auth/user-disabled':
-                return 'Esta cuenta ha sido deshabilitada';
-            case 'auth/user-not-found':
-                return 'No existe una cuenta con este correo';
-            case 'auth/wrong-password':
-                return 'Usuario o contraseña incorrectos';
-            case 'auth/email-already-in-use':
-                return 'Este correo ya está registrado';
-            case 'auth/operation-not-allowed':
-                return 'Esta operación no está permitida';
-            case 'auth/weak-password':
-                return 'La contraseña es demasiado débil (mínimo 6 caracteres)';
-            case 'auth/too-many-requests':
-                return 'Demasiados intentos. Por favor espera e intenta más tarde';
-            case 'auth/account-exists-with-different-credential':
-                return 'Ya existe una cuenta con este correo usando otro método de autenticación';
-            case 'auth/requires-recent-login':
-                return 'Esta operación requiere que inicies sesión nuevamente';
-            case 'auth/provider-already-linked':
-                return 'Esta cuenta ya está vinculada con otro proveedor';
-            case 'auth/credential-already-in-use':
-                return 'Estas credenciales ya están en uso por otra cuenta';
-            case 'auth/invalid-credential':
-                return 'Credenciales inválidas o expiradas';
-            case 'auth/invalid-verification-code':
-                return 'Código de verificación inválido';
-            case 'auth/invalid-verification-id':
-                return 'ID de verificación inválido';
-            case 'auth/missing-verification-code':
-                return 'Falta el código de verificación';
-            case 'auth/missing-verification-id':
-                return 'Falta el ID de verificación';
-            case 'auth/network-request-failed':
-                return 'Error de conexión. Por favor verifica tu internet';
-            case 'auth/timeout':
-                return 'Tiempo de espera agotado. Por favor intenta nuevamente';
-            case 'auth/expired-action-code':
-                return 'El enlace ha expirado';
-            case 'auth/invalid-action-code':
-                return 'El enlace es inválido o ya fue usado';
 
-            // Errores de verificación de email
-            case 'auth/missing-email':
-                return 'Falta el correo electrónico';
+    // Memoizar valores derivados
+    const canSubmit = useMemo(() => {
+        if (loading) return false;
+        if (!email || !password) return false;
+        if (!isLogin && (!username || !termsAccepted || emailError)) return false;
+        return true;
+    }, [loading, email, password, isLogin, username, termsAccepted, emailError]);
 
-            // Errores genéricos
-            default:
-                return error.message || 'Ocurrió un error inesperado';
+    // Memoizar función de error
+    const translateFirebaseError = useCallback((error: any): string => {
+        const errorMap: { [key: string]: string } = {
+            'auth/invalid-email': 'El correo electrónico no es válido',
+            'auth/user-disabled': 'Esta cuenta ha sido deshabilitada',
+            'auth/user-not-found': 'No existe una cuenta con este correo',
+            'auth/wrong-password': 'Usuario o contraseña incorrectos',
+            'auth/email-already-in-use': 'Este correo ya está registrado',
+            'auth/operation-not-allowed': 'Esta operación no está permitida',
+            'auth/weak-password': 'La contraseña es demasiado débil (mínimo 6 caracteres)',
+            'auth/too-many-requests': 'Demasiados intentos. Por favor espera e intenta más tarde',
+            'auth/account-exists-with-different-credential': 'Ya existe una cuenta con este correo usando otro método de autenticación',
+            'auth/requires-recent-login': 'Esta operación requiere que inicies sesión nuevamente',
+            'auth/provider-already-linked': 'Esta cuenta ya está vinculada con otro proveedor',
+            'auth/credential-already-in-use': 'Estas credenciales ya están en uso por otra cuenta',
+            'auth/invalid-credential': 'Credenciales inválidas o expiradas',
+            'auth/invalid-verification-code': 'Código de verificación inválido',
+            'auth/invalid-verification-id': 'ID de verificación inválido',
+            'auth/missing-verification-code': 'Falta el código de verificación',
+            'auth/missing-verification-id': 'Falta el ID de verificación',
+            'auth/network-request-failed': 'Error de conexión. Por favor verifica tu internet',
+            'auth/timeout': 'Tiempo de espera agotado. Por favor intenta nuevamente',
+            'auth/expired-action-code': 'El enlace ha expirado',
+            'auth/invalid-action-code': 'El enlace es inválido o ya fue usado',
+            'auth/missing-email': 'Falta el correo electrónico',
+        };
+
+        return errorMap[error.code] || error.message || 'Ocurrió un error inesperado';
+    }, []);
+
+    // Validación de email memoizada
+    const validateEmail = useCallback((email: string): string => {
+        const trimmed = email.trim().toLowerCase();
+        if (!trimmed) return '';
+
+        const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!re.test(trimmed)) return 'Formato de correo inválido';
+
+        const domain = trimmed.split('@')[1];
+        if (!ALLOWED_DOMAINS.includes(domain)) {
+            return `Dominio no permitido. Usa: ${ALLOWED_DOMAINS.join(', ')}`;
         }
-    };
-    useEffect(() => {
-        const checkAppVersion = async () => {
-            try {
-                // Obtener la versión actual de la app
-                const appVersion = getAppVersion(); // Asegúrate de importar getAppVersion
-                setCurrentVersion(appVersion);
 
-                // Obtener la versión mínima requerida de Firestore
+        return '';
+    }, []);
+
+    // Efectos iniciales
+    useEffect(() => {
+        const initializeAuth = async () => {
+            try {
+                const [appVersion, termsDoc] = await Promise.all([
+                    getAppVersion(),
+                    getDoc(doc(db, "documents", "ky3lJBuFrZnZjnt9mHll"))
+                ]);
+
+                setCurrentVersion(appVersion);
+                if (termsDoc.exists()) {
+                    setTermsContent(termsDoc.data()?.content || 'No se pudieron cargar los términos y condiciones.');
+                }
+
                 const paramsDoc = await getDoc(doc(db, "parameters", "appSettings"));
                 if (paramsDoc.exists()) {
                     const requiredVersion = paramsDoc.data().minAppVersion;
                     setMinVersion(requiredVersion);
-
-                    // Comparar versiones
                     if (isVersionOutdated(appVersion, requiredVersion)) {
                         setUpdateModalVisible(true);
                     }
                 }
             } catch (error) {
-                console.error("Error al verificar la versión de la app:", error);
+                console.error("Error inicializando auth:", error);
             }
         };
+
         const unsubscribe = AuthService.onAuthStateChanged(async (user) => {
             if (user) {
-                // Verificar si el correo está verificado
-                await user.reload(); // Actualiza el estado de verificación
+                await user.reload();
                 if (user.emailVerified) {
                     await checkUserProfile(user.uid);
                 } else {
-                    // Forzar cierre de sesión si no está verificado
                     await AuthService.logout();
-                    Alert.alert(
-                        'Verificación requerida',
+                    alertConfirm(
                         'Debes verificar tu correo electrónico antes de acceder. ¿Quieres que reenviemos el correo de verificación?',
-                        [
-                            {
-                                text: 'Cancelar',
-                                style: 'cancel'
-                            },
-                            {
-                                text: 'Reenviar correo',
-                                onPress: () => handleResendVerification(user)
-                            }
-                        ]
+                        () => handleResendVerification(user),
+                        'Verificación requerida',
+                        'Reenviar correo',
+                        'Cancelar'
                     );
                     setLoading(false);
                 }
@@ -180,251 +246,162 @@ const AuthScreen = () => {
                 setLoading(false);
             }
         });
-        // Effect to fetch terms and conditions from Firestore
-        const fetchTerms = async () => {
-            try {
-                const termsDoc = await getDoc(doc(db, "documents", "ky3lJBuFrZnZjnt9mHll")); // Corrected doc ID+
-                console.log(termsDoc.exists(), termsDoc.data()?.content);
 
-                if (termsDoc.exists() && termsDoc.data()?.content) {
-                    setTermsContent(termsDoc.data().content);
-                } else {
-                    setTermsContent('No se pudieron cargar los términos y condiciones.');
-                }
-            } catch (error) {
-                console.error("Error fetching terms and conditions:", error);
-                setTermsContent('Error al cargar los términos y condiciones.');
-            }
-        };
+        initializeAuth();
+        return () => unsubscribe();
+    }, [alertConfirm]);
 
-        fetchTerms();
-        checkAppVersion();
-        return () => unsubscribe(); // Cleanup auth listener when component unmounts
-    }, []);
-    const isVersionOutdated = (current: string, required: string): boolean => {
+    // Funciones memoizadas
+    const isVersionOutdated = useCallback((current: string, required: string): boolean => {
         const currentParts = current.split('.').map(Number);
         const requiredParts = required.split('.').map(Number);
 
         for (let i = 0; i < Math.max(currentParts.length, requiredParts.length); i++) {
             const currentPart = currentParts[i] || 0;
             const requiredPart = requiredParts[i] || 0;
-
             if (currentPart < requiredPart) return true;
             if (currentPart > requiredPart) return false;
         }
+        return false;
+    }, []);
 
-        return false; // Las versiones son iguales
-    };
-
-    const validateEmail = (email: string): string => {
-        const trimmed = email.trim().toLowerCase();
-
-        if (!trimmed) return ''; // No mostrar error si está vacío
-
-        const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-        if (!re.test(trimmed)) return 'Formato de correo inválido';
-
-        const domain = trimmed.split('@')[1];
-        if (!allowedDomains.includes(domain)) {
-            return `Dominio no permitido. Usa: ${allowedDomains.join(', ')}`;
-        }
-
-        return ''; // No hay error
-    };
-    const handleResendVerification = async (user: User | null | undefined) => {
+    const handleResendVerification = useCallback(async (user: User | null | undefined) => {
         if (!user) {
-            Alert.alert('Error', 'No hay usuario autenticado');
+            alertError('No hay usuario autenticado');
             return;
         }
 
         try {
             await AuthService.sendEmailVerification(user);
-            Alert.alert('Correo reenviado', 'Se ha enviado un nuevo correo de verificación');
+            alertSuccess('Se ha enviado un nuevo correo de verificación');
         } catch (error: any) {
-            Alert.alert('Error', translateFirebaseError(error));
+            alertError(translateFirebaseError(error));
         }
-    };
-    // Function to check if user profile exists in Firestore and navigate
-    const checkUserProfile = async (userId: string) => {
+    }, [alertError, alertSuccess, translateFirebaseError]);
+
+    const checkUserProfile = useCallback(async (userId: string) => {
         try {
             const userDoc = await getDoc(doc(db, "users", userId));
             if (userDoc.exists()) {
-                // If profile exists, navigate to Main screen and reset navigation stack
                 navigation.reset({
                     index: 0,
                     routes: [{ name: 'Main' }],
                 });
             } else {
-                // If user profile is not found in Firestore (e.g., incomplete registration),
-                // log them out and show an alert.
-                console.warn("User profile not found in Firestore for UID:", userId);
                 await AuthService.logout();
-                Alert.alert('Error', 'Tu perfil de usuario no está completo. Por favor, intenta iniciar sesión de nuevo.');
-                setLoading(false); // Stop loading and show auth screen
+                alertError('Tu perfil de usuario no está completo. Por favor, intenta iniciar sesión de nuevo.');
+                setLoading(false);
             }
         } catch (error) {
-            console.error("Error verifying user profile:", error);
-            Alert.alert('Error', 'No se pudo verificar tu perfil. Por favor, reinicia la aplicación.');
-            await AuthService.logout(); // Log out in case of verification error
-            setLoading(false); // Stop loading and show auth screen
-        }
-    };
-
-    // Luego modifica las funciones que muestran errores para usar esta traducción:
-
-    const handleLogin = async () => {
-        try {
-            setLoading(true);
-            await AuthService.login(email, password);
-        } catch (error: any) {
-            if (error.code === 'auth/email-not-verified') {
-                const currentUser = AuthService.getCurrentUser();
-                Alert.alert(
-                    'Correo no verificado',
-                    'Por favor verifica tu correo electrónico antes de iniciar sesión.',
-                    [
-                        { text: 'Cancelar', style: 'cancel' },
-                        {
-                            text: 'Reenviar verificación',
-                            onPress: () => {
-                                if (currentUser) {
-                                    handleResendVerification(currentUser);
-                                }
-                            }
-                        }
-                    ]
-                );
-            } else {
-                Alert.alert('Error de autenticación', translateFirebaseError(error));
-            }
+            console.error("Error verificando perfil:", error);
+            alertError('No se pudo verificar tu perfil. Por favor, reinicia la aplicación.');
+            await AuthService.logout();
             setLoading(false);
         }
-    };
+    }, [navigation, alertError]);
 
-    const handleRegister = async () => {
-        if (!termsAccepted) {
-            Alert.alert('Términos y condiciones', 'Debes aceptar los términos y condiciones para registrarte.');
-            return;
-        }
-
-        if (emailError) {
-            Alert.alert('Correo inválido', emailError);
-            return;
-        }
+    const handleAuth = useCallback(async () => {
+        if (!canSubmit) return;
 
         try {
             setLoading(true);
-            const userCredential = await AuthService.register(email, password);
-            const user = userCredential.user;
-
-            await AuthService.sendEmailVerification(user);
-
-            const avatarBase64 = generatePlaceholderAvatar(username);
-
-            await setDoc(doc(db, "users", user.uid), {
-                username,
-                email,
-                emailVerified: false,
-                avatar: avatarBase64,
-                createdAt: new Date(),
-                lastLogin: new Date(),
-                preferences: {
-                    theme: 'dark',
-                    readingDirection: 'right-to-left',
-                    notificationEnabled: true
-                },
-                accountType: 'free',
-            });
-
-            Alert.alert(
-                'Verificación requerida',
-                'Se ha enviado un correo de verificación a tu dirección de email. Por favor verifica tu correo antes de iniciar sesión.',
-                [
-                    {
-                        text: 'OK',
-                        onPress: () => setIsLogin(true)
-                    }
-                ]
-            );
-        } catch (error: any) {
-            Alert.alert('Error en el registro', translateFirebaseError(error));
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    // Main authentication handler (login or register)
-    const handleAuth = async () => {
-        if (!email || !password) {
-            Alert.alert('Campos requeridos', 'Por favor ingresa tu correo y contraseña');
-            return;
-        }
-
-        if (!isLogin && !username) {
-            Alert.alert('Nombre de usuario requerido', 'Por favor ingresa un nombre de usuario');
-            return;
-        }
-
-        try {
             if (isLogin) {
-                await handleLogin();
+                await AuthService.login(email, password);
             } else {
                 await handleRegister();
             }
         } catch (error: any) {
-            // This catch block might be redundant if handleLogin/handleRegister already catch
-            // but it's good for a final fallback.
-            Alert.alert('Error', error.message || 'Ocurrió un problema al procesar tu solicitud');
-            setLoading(false); // Ensure loading is stopped on any unexpected error
+            if (error.code === 'auth/email-not-verified') {
+                const currentUser = AuthService.getCurrentUser();
+                alertConfirm(
+                    'Por favor verifica tu correo electrónico antes de iniciar sesión.',
+                    () => currentUser && handleResendVerification(currentUser),
+                    'Correo no verificado',
+                    'Reenviar verificación',
+                    'Cancelar'
+                );
+            } else {
+                alertError(translateFirebaseError(error));
+            }
+            setLoading(false);
         }
-    };
+    }, [canSubmit, isLogin, email, password, handleResendVerification, alertConfirm, alertError, translateFirebaseError]);
 
-    // Toggle visibility of terms and conditions modal
-    const toggleTermsVisibility = () => {
-        setTermsVisible(!termsVisible);
-    };
+    const handleRegister = useCallback(async () => {
+        if (!termsAccepted) {
+            alertError('Debes aceptar los términos y condiciones para registrarte.');
+            return;
+        }
 
-    // Handle accepting terms and conditions
-    const handleAcceptTerms = () => {
-        setTermsAccepted(true);
-        setTermsVisible(false);
-    };
+        try {
+            const userCredential = await AuthService.register(email, password);
+            const user = userCredential.user;
 
-    // Handle rejecting terms and conditions
-    const handleRejectTerms = () => {
-        setTermsAccepted(false);
-        setTermsVisible(false);
-    };
+            await Promise.all([
+                AuthService.sendEmailVerification(user),
+                setDoc(doc(db, "users", user.uid), {
+                    username,
+                    email,
+                    emailVerified: false,
+                    avatar: 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7',
+                    createdAt: new Date(),
+                    lastLogin: new Date(),
+                    preferences: {
+                        theme: 'dark',
+                        readingDirection: 'right-to-left',
+                        notificationEnabled: true
+                    },
+                    accountType: 'free',
+                })
+            ]);
 
-    // Toggle visibility of reset password modal
-    const toggleResetVisibility = () => {
-        setResetVisible(!resetVisible);
-    };
+            alert(
+                'Verificación requerida',
+                'Se ha enviado un correo de verificación a tu dirección de email. Por favor verifica tu correo antes de iniciar sesión.',
+                [{ text: 'OK', onPress: () => setIsLogin(true) }]
+            );
+        } catch (error: any) {
+            alertError(translateFirebaseError(error));
+        } finally {
+            setLoading(false);
+        }
+    }, [email, password, username, termsAccepted, alert, alertError, translateFirebaseError]);
 
-    const handleSendResetPassword = async () => {
+    const handleSendResetPassword = useCallback(async () => {
         if (!resetEmail) {
-            Alert.alert('Correo requerido', 'Por favor ingresa tu correo electrónico.');
+            alertError('Por favor ingresa tu correo electrónico.');
             return;
         }
         setLoading(true);
         try {
             await AuthService.resetPassword(resetEmail);
-            Alert.alert('Correo enviado', 'Se ha enviado un correo electrónico a ' + resetEmail + ' con instrucciones para restablecer tu contraseña.');
+            alertSuccess(`Se ha enviado un correo electrónico a ${resetEmail} con instrucciones para restablecer tu contraseña.`);
             setResetVisible(false);
         } catch (error: any) {
-            Alert.alert('Error al restablecer la contraseña', translateFirebaseError(error));
+            alertError(translateFirebaseError(error));
         } finally {
             setLoading(false);
         }
-    };
+    }, [resetEmail, alertError, alertSuccess, translateFirebaseError]);
 
-    // Function to open external links (Terms of Service, Privacy Policy)
-    const openExternalLink = (url: string) => {
+    // Handlers de UI memoizados
+    const toggleTermsVisibility = useCallback(() => setTermsVisible(prev => !prev), []);
+    const toggleResetVisibility = useCallback(() => setResetVisible(prev => !prev), []);
+    const handleAcceptTerms = useCallback(() => {
+        setTermsAccepted(true);
+        setTermsVisible(false);
+    }, []);
+    const handleRejectTerms = useCallback(() => {
+        setTermsAccepted(false);
+        setTermsVisible(false);
+    }, []);
+    const toggleAuthMode = useCallback(() => setIsLogin(prev => !prev), []);
+
+    const openExternalLink = useCallback((url: string) => {
         Linking.openURL(url).catch(err => console.error("Couldn't load page", err));
-    };
+    }, []);
 
-    // Show full screen loading indicator if authentication state is being checked
-    if (loading) {
+    if (loading && !updateModalVisible) {
         return (
             <View style={styles.fullScreenLoading}>
                 <ActivityIndicator size="large" color="#FF5252" />
@@ -441,26 +418,15 @@ const AuthScreen = () => {
                 resizeMode="cover"
                 blurRadius={2}
             >
-                <StatusBar
-                    translucent
-                    backgroundColor="transparent"
-                    barStyle="light-content"
-                />
+                <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
 
-                <LinearGradient
-                    colors={['rgba(0,0,0,0.8)', 'rgba(0,0,0,0.9)']}
-                    style={styles.gradient}
-                >
+                <LinearGradient colors={['rgba(0,0,0,0.8)', 'rgba(0,0,0,0.9)']} style={styles.gradient}>
                     <KeyboardAvoidingView
                         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
                         style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}
-                        // Adjust keyboardVerticalOffset to prevent content from being hidden by keyboard
                         keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : -(insets.bottom || 0)}
                     >
-                        <ScrollView
-                            contentContainerStyle={styles.scrollContainer}
-                            keyboardShouldPersistTaps="handled"
-                        >
+                        <ScrollView contentContainerStyle={styles.scrollContainer} keyboardShouldPersistTaps="handled">
                             <View style={styles.logoContainer}>
                                 <MaterialCommunityIcons name="book-open-variant" size={60} color="#FF5252" />
                                 <Text style={styles.logoText}>KAMIREADER</Text>
@@ -473,89 +439,39 @@ const AuthScreen = () => {
                                 </Text>
 
                                 {!isLogin && (
-                                    <View style={styles.inputGroup}>
-                                        <Text style={styles.label}>Nombre de usuario</Text>
-                                        <View style={styles.inputWrapper}>
-                                            <MaterialCommunityIcons name="account" size={20} color="#888" style={styles.inputIcon} />
-                                            <TextInput
-                                                placeholder="Ej: otakulover"
-                                                placeholderTextColor="#888"
-                                                value={username}
-                                                onChangeText={setUsername}
-                                                style={styles.input}
-                                                autoCapitalize="none"
-                                                autoCorrect={false}
-                                                textContentType="username" // Added for autofill
-                                            />
-                                        </View>
-                                    </View>
+                                    <AuthInput
+                                        label="Nombre de usuario"
+                                        value={username}
+                                        onChangeText={setUsername}
+                                        placeholder="Ej: otakulover"
+                                        iconName="account"
+                                        autoCapitalize="none"
+                                    />
                                 )}
 
-                                <View style={styles.inputGroup}>
-                                    <Text style={styles.label}>Correo electrónico</Text>
-                                    <View style={[
-                                        styles.inputWrapper,
-                                        emailError && styles.inputWrapperError // Aplica estilo de error si hay mensaje
-                                    ]}>
-                                        <MaterialCommunityIcons
-                                            name="email"
-                                            size={20}
-                                            color={emailError ? '#FF5252' : '#888'}
-                                            style={styles.inputIcon}
-                                        />
-                                        <TextInput
-                                            placeholder="tucorreo@ejemplo.com"
-                                            placeholderTextColor="#888"
-                                            value={email}
-                                            onChangeText={(text) => {
-                                                setEmail(text);
-                                                setEmailError(validateEmail(text)); // Valida en tiempo real
-                                            }}
-                                            onBlur={() => {
-                                                // Validación adicional al salir del campo
-                                                setEmailError(validateEmail(email));
-                                            }}
-                                            style={styles.input}
-                                            keyboardType="email-address"
-                                            autoCapitalize="none"
-                                            autoCorrect={false}
-                                            textContentType="emailAddress"
-                                        />
-                                    </View>
-                                    {emailError ? (
-                                        <Text style={styles.errorText}>
-                                            <MaterialCommunityIcons name="alert-circle" size={14} color="#FF5252" /> {emailError}
-                                        </Text>
-                                    ) : null}
-                                </View>
+                                <AuthInput
+                                    label="Correo electrónico"
+                                    value={email}
+                                    onChangeText={(text) => {
+                                        setEmail(text);
+                                        setEmailError(validateEmail(text));
+                                    }}
+                                    onBlur={() => setEmailError(validateEmail(email))}
+                                    placeholder="tucorreo@ejemplo.com"
+                                    iconName="email"
+                                    keyboardType="email-address"
+                                    autoCapitalize="none"
+                                    error={emailError}
+                                />
 
-                                <View style={styles.inputGroup}>
-                                    <Text style={styles.label}>Contraseña</Text>
-                                    <View style={styles.inputWrapper}>
-                                        <MaterialCommunityIcons name="lock" size={20} color="#888" style={styles.inputIcon} />
-                                        <TextInput
-                                            placeholder="••••••••"
-                                            placeholderTextColor="#888"
-                                            value={password}
-                                            onChangeText={setPassword}
-                                            secureTextEntry={secureEntry}
-                                            style={styles.input}
-                                            textContentType={secureEntry ? "password" : "none"} // Added for autofill
-                                        />
-                                        <TouchableOpacity
-                                            onPress={() => setSecureEntry(!secureEntry)}
-                                            style={styles.eyeIcon}
-                                            accessibilityLabel={secureEntry ? "Mostrar contraseña" : "Ocultar contraseña"}
-                                            accessibilityRole="button"
-                                        >
-                                            <MaterialCommunityIcons
-                                                name={secureEntry ? "eye-off" : "eye"}
-                                                size={20}
-                                                color="#888"
-                                            />
-                                        </TouchableOpacity>
-                                    </View>
-                                </View>
+                                <AuthInput
+                                    label="Contraseña"
+                                    value={password}
+                                    onChangeText={setPassword}
+                                    placeholder="••••••••"
+                                    iconName="lock"
+                                    secureTextEntry={true}
+                                />
 
                                 {!isLogin && (
                                     <>
@@ -563,9 +479,6 @@ const AuthScreen = () => {
                                             <TouchableOpacity
                                                 style={[styles.checkbox, termsAccepted && styles.checkboxChecked]}
                                                 onPress={() => setTermsAccepted(!termsAccepted)}
-                                                accessibilityLabel={termsAccepted ? "Términos y condiciones aceptados" : "Aceptar términos y condiciones"}
-                                                accessibilityRole="checkbox"
-                                                accessibilityState={{ checked: termsAccepted }}
                                             >
                                                 {termsAccepted && <MaterialCommunityIcons name="check" size={16} color="white" />}
                                             </TouchableOpacity>
@@ -580,19 +493,11 @@ const AuthScreen = () => {
                                 )}
 
                                 <TouchableOpacity
-                                    style={styles.primaryButton}
+                                    style={[styles.primaryButton, !canSubmit && styles.buttonDisabled]}
                                     onPress={handleAuth}
-                                    activeOpacity={0.8}
-                                    disabled={loading || (!isLogin && (!termsAccepted || !!emailError || !username))}
-                                    accessibilityLabel={isLogin ? 'Iniciar Sesión' : 'Registrarme'}
-                                    accessibilityRole="button"
+                                    disabled={!canSubmit}
                                 >
-                                    <LinearGradient
-                                        colors={['#FF6B6B', '#FF4F4F']}
-                                        style={styles.buttonGradient}
-                                        start={{ x: 0, y: 0 }}
-                                        end={{ x: 1, y: 0 }}
-                                    >
+                                    <LinearGradient colors={['#FF6B6B', '#FF4F4F']} style={styles.buttonGradient}>
                                         {loading ? (
                                             <ActivityIndicator size="small" color="white" />
                                         ) : (
@@ -611,80 +516,51 @@ const AuthScreen = () => {
                                     </LinearGradient>
                                 </TouchableOpacity>
 
-                                <TouchableOpacity
-                                    onPress={() => setIsLogin(!isLogin)}
-                                    style={styles.secondaryButton}
-                                    disabled={loading}
-                                    accessibilityLabel={isLogin ? 'Cambiar a registro' : 'Cambiar a inicio de sesión'}
-                                    accessibilityRole="button"
-                                >
+                                <TouchableOpacity onPress={toggleAuthMode} style={styles.secondaryButton}>
                                     <Text style={styles.secondaryButtonText}>
-                                        {isLogin
-                                            ? '¿No tienes cuenta? Regístrate'
-                                            : '¿Ya tienes cuenta? Inicia sesión'}
+                                        {isLogin ? '¿No tienes cuenta? Regístrate' : '¿Ya tienes cuenta? Inicia sesión'}
                                     </Text>
                                 </TouchableOpacity>
 
                                 {isLogin && (
-                                    <TouchableOpacity
-                                        onPress={toggleResetVisibility}
-                                        style={styles.forgotPasswordButton}
-                                        disabled={loading}
-                                        accessibilityLabel="Olvidaste tu contraseña"
-                                        accessibilityRole="button"
-                                    >
-                                        <Text style={styles.forgotPasswordText}>
-                                            ¿Olvidaste tu contraseña?
-                                        </Text>
-                                    </TouchableOpacity>
-                                )}
-                                {/* Mostrar solo en login: reenviar verificación */}
-                                {isLogin && (
-                                    <TouchableOpacity
-                                        onPress={() => handleResendVerification(AuthService.getCurrentUser())}
-                                        style={styles.resendVerificationButton}
-                                        disabled={loading}
-                                    >
-                                        <Text style={styles.resendVerificationText}>
-                                            ¿No recibiste el correo de verificación?
-                                        </Text>
-                                    </TouchableOpacity>
+                                    <>
+                                        <TouchableOpacity onPress={toggleResetVisibility} style={styles.forgotPasswordButton}>
+                                            <Text style={styles.forgotPasswordText}>¿Olvidaste tu contraseña?</Text>
+                                        </TouchableOpacity>
+                                        <TouchableOpacity
+                                            onPress={() => handleResendVerification(AuthService.getCurrentUser())}
+                                            style={styles.resendVerificationButton}
+                                        >
+                                            <Text style={styles.resendVerificationText}>¿No recibiste el correo de verificación?</Text>
+                                        </TouchableOpacity>
+                                    </>
                                 )}
                             </View>
 
                             <View style={styles.footer}>
                                 <Text style={styles.footerText}>
                                     Al continuar, aceptas nuestros
-                                    <TouchableOpacity onPress={() => openExternalLink('https://example.com/terms-of-service')} accessibilityLabel="Términos de servicio">
+                                    <TouchableOpacity onPress={() => openExternalLink('https://example.com/terms-of-service')}>
                                         <Text style={styles.link}> Términos de servicio</Text>
                                     </TouchableOpacity>
                                     y
-                                    <TouchableOpacity onPress={() => openExternalLink('https://example.com/privacy-policy')} accessibilityLabel="Política de privacidad">
+                                    <TouchableOpacity onPress={() => openExternalLink('https://example.com/privacy-policy')}>
                                         <Text style={styles.link}> Política de privacidad</Text>
                                     </TouchableOpacity>
                                 </Text>
-                                <Text style={styles.copyright}>
-                                    © {new Date().getFullYear()} Kamireader - Todos los derechos reservados
-                                </Text>
+                                <Text style={styles.copyright}>© {new Date().getFullYear()} Kamireader</Text>
                             </View>
                         </ScrollView>
                     </KeyboardAvoidingView>
                 </LinearGradient>
 
-                {/* Terms and Conditions Modal */}
-                <Modal
-                    animationType="slide"
-                    transparent={true}
-                    visible={termsVisible}
-                    onRequestClose={toggleTermsVisibility}
-                >
+                {/* Modales */}
+                <Modal visible={termsVisible} transparent animationType="slide" onRequestClose={toggleTermsVisibility}>
                     <View style={styles.modalOverlay}>
                         <View style={styles.modalContainer}>
                             <Text style={styles.modalTitle}>Términos y Condiciones</Text>
                             <ScrollView style={styles.modalTextContainer}>
-                                <Text style={styles.modalText}>
-                                    {termsContent.split('\\n').join('\n')}
-                                </Text>
+                                <Text style={styles.modalText}>{termsContent}</Text>
                             </ScrollView>
                             <View style={styles.modalButtons}>
                                 <TouchableOpacity style={styles.modalButton} onPress={handleRejectTerms}>
@@ -698,36 +574,20 @@ const AuthScreen = () => {
                     </View>
                 </Modal>
 
-                {/* Reset Password Modal */}
-                <Modal
-                    animationType="slide"
-                    transparent={true}
-                    visible={resetVisible}
-                    onRequestClose={toggleResetVisibility}
-                >
+                <Modal visible={resetVisible} transparent animationType="slide" onRequestClose={toggleResetVisibility}>
                     <View style={styles.modalOverlay}>
                         <View style={styles.modalContainer}>
                             <Text style={styles.modalTitle}>Restablecer Contraseña</Text>
-                            <Text style={styles.modalText}>
-                                Ingresa tu correo electrónico para recibir un enlace para restablecer tu contraseña.
-                            </Text>
-                            <View style={styles.inputGroup}>
-                                <Text style={styles.label}>Correo electrónico</Text>
-                                <View style={styles.inputWrapper}>
-                                    <MaterialCommunityIcons name="email" size={20} color="#888" style={styles.inputIcon} />
-                                    <TextInput
-                                        placeholder="tucorreo@ejemplo.com"
-                                        placeholderTextColor="#888"
-                                        value={resetEmail}
-                                        onChangeText={setResetEmail}
-                                        style={styles.input}
-                                        keyboardType="email-address"
-                                        autoCapitalize="none"
-                                        autoCorrect={false}
-                                        textContentType="emailAddress" // Added for autofill
-                                    />
-                                </View>
-                            </View>
+                            <Text style={styles.modalText}>Ingresa tu correo electrónico para recibir un enlace para restablecer tu contraseña.</Text>
+                            <AuthInput
+                                label="Correo electrónico"
+                                value={resetEmail}
+                                onChangeText={setResetEmail}
+                                placeholder="tucorreo@ejemplo.com"
+                                iconName="email"
+                                keyboardType="email-address"
+                                autoCapitalize="none"
+                            />
                             <View style={styles.modalButtons}>
                                 <TouchableOpacity style={styles.modalButton} onPress={toggleResetVisibility}>
                                     <Text style={styles.modalButtonText}>Cancelar</Text>
@@ -740,7 +600,7 @@ const AuthScreen = () => {
                     </View>
                 </Modal>
             </ImageBackground>
-            {/* Update Required Modal */}
+
             <UpdateRequiredModal
                 visible={updateModalVisible}
                 currentVersion={currentVersion}
@@ -808,6 +668,9 @@ const styles = StyleSheet.create({
         width: '100%', // Ensure card takes full width with padding
         maxWidth: 400, // Max width for larger screens
         alignSelf: 'center', // Center the card
+    },
+    buttonDisabled: {
+        opacity: 0.6,
     },
     cardTitle: {
         fontFamily: 'Roboto-Bold',
@@ -1040,4 +903,4 @@ const styles = StyleSheet.create({
     },
 });
 
-export default AuthScreen;
+export default React.memo(AuthScreen);

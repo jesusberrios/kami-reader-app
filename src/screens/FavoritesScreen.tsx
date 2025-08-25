@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import {
     View,
     Text,
@@ -8,8 +8,6 @@ import {
     TouchableOpacity,
     Image,
     SafeAreaView,
-    Alert,
-    AccessibilityInfo,
     StatusBar,
     Platform,
     Dimensions,
@@ -20,17 +18,18 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { auth, db } from '../firebase/config';
 import { collection, onSnapshot } from 'firebase/firestore';
+import { useAlertContext } from '../contexts/AlertContext';
 
 type FavoriteItem = {
     id: string;
     comicTitle: string;
     coverUrl: string;
     slug: string;
-    content_rating?: string; // Added optional field for content rating
+    content_rating?: string;
 };
 
-const windowWidth = Dimensions.get('window').width;
-const itemWidth = windowWidth * 0.9; // Wider items for better display
+const { width: windowWidth } = Dimensions.get('window');
+const ITEM_WIDTH = windowWidth * 0.9;
 
 export default function FavoritesScreen() {
     const navigation = useNavigation<any>();
@@ -38,7 +37,9 @@ export default function FavoritesScreen() {
     const [loading, setLoading] = useState(true);
     const [currentUserUid, setCurrentUserUid] = useState<string | null>(null);
     const insets = useSafeAreaInsets();
+    const { alertError } = useAlertContext();
 
+    // Efecto para autenticación
     useEffect(() => {
         const unsubscribe = auth.onAuthStateChanged(user => {
             setCurrentUserUid(user ? user.uid : null);
@@ -47,6 +48,7 @@ export default function FavoritesScreen() {
         return unsubscribe;
     }, []);
 
+    // Efecto para cargar favoritos
     useEffect(() => {
         if (!currentUserUid) {
             setFavorites([]);
@@ -60,12 +62,13 @@ export default function FavoritesScreen() {
             (querySnapshot) => {
                 const favs: FavoriteItem[] = [];
                 querySnapshot.forEach((document) => {
+                    const data = document.data();
                     favs.push({
                         id: document.id,
-                        comicTitle: document.data().comicTitle,
-                        coverUrl: document.data().coverUrl,
-                        slug: document.data().slug,
-                        content_rating: document.data().content_rating,
+                        comicTitle: data.comicTitle,
+                        coverUrl: data.coverUrl,
+                        slug: data.slug,
+                        content_rating: data.content_rating,
                     });
                 });
                 setFavorites(favs);
@@ -73,18 +76,105 @@ export default function FavoritesScreen() {
             },
             (error) => {
                 console.error("Error fetching favorites: ", error);
-                Alert.alert("Error", "No se pudieron cargar los favoritos.");
+                alertError("No se pudieron cargar los favoritos.");
                 setLoading(false);
             }
         );
 
         return () => unsubscribe();
-    }, [currentUserUid]);
+    }, [currentUserUid, alertError]);
 
-    const handleFavoritePress = (slug: string) => {
+    // Handlers memoizados
+    const handleFavoritePress = useCallback((slug: string) => {
         navigation.navigate('Details', { slug });
-    };
+    }, [navigation]);
 
+    const handleGoBack = useCallback(() => {
+        navigation.goBack();
+    }, [navigation]);
+
+    const handleAuthNavigation = useCallback(() => {
+        navigation.navigate('Auth');
+    }, [navigation]);
+
+    const handleLibraryNavigation = useCallback(() => {
+        navigation.navigate('Library');
+    }, [navigation]);
+
+    // Componentes memoizados
+    const renderFavoriteItem = useCallback(({ item }: { item: FavoriteItem }) => (
+        <TouchableOpacity
+            style={styles.item}
+            onPress={() => handleFavoritePress(item.slug)}
+            activeOpacity={0.7}
+        >
+            <Image
+                source={{ uri: item.coverUrl }}
+                style={styles.coverImage}
+                resizeMode="cover"
+            />
+            <LinearGradient
+                colors={['transparent', 'rgba(0,0,0,0.8)']}
+                style={styles.imageGradient}
+            />
+            <View style={styles.itemContent}>
+                <Text style={styles.title} numberOfLines={2}>{item.comicTitle}</Text>
+                {item.content_rating === 'erotica' && (
+                    <View style={styles.eroticBadge}>
+                        <Text style={styles.eroticBadgeText}>18+</Text>
+                    </View>
+                )}
+            </View>
+            <Ionicons name="chevron-forward" size={24} color="#FF6B6B" />
+        </TouchableOpacity>
+    ), [handleFavoritePress]);
+
+    const renderEmptyState = useMemo(() => (
+        <View style={styles.emptyContent}>
+            <Ionicons name="heart-dislike-outline" size={80} color="#B0BEC5" />
+            <Text style={styles.emptyStateText}>Aún no tienes cómics favoritos</Text>
+            <Text style={styles.emptyStateSubText}>Guarda tus cómics favoritos para encontrarlos fácilmente</Text>
+            <TouchableOpacity
+                style={styles.browseButton}
+                onPress={handleLibraryNavigation}
+                accessible
+                accessibilityLabel="Explorar cómics"
+            >
+                <Text style={styles.browseButtonText}>Explorar Cómics</Text>
+            </TouchableOpacity>
+        </View>
+    ), [handleLibraryNavigation]);
+
+    const renderAuthRequired = useMemo(() => (
+        <View style={styles.emptyStateContainer}>
+            <Ionicons name="person-circle-outline" size={80} color="#B0BEC5" />
+            <Text style={styles.emptyStateText}>Inicia sesión para guardar y ver tus favoritos</Text>
+            <TouchableOpacity
+                style={styles.loginButton}
+                onPress={handleAuthNavigation}
+                accessible
+                accessibilityLabel="Ir a la pantalla de inicio de sesión"
+            >
+                <Text style={styles.loginButtonText}>Iniciar Sesión</Text>
+            </TouchableOpacity>
+        </View>
+    ), [handleAuthNavigation]);
+
+    const renderTopBar = useMemo(() => (
+        <View style={styles.topBar}>
+            <TouchableOpacity
+                onPress={handleGoBack}
+                style={styles.backButton}
+                accessible
+                accessibilityLabel="Volver atrás"
+            >
+                <Ionicons name="arrow-back" size={28} color="#FF6B6B" />
+            </TouchableOpacity>
+            <Text style={styles.topBarTitle}>Mis Favoritos</Text>
+        </View>
+    ), [handleGoBack]);
+
+    // Estados de carga y contenido
     if (loading) {
         return (
             <LinearGradient colors={['#0F0F1A', '#252536']} style={styles.loadingContainer}>
@@ -96,50 +186,11 @@ export default function FavoritesScreen() {
 
     if (!currentUserUid) {
         return (
-            <LinearGradient colors={['#0F0F1A', '#252536']} style={styles.emptyStateContainer}>
-                <Ionicons name="person-circle-outline" size={80} color="#B0BEC5" />
-                <Text style={styles.emptyStateText}>Inicia sesión para guardar y ver tus favoritos</Text>
-                <TouchableOpacity
-                    style={styles.loginButton}
-                    onPress={() => navigation.navigate('Auth')}
-                    accessible
-                    accessibilityLabel="Ir a la pantalla de inicio de sesión"
-                >
-                    <Text style={styles.loginButtonText}>Iniciar Sesión</Text>
-                </TouchableOpacity>
-            </LinearGradient>
-        );
-    }
-
-    if (favorites.length === 0) {
-        return (
             <LinearGradient colors={['#0F0F1A', '#252536']} style={styles.container}>
                 <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
                 <SafeAreaView style={[styles.safeArea, { paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : insets.top }]}>
-                    <View style={styles.topBar}>
-                        <TouchableOpacity
-                            onPress={() => navigation.goBack()}
-                            style={styles.backButton}
-                            accessible
-                            accessibilityLabel="Volver atrás"
-                        >
-                            <Ionicons name="arrow-back" size={28} color="#FF6B6B" />
-                        </TouchableOpacity>
-                        <Text style={styles.topBarTitle}>Mis Favoritos</Text>
-                    </View>
-                    <View style={styles.emptyContent}>
-                        <Ionicons name="heart-dislike-outline" size={80} color="#B0BEC5" />
-                        <Text style={styles.emptyStateText}>Aún no tienes cómics favoritos</Text>
-                        <Text style={styles.emptyStateSubText}>Guarda tus cómics favoritos para encontrarlos fácilmente</Text>
-                        <TouchableOpacity
-                            style={styles.browseButton}
-                            onPress={() => navigation.navigate('Library')}
-                            accessible
-                            accessibilityLabel="Explorar cómics"
-                        >
-                            <Text style={styles.browseButtonText}>Explorar Cómics</Text>
-                        </TouchableOpacity>
-                    </View>
+                    {renderTopBar}
+                    {renderAuthRequired}
                 </SafeAreaView>
             </LinearGradient>
         );
@@ -149,55 +200,28 @@ export default function FavoritesScreen() {
         <LinearGradient colors={['#0F0F1A', '#252536']} style={styles.container}>
             <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
             <SafeAreaView style={[styles.safeArea, { paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : insets.top }]}>
-                <View style={styles.topBar}>
-                    <TouchableOpacity
-                        onPress={() => navigation.goBack()}
-                        style={styles.backButton}
-                        accessible
-                        accessibilityLabel="Volver atrás"
-                    >
-                        <Ionicons name="arrow-back" size={28} color="#FF6B6B" />
-                    </TouchableOpacity>
-                    <Text style={styles.topBarTitle}>Mis Favoritos</Text>
-                </View>
+                {renderTopBar}
 
-                <FlatList
-                    data={favorites}
-                    keyExtractor={(item) => item.id}
-                    renderItem={({ item }) => (
-                        <TouchableOpacity
-                            style={styles.item}
-                            onPress={() => handleFavoritePress(item.slug)}
-                            activeOpacity={0.7}
-                        >
-                            <Image
-                                source={{ uri: item.coverUrl }}
-                                style={styles.coverImage}
-                                resizeMode="cover"
-                            />
-                            <LinearGradient
-                                colors={['transparent', 'rgba(0,0,0,0.8)']}
-                                style={styles.imageGradient}
-                            />
-                            <View style={styles.itemContent}>
-                                <Text style={styles.title} numberOfLines={2}>{item.comicTitle}</Text>
-                                {item.content_rating === 'erotica' && (
-                                    <View style={styles.eroticBadge}>
-                                        <Text style={styles.eroticBadgeText}>18+</Text>
-                                    </View>
-                                )}
-                            </View>
-                            <Ionicons name="chevron-forward" size={24} color="#FF6B6B" />
-                        </TouchableOpacity>
-                    )}
-                    contentContainerStyle={styles.flatListContent}
-                    showsVerticalScrollIndicator={false}
-                />
+                {favorites.length === 0 ? (
+                    renderEmptyState
+                ) : (
+                    <FlatList
+                        data={favorites}
+                        keyExtractor={(item) => item.id}
+                        renderItem={renderFavoriteItem}
+                        contentContainerStyle={styles.flatListContent}
+                        showsVerticalScrollIndicator={false}
+                        initialNumToRender={10}
+                        maxToRenderPerBatch={10}
+                        windowSize={5}
+                    />
+                )}
             </SafeAreaView>
         </LinearGradient>
     );
 }
 
+// Estilos optimizados
 const styles = StyleSheet.create({
     container: {
         flex: 1,

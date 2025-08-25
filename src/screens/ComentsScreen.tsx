@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
     View,
-    Text, // Ensure Text is imported
+    Text,
     StyleSheet,
     TextInput,
     FlatList,
@@ -11,8 +11,8 @@ import {
     Platform,
     SafeAreaView,
     StatusBar,
-    Alert,
-    Image
+    Image,
+    ListRenderItem
 } from 'react-native';
 import { db } from '../firebase/config';
 import {
@@ -23,19 +23,19 @@ import {
     arrayUnion,
     onSnapshot,
     serverTimestamp,
-    arrayRemove // Import arrayRemove
+    arrayRemove
 } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useAlertContext } from '../contexts/AlertContext';
 
 interface UserData {
     accountType: string;
     avatar?: string;
     username: string;
-    // ...otros campos
 }
 
 interface Comment {
@@ -46,7 +46,7 @@ interface Comment {
     text: string;
     createdAt: any;
     avatar?: string;
-    likes?: string[]; // New: Array of user UIDs who liked the comment
+    likes?: string[];
 }
 
 interface MangaCommentsDoc {
@@ -58,6 +58,92 @@ interface MangaCommentsDoc {
 interface CommentsScreenRouteParams {
     mangaTitle: string;
 }
+
+// Componente memoizado para cada comentario
+const CommentItem = React.memo(({
+    item,
+    currentUserId,
+    onDeleteComment,
+    onLikeComment,
+    deletingCommentId
+}: {
+    item: Comment;
+    currentUserId: string | null;
+    onDeleteComment: (comment: Comment) => void;
+    onLikeComment: (commentId: string, currentLikes: string[]) => void;
+    deletingCommentId: string | null;
+}) => {
+    const isMyComment = item.userId === currentUserId;
+    const isDeleting = deletingCommentId === item.id;
+    const currentLikes = item.likes || [];
+    const hasLiked = currentUserId ? currentLikes.includes(currentUserId) : false;
+    const likeCount = currentLikes.length;
+
+    const handleLikePress = useCallback(() => {
+        onLikeComment(item.id, currentLikes);
+    }, [item.id, currentLikes, onLikeComment]);
+
+    const handleDeletePress = useCallback(() => {
+        onDeleteComment(item);
+    }, [item, onDeleteComment]);
+
+    const formattedTime = useMemo(() => {
+        return item.createdAt?.toDate?.()
+            ? `${item.createdAt.toDate().toLocaleDateString()} ${item.createdAt.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+            : 'Ahora';
+    }, [item.createdAt]);
+
+    return (
+        <View style={styles.commentBox}>
+            <View style={styles.commentHeader}>
+                {item.avatar ? (
+                    <Image source={{ uri: item.avatar }} style={styles.avatar} />
+                ) : (
+                    <View style={styles.defaultAvatar}>
+                        <Text style={styles.defaultAvatarText}>
+                            {item.userName?.charAt(0).toUpperCase() || '?'}
+                        </Text>
+                    </View>
+                )}
+                <View style={styles.userInfo}>
+                    <Text style={styles.commentSender}>
+                        {isMyComment ? 'Tú' : item.userName}
+                    </Text>
+                    <Text style={styles.commentTime}>{formattedTime}</Text>
+                </View>
+                {isMyComment && (
+                    <TouchableOpacity
+                        onPress={handleDeletePress}
+                        style={styles.deleteButton}
+                        disabled={isDeleting}
+                    >
+                        {isDeleting ? (
+                            <ActivityIndicator size="small" color="#FF6B6B" />
+                        ) : (
+                            <MaterialCommunityIcons name="trash-can-outline" size={20} color="#FF6B6B" />
+                        )}
+                    </TouchableOpacity>
+                )}
+            </View>
+            <Text style={styles.commentText}>{item.text}</Text>
+
+            <View style={styles.commentActions}>
+                <TouchableOpacity
+                    onPress={handleLikePress}
+                    style={styles.likeButton}
+                    disabled={!currentUserId}
+                >
+                    <Ionicons
+                        name={hasLiked ? "heart" : "heart-outline"}
+                        size={20}
+                        color={hasLiked ? "#FF6B6B" : "#AAA"}
+                    />
+                    <Text style={styles.likeCountText}>{likeCount > 0 ? likeCount : ''}</Text>
+                </TouchableOpacity>
+            </View>
+        </View>
+    );
+});
 
 const CommentsScreen: React.FC = () => {
     const route = useRoute();
@@ -74,6 +160,15 @@ const CommentsScreen: React.FC = () => {
     const navigation = useNavigation();
     const insets = useSafeAreaInsets();
     const flatListRef = useRef<FlatList<Comment>>(null);
+
+    const { alertError, alertConfirm } = useAlertContext();
+
+    // Memoizar valores derivados
+    const currentUserId = useMemo(() => currentUser?.uid || null, [currentUser]);
+    const canPostComment = useMemo(() =>
+        newComment.trim() && currentUser && userData && !sending,
+        [newComment, currentUser, userData, sending]
+    );
 
     // Fetch user data
     useEffect(() => {
@@ -98,23 +193,26 @@ const CommentsScreen: React.FC = () => {
         if (!mangaTitle) return;
 
         const docRef = doc(db, 'manga_comments', mangaTitle);
-        const unsubscribe = onSnapshot(docRef, (docSnap) => {
-            if (docSnap.exists()) {
-                const data = docSnap.data() as MangaCommentsDoc;
-                const sortedComments = (data.comments || []).sort((a, b) => {
-                    const timeA = a.createdAt?.toDate ? a.createdAt.toDate().getTime() : 0;
-                    const timeB = b.createdAt?.toDate ? b.createdAt.toDate().getTime() : 0;
-                    return timeA - timeB;
-                });
-                setComments(sortedComments);
-            } else {
-                setComments([]);
+        const unsubscribe = onSnapshot(docRef,
+            (docSnap) => {
+                if (docSnap.exists()) {
+                    const data = docSnap.data() as MangaCommentsDoc;
+                    const sortedComments = (data.comments || []).sort((a, b) => {
+                        const timeA = a.createdAt?.toDate ? a.createdAt.toDate().getTime() : 0;
+                        const timeB = b.createdAt?.toDate ? b.createdAt.toDate().getTime() : 0;
+                        return timeA - timeB;
+                    });
+                    setComments(sortedComments);
+                } else {
+                    setComments([]);
+                }
+                setLoading(false);
+            },
+            (error) => {
+                console.error("Error fetching comments:", error);
+                setLoading(false);
             }
-            setLoading(false);
-        }, (error) => {
-            console.error("Error fetching comments:", error);
-            setLoading(false);
-        });
+        );
 
         return () => unsubscribe();
     }, [mangaTitle]);
@@ -130,111 +228,89 @@ const CommentsScreen: React.FC = () => {
     }, [comments]);
 
     // Post new comment
-    const handlePostComment = async () => {
-        if (!newComment.trim() || !currentUser || !userData) {
-            Alert.alert('Error', 'No puedes enviar un comentario vacío o no estás logueado.');
-            return;
-        }
+    const handlePostComment = useCallback(async () => {
+        if (!canPostComment) return;
 
         setSending(true);
         try {
-            const comment = { // Remove the explicit Comment type if it's causing issues with Date object
-                id: Date.now().toString() + Math.random().toString(36).substring(2, 9),
-                userId: currentUser.uid,
-                userName: userData.username || currentUser.email || 'Anónimo',
-                userEmail: currentUser.email || '',
+            const comment: Comment = {
+                id: `${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
+                userId: currentUser!.uid,
+                userName: userData!.username || currentUser!.email || 'Anónimo',
+                userEmail: currentUser!.email || '',
                 text: newComment.trim(),
-                createdAt: new Date(), // Use a Date object here
-                avatar: userData.avatar,
-                likes: [] // Initialize likes array
+                createdAt: serverTimestamp(),
+                avatar: userData!.avatar,
+                likes: []
             };
 
             const docRef = doc(db, 'manga_comments', mangaTitle);
             const docSnap = await getDoc(docRef);
 
             if (docSnap.exists()) {
-                // When updating, Firebase will convert the Date object in 'comment' to a server timestamp.
                 await updateDoc(docRef, {
                     comments: arrayUnion(comment),
-                    lastUpdated: serverTimestamp() // This serverTimestamp is fine because it's not in an array
+                    lastUpdated: serverTimestamp()
                 });
             } else {
-                // When setting a new document, Firebase will convert the Date object in 'comment' to a server timestamp.
                 await setDoc(docRef, {
                     mangaTitle,
                     comments: [comment],
-                    lastUpdated: serverTimestamp() // This serverTimestamp is fine because it's not in an array
+                    lastUpdated: serverTimestamp()
                 });
             }
 
             setNewComment('');
         } catch (error) {
-            console.error("Error posting comment:s", error);
-            Alert.alert('Error', 'No se pudo publicar el comentario. Inténtalo de nuevo.');
+            console.error("Error posting comment:", error);
+            alertError('No se pudo publicar el comentario. Inténtalo de nuevo.');
         } finally {
             setSending(false);
         }
-    };
+    }, [canPostComment, currentUser, userData, newComment, mangaTitle, alertError]);
 
     // Handle comment deletion
     const handleDeleteComment = useCallback(async (commentToDelete: Comment) => {
         if (!currentUser || currentUser.uid !== commentToDelete.userId) {
-            Alert.alert('Permiso denegado', 'Solo puedes eliminar tus propios comentarios.');
+            alertError('Solo puedes eliminar tus propios comentarios.');
             return;
         }
 
-        Alert.alert(
-            'Confirmar Eliminación',
+        alertConfirm(
             '¿Estás seguro de que quieres eliminar este comentario?',
-            [
-                {
-                    text: 'Cancelar',
-                    style: 'cancel'
-                },
-                {
-                    text: 'Eliminar',
-                    style: 'destructive',
-                    onPress: async () => {
-                        setDeletingCommentId(commentToDelete.id);
-                        try {
-                            const docRef = doc(db, 'manga_comments', mangaTitle);
-                            // To remove an object from an array, you need to remove the exact object.
-                            // arrayRemove works by matching the entire object.
-                            // If you only pass a subset of the object, it won't work.
-                            await updateDoc(docRef, {
-                                comments: arrayRemove(commentToDelete),
-                                lastUpdated: serverTimestamp()
-                            });
-                        } catch (error) {
-                            console.error("Error deleting comment:", error);
-                            Alert.alert('Error', 'No se pudo eliminar el comentario. Inténtalo de nuevo.');
-                        } finally {
-                            setDeletingCommentId(null);
-                        }
-                    }
+            async () => {
+                setDeletingCommentId(commentToDelete.id);
+                try {
+                    const docRef = doc(db, 'manga_comments', mangaTitle);
+                    await updateDoc(docRef, {
+                        comments: arrayRemove(commentToDelete),
+                        lastUpdated: serverTimestamp()
+                    });
+                } catch (error) {
+                    console.error("Error deleting comment:", error);
+                    alertError('No se pudo eliminar el comentario. Inténtalo de nuevo.');
+                } finally {
+                    setDeletingCommentId(null);
                 }
-            ]
+            },
+            'Confirmar Eliminación',
+            'Eliminar',
+            'Cancelar'
         );
-    }, [currentUser, mangaTitle]);
+    }, [currentUser, mangaTitle, alertError, alertConfirm]);
 
     // Handle comment like/unlike
     const handleLikeComment = useCallback(async (commentId: string, currentLikes: string[] = []) => {
         if (!currentUser) {
-            Alert.alert('Error', 'Debes iniciar sesión para dar "Me gusta".');
+            alertError('Debes iniciar sesión para dar "Me gusta".');
             return;
         }
 
         const userId = currentUser.uid;
         const hasLiked = currentLikes.includes(userId);
-        let updatedLikes;
-
-        if (hasLiked) {
-            // Unlike: remove userId from likes array
-            updatedLikes = currentLikes.filter(id => id !== userId);
-        } else {
-            // Like: add userId to likes array
-            updatedLikes = [...currentLikes, userId];
-        }
+        const updatedLikes = hasLiked
+            ? currentLikes.filter(id => id !== userId)
+            : [...currentLikes, userId];
 
         try {
             const docRef = doc(db, 'manga_comments', mangaTitle);
@@ -255,95 +331,50 @@ const CommentsScreen: React.FC = () => {
             }
         } catch (error) {
             console.error("Error updating like status:", error);
-            Alert.alert('Error', 'No se pudo actualizar el estado de "Me gusta".');
+            alertError('No se pudo actualizar el estado de "Me gusta".');
         }
-    }, [currentUser, mangaTitle]);
-
+    }, [currentUser, mangaTitle, alertError]);
 
     // Render each comment
-    const renderCommentItem = ({ item }: { item: Comment }) => {
-        const isMyComment = item.userId === currentUser?.uid;
-        const isDeleting = deletingCommentId === item.id;
-        const currentLikes = item.likes || [];
-        const hasLiked = currentUser ? currentLikes.includes(currentUser.uid) : false;
-        const likeCount = currentLikes.length;
+    const renderCommentItem: ListRenderItem<Comment> = useCallback(({ item }) => (
+        <CommentItem
+            item={item}
+            currentUserId={currentUserId}
+            onDeleteComment={handleDeleteComment}
+            onLikeComment={handleLikeComment}
+            deletingCommentId={deletingCommentId}
+        />
+    ), [currentUserId, handleDeleteComment, handleLikeComment, deletingCommentId]);
 
-        return (
-            <View style={styles.commentBox}>
-                <View style={styles.commentHeader}>
-                    {item.avatar ? (
-                        <Image source={{ uri: item.avatar }} style={styles.avatar} />
-                    ) : (
-                        <View style={styles.defaultAvatar}>
-                            <Text style={styles.defaultAvatarText}>
-                                {item.userName?.charAt(0).toUpperCase() || '?'}
-                            </Text>
-                        </View>
-                    )}
-                    <View style={styles.userInfo}>
-                        <Text style={styles.commentSender}>
-                            {isMyComment ? 'Tú' : item.userName}
-                        </Text>
-                        <Text style={styles.commentTime}>
-                            {item.createdAt?.toDate?.()
-                                ? `${item.createdAt.toDate().toLocaleDateString()} ${item.createdAt.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
-                                : <Text>Ahora</Text>} {/* Fixed: Text inside Text for 'Ahora' */}
-                        </Text>
-                    </View>
-                    {isMyComment && (
-                        <TouchableOpacity
-                            onPress={() => handleDeleteComment(item)}
-                            style={styles.deleteButton}
-                            disabled={isDeleting}
-                            accessibilityLabel={`Eliminar comentario de ${item.userName}`}
-                        >
-                            {isDeleting ? (
-                                <ActivityIndicator size="small" color="#FF6B6B" />
-                            ) : (
-                                <MaterialCommunityIcons name="trash-can-outline" size={20} color="#FF6B6B" />
-                            )}
-                        </TouchableOpacity>
-                    )}
-                </View>
-                <Text style={styles.commentText}>{item.text}</Text>
+    const keyExtractor = useCallback((item: Comment) => item.id, []);
 
-                {/* Like Button */}
-                <View style={styles.commentActions}>
-                    <TouchableOpacity
-                        onPress={() => handleLikeComment(item.id, item.likes)}
-                        style={styles.likeButton}
-                        disabled={!currentUser} // Disable if not logged in
-                    >
-                        <Ionicons
-                            name={hasLiked ? "heart" : "heart-outline"}
-                            size={20}
-                            color={hasLiked ? "#FF6B6B" : "#AAA"}
-                        />
-                        {/* Fixed: Text inside Text for like count */}
-                        <Text style={styles.likeCountText}>{likeCount > 0 ? likeCount : ''}</Text>
-                    </TouchableOpacity>
-                </View>
-            </View>
-        );
-    };
+    const emptyComponent = useMemo(() => (
+        <View style={styles.emptyContainer}>
+            <Ionicons name="chatbubbles-outline" size={80} color="#666" />
+            <Text style={styles.emptyText}>No hay comentarios aún</Text>
+            <Text style={styles.emptySubtext}>Sé el primero en comentar</Text>
+        </View>
+    ), []);
+
+    const headerComponent = useMemo(() => (
+        <View style={styles.header}>
+            <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+                <Ionicons name="arrow-back" size={24} color="#FFF" />
+            </TouchableOpacity>
+            <Text style={styles.headerTitle} numberOfLines={1} ellipsizeMode="tail">
+                {mangaTitle}
+            </Text>
+            <View style={styles.headerRightPlaceholder} />
+        </View>
+    ), [navigation, mangaTitle]);
 
     return (
         <LinearGradient colors={['#0F0F1A', '#252536']} style={styles.container}>
             <SafeAreaView style={[styles.safeArea, { paddingTop: insets.top }]}>
                 <StatusBar barStyle="light-content" />
 
-                {/* Header */}
-                <View style={styles.header}>
-                    <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-                        <Ionicons name="arrow-back" size={24} color="#FFF" />
-                    </TouchableOpacity>
-                    <Text style={styles.headerTitle} numberOfLines={1} ellipsizeMode="tail">
-                        {mangaTitle}
-                    </Text>
-                    <View style={styles.headerRightPlaceholder} />
-                </View>
+                {headerComponent}
 
-                {/* Comments List */}
                 {loading ? (
                     <View style={styles.loadingContainer}>
                         <ActivityIndicator size="large" color="#FF6B6B" />
@@ -353,20 +384,16 @@ const CommentsScreen: React.FC = () => {
                     <FlatList
                         ref={flatListRef}
                         data={comments}
-                        keyExtractor={(item) => item.id}
+                        keyExtractor={keyExtractor}
                         renderItem={renderCommentItem}
                         contentContainerStyle={styles.commentsListContent}
-                        ListEmptyComponent={
-                            <View style={styles.emptyContainer}>
-                                <Ionicons name="chatbubbles-outline" size={80} color="#666" />
-                                <Text style={styles.emptyText}>No hay comentarios aún</Text>
-                                <Text style={styles.emptySubtext}>Sé el primero en comentar</Text>
-                            </View>
-                        }
+                        ListEmptyComponent={emptyComponent}
+                        initialNumToRender={10}
+                        maxToRenderPerBatch={5}
+                        windowSize={5}
                     />
                 )}
 
-                {/* Input for new comments */}
                 <KeyboardAvoidingView
                     behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
                     style={styles.inputContainer}
@@ -382,9 +409,9 @@ const CommentsScreen: React.FC = () => {
                         editable={!sending}
                     />
                     <TouchableOpacity
-                        style={[styles.sendButton, (!newComment.trim() || sending) && styles.sendButtonDisabled]}
+                        style={[styles.sendButton, !canPostComment && styles.sendButtonDisabled]}
                         onPress={handlePostComment}
-                        disabled={!newComment.trim() || sending}
+                        disabled={!canPostComment}
                     >
                         {sending ? (
                             <ActivityIndicator size="small" color="#FFF" />
@@ -567,4 +594,4 @@ const styles = StyleSheet.create({
     },
 });
 
-export default CommentsScreen;
+export default React.memo(CommentsScreen);
