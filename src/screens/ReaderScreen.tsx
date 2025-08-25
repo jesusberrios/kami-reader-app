@@ -8,7 +8,6 @@ import {
     TouchableOpacity,
     StatusBar,
     Animated,
-    Alert,
 } from 'react-native';
 import { RouteProp, useRoute, useNavigation } from '@react-navigation/native';
 import { RootStackParamList } from '../navigation/types';
@@ -17,7 +16,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { FlashList } from "@shopify/flash-list";
-import { doc, getDoc, updateDoc } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, setDoc, collection } from 'firebase/firestore';
 import { auth, db } from '../firebase/config';
 import {
     MobileAds,
@@ -27,6 +26,7 @@ import {
     AdEventType,
     TestIds
 } from 'react-native-google-mobile-ads';
+import { useAlertContext } from '../contexts/AlertContext'; // Importar el hook de alerta
 
 const { width: screenWidth } = Dimensions.get('window');
 const AD_UNIT_ID = __DEV__ ? TestIds.BANNER : 'ca-app-pub-6584977537844104/1888694522';
@@ -38,8 +38,8 @@ let interstitial = InterstitialAd.createForAdRequest(INTERSTITIAL_AD_ID, {
     requestNonPersonalizedAdsOnly: true,
 });
 
-const AUTO_HIDE_DELAY = 5000; // ms para ocultar controles después de no tocar nada
-const INTERSTITIAL_SHOW_INTERVAL = 120 * 1000; // 2 minuto en milisegundos
+const AUTO_HIDE_DELAY = 5000;
+const INTERSTITIAL_SHOW_INTERVAL = 120 * 1000;
 
 const ScreenReader = () => {
     const route = useRoute<RouteProp<RootStackParamList, 'Reader'>>();
@@ -54,6 +54,7 @@ const ScreenReader = () => {
     const [prevHid, setPrevHid] = useState<string | null>(null);
     const [showControls, setShowControls] = useState(true);
     const [plan, setPlan] = useState<'free' | 'premium'>('free');
+    const [comicInfo, setComicInfo] = useState<{ hid: string; title: string;} | null>(null);
 
     const lastInterstitialShowTime = useRef(Date.now());
     const adTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -66,6 +67,8 @@ const ScreenReader = () => {
     const startTimeRef = useRef(0);
     const autoHideTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
+    // Usar el contexto de alerta
+    const { alertError } = useAlertContext();
 
     const loadInterstitialAd = useCallback(() => {
         if (plan === 'free') {
@@ -82,7 +85,7 @@ const ScreenReader = () => {
             const unsubscribeClosed = interstitial.addAdEventListener(AdEventType.CLOSED, () => {
                 console.log('[Ad] Interstitial ad closed. Preloading next ad.');
                 lastInterstitialShowTime.current = Date.now();
-                loadInterstitialAd(); // Preload the next ad immediately after one is closed
+                loadInterstitialAd();
             });
             const unsubscribeOpened = interstitial.addAdEventListener(AdEventType.OPENED, () => {
                 console.log('[Ad] Interstitial ad OPENED! (User is seeing the ad)');
@@ -97,7 +100,7 @@ const ScreenReader = () => {
             return () => {
                 unsubscribeLoaded();
                 unsubscribeClosed();
-                unsubscribeOpened(); // Limpia también este listener
+                unsubscribeOpened();
                 unsubscribeError();
             };
         }
@@ -107,9 +110,8 @@ const ScreenReader = () => {
         }
     }, [plan, loadInterstitialAd]);
 
-
     const showInterstitial = useCallback(() => {
-        if (plan === 'free' && interstitial.loaded) { // <--- Usar .loaded
+        if (plan === 'free' && interstitial.loaded) {
             const now = Date.now();
             const timeSinceLastAd = now - lastInterstitialShowTime.current;
 
@@ -121,7 +123,6 @@ const ScreenReader = () => {
             }
         } else {
             console.log('[Ad] Interstitial not loaded or user is premium. Not showing ad.');
-            // Si el anuncio no está cargado, intenta cargarlo de nuevo para la próxima vez
             if (plan === 'free' && !interstitial.loaded) {
                 console.log('[Ad] Interstitial not ready, attempting to reload for next time.');
                 loadInterstitialAd();
@@ -156,18 +157,18 @@ const ScreenReader = () => {
                 if (docSnap.exists()) {
                     const data = docSnap.data();
                     if (data.accountType === 'premium') setPlan('premium');
-                    else setPlan('free'); // Asegúrate de establecer 'free' si no es premium
+                    else setPlan('free');
                 } else {
-                    setPlan('free'); // Por defecto si no existe el documento del usuario
+                    setPlan('free');
                 }
             } catch (err) {
                 console.error('Error fetching user plan:', err);
-                Alert.alert("Error", "No se pudo verificar el estado de la cuenta.");
-                setPlan('free'); // En caso de error, asume 'free' para no bloquear la app
+                alertError("No se pudo verificar el estado de la cuenta.");
+                setPlan('free');
             }
         };
         fetchPlan();
-    }, []);
+    }, [alertError]);
 
     const saveReadingTimeToFirestore = useCallback(async (timeInMs: number) => {
         try {
@@ -189,6 +190,92 @@ const ScreenReader = () => {
             console.error('Error saving reading time:', error);
         }
     }, []);
+    // Función para agregar/actualizar manga en progreso
+    const addMangaToInProgress = useCallback(async (mangaHid: string, mangaTitle: string, chapterHid: string, chapterNumber: string, mangaCover_url: string) => {
+        try {
+            const user = auth.currentUser;
+            if (!user || plan !== 'premium') return;
+
+            const mangaDocRef = doc(db, 'users', user.uid, 'inProgressManga', mangaHid);
+
+            await setDoc(mangaDocRef, {
+                mangaHid: mangaHid,
+                mangaTitle: mangaTitle,
+                coverUrl: mangaCover_url,
+                slug: mangaHid,
+                startedAt: new Date(),
+                lastReadChapterHid: chapterHid,
+                lastReadChapterNumber: chapterNumber,
+                lastUpdated: new Date()
+            }, { merge: true });
+
+            console.log('Manga agregado a inProgress:', mangaHid);
+
+        } catch (error) {
+            console.error('Error adding manga to inProgress:', error);
+        }
+    }, [plan]);
+    // Función para marcar capítulo como leído (actualizada)
+    const markChapterAsRead = useCallback(async (chapterHid: string, chapterChap: string) => {
+        try {
+            const user = auth.currentUser;
+            if (!user || plan !== 'premium') return;
+
+            // Obtener información del cómic
+            const chapterResponse = await fetch(`https://api.comick.fun/chapter/${chapterHid}/?tachiyomi=true`);
+            if (!chapterResponse.ok) return;
+
+            const chapterData = await chapterResponse.json();
+            if (!chapterData.chapter?.md_comics?.slug) return;
+
+            const comicSlug = chapterData.chapter.md_comics.slug;
+
+            // Obtener detalles del cómic
+            const comicResponse = await fetch(`https://api.comick.fun/v1.0/comic/${comicSlug}/?tachiyomi=true`);
+            if (!comicResponse.ok) return;
+
+            const comicData = await comicResponse.json();
+            const comicInfo = {
+                hid: comicData.comic.hid,
+                title: comicData.comic.title,
+                cover_url: comicData.comic.cover_url // 👈 agregar cover_url
+            };
+
+            setComicInfo(comicInfo);
+
+            // Marcar capítulo como leído en readComics
+            const comicReadDocRef = doc(db, 'users', user.uid, 'readComics', comicInfo.hid);
+            const chaptersReadCollectionRef = collection(comicReadDocRef, 'chaptersRead');
+            const chapterReadDocRef = doc(chaptersReadCollectionRef, chapterHid);
+
+            await setDoc(chapterReadDocRef, {
+                readAt: new Date(),
+                chap: chapterChap
+            });
+
+            // Actualizar último capítulo leído
+            await setDoc(comicReadDocRef, {
+                lastReadChapter: {
+                    chap: chapterChap,
+                    hid: chapterHid,
+                    readAt: new Date(),
+                },
+                comicTitle: comicInfo.title,
+                coverUrl: comicInfo.cover_url, // 👈 usar cover_url
+                slug: comicInfo.hid,
+            }, { merge: true });
+
+            console.log(comicInfo);
+
+            // Agregar/actualizar en inProgressManga
+            await addMangaToInProgress(comicInfo.hid, comicInfo.title, chapterHid, chapterChap, comicInfo.cover_url);
+
+            console.log('Capítulo marcado como leído y progreso guardado:', chapterHid);
+
+        } catch (error) {
+            console.error('Error marcando capítulo como leído:', error);
+        }
+    }, [plan, addMangaToInProgress]);
 
     useEffect(() => {
         startTimeRef.current = Date.now();
@@ -198,6 +285,7 @@ const ScreenReader = () => {
         };
     }, [currentHid, saveReadingTimeToFirestore]);
 
+    // En fetchChapterData, actualiza la llamada a markChapterAsRead:
     const fetchChapterData = useCallback(async () => {
         setLoadingChapter(true);
         setShowControls(true);
@@ -221,18 +309,23 @@ const ScreenReader = () => {
                 setNextHid(data.next?.hid || null);
                 setPrevHid(data.prev?.hid || null);
 
+                // Marcar automáticamente como leído al cargar el capítulo
+                if (plan === 'premium' && data.chapter?.chap) {
+                    markChapterAsRead(currentHid, data.chapter.chap);
+                }
+
                 imgs.slice(0, 3).forEach((img: any) => Image.prefetch(img.url));
             } else {
-                Alert.alert("Error", "No se encontraron imágenes para este capítulo.");
+                alertError("No se encontraron imágenes para este capítulo.");
             }
         } catch (error: any) {
             console.error('Error fetching chapter data:', error);
-            Alert.alert("Error", `No se pudo cargar el capítulo: ${error.message || 'Error desconocido'}`);
+            alertError(`No se pudo cargar el capítulo: ${error.message || 'Error desconocido'}`);
         } finally {
             setLoadingChapter(false);
             flashListRef.current?.scrollToOffset({ offset: 0, animated: false });
         }
-    }, [currentHid, controlsOpacity]);
+    }, [currentHid, controlsOpacity, plan, markChapterAsRead, alertError]);
 
     useEffect(() => {
         fetchChapterData();
@@ -335,9 +428,6 @@ const ScreenReader = () => {
                             <TouchableOpacity onPress={() => changeChapter(prevHid)} disabled={!prevHid} accessibilityLabel="Capítulo anterior">
                                 <Ionicons name="chevron-back" size={28} color={prevHid ? "#fff" : "#555"} />
                             </TouchableOpacity>
-                            {/* <TouchableOpacity onPress={toggleTranslateComponent} accessibilityLabel="Mostrar traducción">
-                                <Ionicons name="language" size={28} color="#fff" />
-                            </TouchableOpacity> */}
                             <TouchableOpacity onPress={() => changeChapter(nextHid)} disabled={!nextHid} accessibilityLabel="Capítulo siguiente">
                                 <Ionicons name="chevron-forward" size={28} color={nextHid ? "#fff" : "#555"} />
                             </TouchableOpacity>

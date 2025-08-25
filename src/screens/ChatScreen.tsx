@@ -1,452 +1,709 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import {
     View,
     Text,
-    StyleSheet,
     TextInput,
-    ScrollView,
-    KeyboardAvoidingView,
-    Platform,
+    FlatList,
     TouchableOpacity,
+    StyleSheet,
     ActivityIndicator,
-    Alert,
+    Image,
     SafeAreaView,
     StatusBar,
-    Image
+    KeyboardAvoidingView,
+    Platform,
+    Modal,
+    Pressable,
+    ListRenderItem,
 } from 'react-native';
-import { db } from '../firebase/config';
-import {
-    doc,
-    setDoc,
-    updateDoc,
-    onSnapshot,
-    arrayUnion,
-    deleteDoc,
-    getDoc,
-    serverTimestamp
-} from 'firebase/firestore';
-import { getAuth } from 'firebase/auth';
-import { Ionicons } from '@expo/vector-icons';
+import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { useNavigation } from '@react-navigation/native';
+import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
+import {
+    collection,
+    doc,
+    addDoc,
+    onSnapshot,
+    query,
+    orderBy,
+    serverTimestamp,
+    updateDoc,
+    setDoc,
+    increment,
+    getDoc,
+    writeBatch,
+    getDocs
+} from 'firebase/firestore';
+import { db, auth } from '../firebase/config';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useAlertContext } from '../contexts/AlertContext';
 
-interface ChatMessage {
+type Message = {
     id: string;
     text: string;
-    createdAt: any;
-    userId: string;
-    userName: string;
-    senderEmail: string;
-    isSupportAgentMessage: boolean;
-}
+    senderId: string;
+    recipientId: string;
+    timestamp: any;
+    read: boolean;
+};
 
-interface ChatDocument {
-    chatRoomId: string;
-    messages: ChatMessage[];
-    participants: string[];
-    createdAt: any;
-    updatedAt: any;
-}
+type User = {
+    uid: string;
+    username: string;
+    avatar: string;
+};
 
-interface ChatScreenProps {
-    route: {
-        params: {
-            clientId?: string;
-        };
+type ChatScreenRouteProp = RouteProp<{
+    Chat: {
+        recipientId: string;
+        recipientName: string;
     };
-}
+}, 'Chat'>;
 
-const AGENT_EMAIL = 'sukisoft.soporte@gmail.com';
+// Componente memoizado para mensajes
+const MessageItem = React.memo(({ item, currentUserId }: { item: Message; currentUserId: string }) => {
+    const isCurrentUser = item.senderId === currentUserId;
 
-const ChatScreen: React.FC<ChatScreenProps> = ({ route }) => {
-    const { clientId } = route.params;
-    const [message, setMessage] = useState('');
-    const [messages, setMessages] = useState<ChatMessage[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [isDeleting, setIsDeleting] = useState(false);
-    const scrollViewRef = useRef<ScrollView>(null);
-    const auth = getAuth();
-    const currentUser = auth.currentUser;
-    const navigation = useNavigation();
-    const insets = useSafeAreaInsets();
-
-    useEffect(() => {
-        if (!currentUser) {
-            setMessages([]);
-            setLoading(false);
-            return;
-        }
-
-        setLoading(true);
-        const isAgent = currentUser.email === AGENT_EMAIL;
-        const chatRoomIdToUse = isAgent ? clientId : currentUser.uid;
-        if (!chatRoomIdToUse) {
-            setMessages([]);
-            setLoading(false);
-            return;
-        }
-
-        const chatDocRef = doc(db, 'chats', chatRoomIdToUse);
-
-        const unsubscribe = onSnapshot(chatDocRef, (docSnapshot) => {
-            if (docSnapshot.exists()) {
-                const chatData = docSnapshot.data() as ChatDocument;
-                setMessages(chatData.messages || []);
-            } else {
-                setMessages([]);
-                // Crear el documento de chat si no existe
-                initializeChat(chatRoomIdToUse);
-            }
-            setLoading(false);
-        }, (error) => {
-            console.error('Error al obtener mensajes:', error);
-            setLoading(false);
-        });
-
-        return () => unsubscribe();
-    }, [currentUser, clientId]);
-
-    const initializeChat = async (chatRoomId: string) => {
-        if (!currentUser) return;
-
-        const isAgent = currentUser.email === AGENT_EMAIL;
-        const participants = isAgent
-            ? [AGENT_EMAIL, clientId || '']
-            : [currentUser.uid, AGENT_EMAIL];
-
-        const newChat: ChatDocument = {
-            chatRoomId,
-            messages: [],
-            participants: participants.filter(p => p !== ''),
-            createdAt: serverTimestamp(),
-            updatedAt: serverTimestamp()
-        };
-
-        try {
-            await setDoc(doc(db, 'chats', chatRoomId), newChat);
-        } catch (error) {
-            console.error('Error al inicializar chat:', error);
-        }
-    };
-
-    useEffect(() => {
-        scrollViewRef.current?.scrollToEnd({ animated: true });
-    }, [messages]);
-
-    const handleSendMessage = async () => {
-        if (!message.trim() || !currentUser) return;
-
-        const isSenderAgent = currentUser?.email === AGENT_EMAIL;
-        const chatRoomIdToUse = isSenderAgent ? clientId : currentUser.uid;
-        if (!chatRoomIdToUse) return;
-
-        const senderUserName = isSenderAgent
-            ? 'Soporte Sukisoft'
-            : (currentUser.displayName || currentUser.email || 'Usuario');
-
-        // Crear mensaje con timestamp local
-        const newMessage: ChatMessage = {
-            id: Date.now().toString(), // ID temporal
-            text: message.trim(),
-            createdAt: new Date(), // Timestamp local
-            userId: currentUser.uid,
-            userName: senderUserName,
-            senderEmail: currentUser.email || '',
-            isSupportAgentMessage: isSenderAgent
-        };
-
-        try {
-            const chatDocRef = doc(db, 'chats', chatRoomIdToUse);
-
-            // Primero actualiza el array de mensajes
-            await updateDoc(chatDocRef, {
-                messages: arrayUnion(newMessage),
-                updatedAt: serverTimestamp() // Esto sí puede usar serverTimestamp
-            });
-
-            setMessage('');
-            scrollViewRef.current?.scrollToEnd({ animated: true });
-        } catch (error) {
-            console.error('Error enviando mensaje:', error);
-        }
-    };
-
-    const handleEndConversation = () => {
-        Alert.alert(
-            "Finalizar Conversación",
-            "¿Estás seguro de que quieres finalizar esta conversación y borrar su historial?",
-            [
-                { text: "Cancelar", style: "cancel" },
-                {
-                    text: "Finalizar y Borrar",
-                    style: "destructive",
-                    onPress: async () => {
-                        if (!currentUser) return;
-                        setIsDeleting(true);
-                        try {
-                            const isAgent = currentUser.email === AGENT_EMAIL;
-                            const chatRoomIdToUse = isAgent ? clientId : currentUser.uid;
-
-                            if (!chatRoomIdToUse) return;
-
-                            const chatDocRef = doc(db, 'chats', chatRoomIdToUse);
-                            await deleteDoc(chatDocRef);
-
-                            setMessages([]);
-                            navigation.goBack();
-                        } catch (error) {
-                            console.error('Error al borrar chat:', error);
-                            Alert.alert("Error", "No se pudo eliminar la conversación.");
-                        } finally {
-                            setIsDeleting(false);
-                        }
-                    }
-                }
-            ]
-        );
-    };
+    const formattedTime = useMemo(() => {
+        return item.timestamp?.toDate
+            ? new Date(item.timestamp.toDate()).toLocaleTimeString([], {
+                hour: '2-digit',
+                minute: '2-digit'
+            })
+            : 'Enviando...';
+    }, [item.timestamp]);
 
     return (
-        <LinearGradient colors={['#0F0F1A', '#252536']} style={styles.container}>
-            <SafeAreaView style={[styles.safeArea, { paddingTop: insets.top }]}>
-                <StatusBar barStyle="light-content" />
+        <View style={[
+            styles.messageContainer,
+            isCurrentUser ? styles.currentUserMessage : styles.otherUserMessage
+        ]}>
+            <View style={[
+                styles.messageBubble,
+                isCurrentUser ? styles.currentUserBubble : styles.otherUserBubble
+            ]}>
+                <Text style={[
+                    styles.messageText,
+                    isCurrentUser ? styles.currentUserText : styles.otherUserText
+                ]}>
+                    {item.text}
+                </Text>
+                <Text style={[
+                    styles.timestamp,
+                    isCurrentUser ? styles.currentUserTimestamp : styles.otherUserTimestamp
+                ]}>
+                    {formattedTime}
+                    {!isCurrentUser && !item.read && (
+                        <Text style={styles.unreadDot}> •</Text>
+                    )}
+                </Text>
+            </View>
+        </View>
+    );
+});
 
-                {/* Header */}
-                <View style={styles.header}>
-                    <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-                        <Ionicons name="arrow-back" size={24} color="#FFF" />
-                    </TouchableOpacity>
-                    <Text style={styles.headerTitle}>Soporte en Vivo</Text>
-                    <TouchableOpacity
-                        onPress={handleEndConversation}
-                        style={styles.endButton}
-                        disabled={isDeleting}
-                    >
-                        {isDeleting ? (
-                            <ActivityIndicator size="small" color="#FF6B6B" />
-                        ) : (
-                            <Text style={styles.endButtonText}>Finalizar</Text>
-                        )}
-                    </TouchableOpacity>
+const ChatScreen = () => {
+    const navigation = useNavigation();
+    const route = useRoute<ChatScreenRouteProp>();
+    const insets = useSafeAreaInsets();
+    const flatListRef = useRef<FlatList>(null);
+    const inputRef = useRef<TextInput>(null);
+
+    const { recipientId, recipientName } = route.params;
+
+    const [messages, setMessages] = useState<Message[]>([]);
+    const [newMessage, setNewMessage] = useState('');
+    const [loading, setLoading] = useState(true);
+    const [sending, setSending] = useState(false);
+    const [recipientInfo, setRecipientInfo] = useState<User | null>(null);
+    const [unreadCount, setUnreadCount] = useState(0);
+    const [menuVisible, setMenuVisible] = useState(false);
+    const [menuPosition, setMenuPosition] = useState({ x: 0, y: 0 });
+
+    const currentUser = auth.currentUser;
+    const { alertError, alertConfirm, alertSuccess } = useAlertContext();
+
+    // Memoizar el ID del chat
+    const chatId = useMemo(() => {
+        if (!currentUser) return '';
+        return [currentUser.uid, recipientId].sort().join('_');
+    }, [currentUser, recipientId]);
+
+    // Cargar información del destinatario
+    useEffect(() => {
+        const loadRecipientInfo = async () => {
+            try {
+                const recipientRef = doc(db, 'users', recipientId);
+                const recipientSnap = await getDoc(recipientRef);
+                if (recipientSnap.exists()) {
+                    const userData = recipientSnap.data();
+                    setRecipientInfo({
+                        uid: recipientId,
+                        username: userData.username || recipientName,
+                        avatar: userData.avatar || 'https://via.placeholder.com/150',
+                    });
+                }
+            } catch (error) {
+                console.error('Error loading recipient info:', error);
+                alertError('No se pudo cargar la información del destinatario');
+            }
+        };
+
+        loadRecipientInfo();
+    }, [recipientId, recipientName, alertError]);
+
+    // Marcar mensajes como leídos
+    const markMessagesAsRead = useCallback(async () => {
+        if (!currentUser || !chatId) return;
+
+        try {
+            const unreadMessages = messages.filter(
+                msg => msg.senderId === recipientId && !msg.read
+            );
+
+            if (unreadMessages.length > 0) {
+                const batch = writeBatch(db);
+
+                unreadMessages.forEach(message => {
+                    const messageRef = doc(db, 'chats', chatId, 'messages', message.id);
+                    batch.update(messageRef, { read: true });
+                });
+
+                const userChatRef = doc(db, 'userChats', currentUser.uid);
+                batch.update(userChatRef, { [`${recipientId}.unreadCount`]: 0 });
+
+                await batch.commit();
+                setUnreadCount(0);
+            }
+        } catch (error) {
+            console.error('Error marking messages as read:', error);
+        }
+    }, [messages, currentUser, recipientId, chatId]);
+
+    // Cargar mensajes en tiempo real
+    useEffect(() => {
+        if (!currentUser || !chatId) return;
+
+        const messagesRef = collection(db, 'chats', chatId, 'messages');
+        const q = query(messagesRef, orderBy('timestamp', 'asc'));
+
+        const unsubscribe = onSnapshot(q,
+            (snapshot) => {
+                const messagesData: Message[] = [];
+                let unread = 0;
+
+                snapshot.forEach((doc) => {
+                    const messageData = {
+                        id: doc.id,
+                        ...doc.data()
+                    } as Message;
+
+                    messagesData.push(messageData);
+
+                    if (messageData.senderId === recipientId && !messageData.read) {
+                        unread++;
+                    }
+                });
+
+                setMessages(messagesData);
+                setUnreadCount(unread);
+                setLoading(false);
+
+                // Marcar como leídos después de un breve delay
+                setTimeout(markMessagesAsRead, 300);
+            },
+            (error) => {
+                console.error('Error loading messages:', error);
+                alertError('Error al cargar los mensajes');
+                setLoading(false);
+            }
+        );
+
+        return () => unsubscribe();
+    }, [currentUser, chatId, recipientId, markMessagesAsRead, alertError]);
+
+    // Función para eliminar el chat
+    const deleteChat = useCallback(async () => {
+        if (!currentUser || !chatId) return;
+
+        alertConfirm(
+            '¿Estás seguro de que quieres eliminar este chat? Se borrará todo el historial de mensajes.',
+            async () => {
+                try {
+                    const messagesRef = collection(db, 'chats', chatId, 'messages');
+                    const messagesSnapshot = await getDocs(messagesRef);
+
+                    const batch = writeBatch(db);
+                    messagesSnapshot.forEach((doc) => {
+                        batch.delete(doc.ref);
+                    });
+
+                    const chatRef = doc(db, 'chats', chatId);
+                    batch.delete(chatRef);
+
+                    await batch.commit();
+                    alertSuccess('Chat eliminado correctamente');
+                    navigation.goBack();
+                } catch (error) {
+                    console.error('Error deleting chat:', error);
+                    alertError('No se pudo eliminar el chat');
+                }
+            },
+            'Eliminar chat',
+            'Eliminar',
+            'Cancelar'
+        );
+    }, [currentUser, chatId, alertConfirm, alertSuccess, alertError, navigation]);
+
+    // Enviar mensaje
+    const sendMessage = useCallback(async () => {
+        if (!newMessage.trim() || !currentUser || sending || !chatId) return;
+
+        setSending(true);
+        try {
+            const messagesRef = collection(db, 'chats', chatId, 'messages');
+
+            await addDoc(messagesRef, {
+                text: newMessage.trim(),
+                senderId: currentUser.uid,
+                recipientId: recipientId,
+                timestamp: serverTimestamp(),
+                read: false
+            });
+
+            // Actualizar userChats en lote
+            const batch = writeBatch(db);
+
+            const userChatRef = doc(db, 'userChats', currentUser.uid);
+            batch.set(userChatRef, {
+                [recipientId]: {
+                    lastMessage: newMessage.trim(),
+                    timestamp: serverTimestamp(),
+                    unreadCount: 0
+                }
+            }, { merge: true });
+
+            const recipientChatRef = doc(db, 'userChats', recipientId);
+            batch.set(recipientChatRef, {
+                [currentUser.uid]: {
+                    lastMessage: newMessage.trim(),
+                    timestamp: serverTimestamp(),
+                    unreadCount: increment(1)
+                }
+            }, { merge: true });
+
+            await batch.commit();
+            setNewMessage('');
+            inputRef.current?.focus();
+
+        } catch (error) {
+            console.error('Error sending message:', error);
+            alertError('No se pudo enviar el mensaje');
+        } finally {
+            setSending(false);
+        }
+    }, [newMessage, currentUser, sending, chatId, recipientId, alertError]);
+
+    // Renderizar mensajes optimizado
+    const renderMessage: ListRenderItem<Message> = useCallback(({ item }) => (
+        <MessageItem item={item} currentUserId={currentUser?.uid || ''} />
+    ), [currentUser]);
+
+    // Key extractor optimizado
+    const keyExtractor = useCallback((item: Message) => item.id, []);
+
+    // Scroll automático al final
+    const scrollToEnd = useCallback(() => {
+        if (flatListRef.current && messages.length > 0) {
+            flatListRef.current.scrollToEnd({ animated: true });
+        }
+    }, [messages.length]);
+
+    useEffect(() => {
+        const timer = setTimeout(scrollToEnd, 100);
+        return () => clearTimeout(timer);
+    }, [messages, scrollToEnd]);
+
+    // Memoizar componentes
+    const headerComponent = useMemo(() => (
+        <View style={styles.header}>
+            <TouchableOpacity
+                onPress={() => navigation.goBack()}
+                style={styles.backButton}
+            >
+                <Ionicons name="arrow-back" size={24} color="#FFF" />
+            </TouchableOpacity>
+
+            <View style={styles.headerUserInfo}>
+                <Image
+                    source={{ uri: recipientInfo?.avatar || 'https://via.placeholder.com/150' }}
+                    style={styles.avatar}
+                />
+                <View style={styles.headerTextContainer}>
+                    <Text style={styles.headerName} numberOfLines={1}>
+                        {recipientInfo?.username || recipientName}
+                    </Text>
+                    {unreadCount > 0 && (
+                        <View style={styles.unreadBadge}>
+                            <Text style={styles.unreadBadgeText}>{unreadCount}</Text>
+                        </View>
+                    )}
                 </View>
+            </View>
 
-                {/* Chat Area */}
-                {loading ? (
+            <TouchableOpacity
+                onPress={(e) => {
+                    setMenuPosition({
+                        x: e.nativeEvent.pageX - 100,
+                        y: e.nativeEvent.pageY
+                    });
+                    setMenuVisible(true);
+                }}
+                style={styles.menuButton}
+            >
+                <MaterialCommunityIcons name="dots-vertical" size={24} color="#FFF" />
+            </TouchableOpacity>
+        </View>
+    ), [navigation, recipientInfo, recipientName, unreadCount]);
+
+    const emptyComponent = useMemo(() => (
+        <View style={styles.emptyContainer}>
+            <MaterialCommunityIcons name="message-text-outline" size={64} color="#666" />
+            <Text style={styles.emptyText}>Inicia una conversación</Text>
+            <Text style={styles.emptySubtext}>
+                Envía un mensaje para comenzar a chatear con {recipientInfo?.username || recipientName}
+            </Text>
+        </View>
+    ), [recipientInfo, recipientName]);
+
+    const scrollToBottomButton = useMemo(() => (
+        unreadCount > 0 && (
+            <TouchableOpacity
+                onPress={() => {
+                    scrollToEnd();
+                    markMessagesAsRead();
+                }}
+                style={styles.scrollToBottomButton}
+            >
+                <Text style={styles.scrollToBottomText}>{unreadCount} nuevo(s)</Text>
+                <Ionicons name="arrow-down" size={16} color="#FFF" />
+            </TouchableOpacity>
+        )
+    ), [unreadCount, scrollToEnd, markMessagesAsRead]);
+
+    if (loading) {
+        return (
+            <LinearGradient colors={['#1A1A24', '#2C2C38']} style={styles.container}>
+                <StatusBar barStyle="light-content" />
+                <SafeAreaView style={[styles.safeArea, { paddingTop: insets.top }]}>
                     <View style={styles.loadingContainer}>
-                        <ActivityIndicator size="large" color="#007bff" />
+                        <ActivityIndicator size="large" color="#FF5252" />
                         <Text style={styles.loadingText}>Cargando mensajes...</Text>
                     </View>
-                ) : (
-                    <ScrollView
-                        style={styles.chatArea}
-                        contentContainerStyle={styles.chatAreaContent}
-                        ref={scrollViewRef}
-                    >
-                        {messages.length === 0 ? (
-                            <View style={styles.emptyContainer}>
-                                <Image
-                                    source={require('../../assets/auth-bg.png')}
-                                    style={styles.emptyImage}
-                                />
-                                <Text style={styles.emptyText}>No hay mensajes aún</Text>
-                                <Text style={styles.emptySubtext}>Envía un mensaje para iniciar la conversación</Text>
-                            </View>
-                        ) : (
-                            messages.map(msg => (
-                                <View
-                                    key={msg.id}
-                                    style={[
-                                        styles.chatMessageBubble,
-                                        msg.userId === currentUser?.uid
-                                            ? styles.myMessageBubble
-                                            : styles.otherMessageBubble,
-                                    ]}
-                                >
-                                    <Text style={styles.chatMessageSender}>
-                                        {msg.userId === currentUser?.uid ? 'Tú' : msg.userName}
-                                    </Text>
-                                    <Text style={styles.chatMessageText}>{msg.text}</Text>
-                                    <Text style={styles.chatMessageTime}>
-                                        {msg.createdAt?.toDate ? msg.createdAt.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
-                                    </Text>
-                                </View>
-                            ))
-                        )}
-                    </ScrollView>
-                )}
+                </SafeAreaView>
+            </LinearGradient>
+        );
+    }
 
-                {/* Input Area */}
+    return (
+        <LinearGradient colors={['#1A1A24', '#2C2C38']} style={styles.container}>
+            <StatusBar barStyle="light-content" />
+            <SafeAreaView style={[styles.safeArea, { paddingTop: insets.top }]}>
+
+                {headerComponent}
+                {scrollToBottomButton}
+
+                <FlatList
+                    ref={flatListRef}
+                    data={messages}
+                    renderItem={renderMessage}
+                    keyExtractor={keyExtractor}
+                    contentContainerStyle={styles.messagesList}
+                    showsVerticalScrollIndicator={false}
+                    initialNumToRender={20}
+                    maxToRenderPerBatch={10}
+                    windowSize={5}
+                    removeClippedSubviews={true}
+                    ListEmptyComponent={emptyComponent}
+                />
+
                 <KeyboardAvoidingView
                     behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+                    keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
                     style={styles.inputContainer}
                 >
-                    <TextInput
-                        style={styles.messageInput}
-                        placeholder="Escribe tu mensaje..."
-                        placeholderTextColor="#999"
-                        value={message}
-                        onChangeText={setMessage}
-                        multiline
-                        editable={!isDeleting}
-                    />
-                    <TouchableOpacity
-                        style={[styles.sendButton, !message.trim() && styles.sendButtonDisabled]}
-                        onPress={handleSendMessage}
-                        disabled={!message.trim() || isDeleting}
-                    >
-                        <Ionicons name="send" size={24} color="white" />
-                    </TouchableOpacity>
+                    <View style={styles.messageInputContainer}>
+                        <TextInput
+                            ref={inputRef}
+                            style={styles.messageInput}
+                            placeholder="Escribe un mensaje..."
+                            placeholderTextColor="#666"
+                            value={newMessage}
+                            onChangeText={setNewMessage}
+                            multiline
+                            maxLength={500}
+                            onSubmitEditing={sendMessage}
+                            returnKeyType="send"
+                            blurOnSubmit={false}
+                        />
+                        <TouchableOpacity
+                            style={[styles.sendButton, !newMessage.trim() && styles.sendButtonDisabled]}
+                            onPress={sendMessage}
+                            disabled={!newMessage.trim() || sending}
+                        >
+                            {sending ? (
+                                <ActivityIndicator size="small" color="#FFF" />
+                            ) : (
+                                <MaterialCommunityIcons
+                                    name="send"
+                                    size={24}
+                                    color={newMessage.trim() ? "#FFF" : "#666"}
+                                />
+                            )}
+                        </TouchableOpacity>
+                    </View>
                 </KeyboardAvoidingView>
+
+                {menuVisible && (
+                    <Modal transparent animationType="fade" onRequestClose={() => setMenuVisible(false)}>
+                        <Pressable style={styles.menuOverlay} onPress={() => setMenuVisible(false)}>
+                            <View style={[styles.menuContainer, { top: menuPosition.y, left: menuPosition.x }]}>
+                                <TouchableOpacity
+                                    style={styles.menuItem}
+                                    onPress={() => {
+                                        setMenuVisible(false);
+                                        navigation.navigate('Profile' as any, { userId: recipientId });
+                                    }}
+                                >
+                                    <MaterialCommunityIcons name="account-eye" size={20} color="#333" />
+                                    <Text style={styles.menuItemText}>Ver perfil</Text>
+                                </TouchableOpacity>
+                            </View>
+                        </Pressable>
+                    </Modal>
+                )}
             </SafeAreaView>
         </LinearGradient>
     );
 };
 
+// Estilos optimizados
 const styles = StyleSheet.create({
-    container: {
+    container: { flex: 1 },
+    safeArea: { flex: 1 },
+    loadingContainer: {
         flex: 1,
-        backgroundColor: '#1E1E2C',
+        justifyContent: 'center',
+        alignItems: 'center'
     },
-    safeArea: {
-        flex: 1,
+    loadingText: {
+        color: '#FFF',
+        marginTop: 16,
+        fontSize: 16,
+        fontFamily: 'Roboto-Medium'
     },
     header: {
         flexDirection: 'row',
         alignItems: 'center',
-        justifyContent: 'space-between',
-        paddingHorizontal: 15,
-        paddingVertical: 10,
+        paddingHorizontal: 16,
+        paddingVertical: 12,
         borderBottomWidth: 1,
-        borderBottomColor: '#333',
+        borderBottomColor: 'rgba(255,255,255,0.1)',
     },
-    backButton: {
-        padding: 5,
-    },
-    headerTitle: {
-        fontSize: 18,
-        fontWeight: 'bold',
-        color: '#FFF',
-        flex: 1,
-        textAlign: 'center',
-        marginHorizontal: 10,
-    },
-    endButton: {
-        paddingHorizontal: 12,
-        paddingVertical: 6,
-        borderRadius: 15,
-    },
-    endButtonText: {
-        color: '#FF6B6B',
-        fontSize: 14,
-        fontWeight: 'bold',
-    },
-    loadingContainer: {
-        flex: 1,
-        justifyContent: 'center',
+    backButton: { padding: 8 },
+    headerUserInfo: {
+        flexDirection: 'row',
         alignItems: 'center',
-    },
-    loadingText: {
-        marginTop: 10,
-        color: '#E0E0E0',
-    },
-    chatArea: {
         flex: 1,
-        paddingHorizontal: 15,
+        marginHorizontal: 12,
     },
-    chatAreaContent: {
-        paddingVertical: 15,
+    avatar: {
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        backgroundColor: '#333',
+    },
+    headerTextContainer: {
+        marginLeft: 12,
+        flex: 1,
+    },
+    headerName: {
+        color: '#FFF',
+        fontSize: 16,
+        fontWeight: 'bold',
+        fontFamily: 'Roboto-Bold',
+    },
+    menuButton: { padding: 8 },
+    messagesList: {
+        flexGrow: 1,
+        padding: 16,
+    },
+    messageContainer: {
+        marginBottom: 8,
+    },
+    currentUserMessage: {
+        alignItems: 'flex-end',
+    },
+    otherUserMessage: {
+        alignItems: 'flex-start',
+    },
+    messageBubble: {
+        maxWidth: '80%',
+        padding: 12,
+        borderRadius: 18,
+    },
+    currentUserBubble: {
+        backgroundColor: '#FF5252',
+        borderBottomRightRadius: 4,
+    },
+    otherUserBubble: {
+        backgroundColor: 'rgba(255,255,255,0.1)',
+        borderBottomLeftRadius: 4,
+    },
+    messageText: {
+        fontSize: 16,
+        fontFamily: 'Roboto-Regular',
+    },
+    currentUserText: {
+        color: '#FFF',
+    },
+    otherUserText: {
+        color: '#FFF',
+    },
+    timestamp: {
+        fontSize: 10,
+        marginTop: 4,
+        fontFamily: 'Roboto-Regular',
+    },
+    currentUserTimestamp: {
+        color: 'rgba(255,255,255,0.7)',
+        textAlign: 'right',
+    },
+    otherUserTimestamp: {
+        color: 'rgba(255,255,255,0.5)',
+        textAlign: 'left',
+    },
+    unreadDot: {
+        color: '#FF5252',
+        fontWeight: 'bold',
+    },
+    inputContainer: {
+        padding: 16,
+        borderTopWidth: 1,
+        borderTopColor: 'rgba(255,255,255,0.1)',
+        backgroundColor: 'rgba(26,26,36,0.8)',
+    },
+    messageInputContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: 'rgba(255,255,255,0.1)',
+        borderRadius: 25,
+        paddingHorizontal: 16,
+    },
+    messageInput: {
+        flex: 1,
+        color: '#FFF',
+        fontSize: 16,
+        fontFamily: 'Roboto-Regular',
+        maxHeight: 100,
+        paddingVertical: 12,
+    },
+    sendButton: {
+        padding: 8,
+        backgroundColor: '#FF5252',
+        borderRadius: 20,
+        marginLeft: 8,
+    },
+    sendButtonDisabled: {
+        backgroundColor: 'rgba(255,82,82,0.5)',
     },
     emptyContainer: {
         flex: 1,
         justifyContent: 'center',
         alignItems: 'center',
-        paddingVertical: 50,
-    },
-    emptyImage: {
-        width: 150,
-        height: 150,
-        marginBottom: 20,
-        opacity: 0.5,
+        padding: 40,
     },
     emptyText: {
-        color: '#999',
+        color: '#FFF',
         fontSize: 18,
         fontWeight: 'bold',
-        marginBottom: 5,
+        marginTop: 16,
+        fontFamily: 'Roboto-Bold',
+        textAlign: 'center',
     },
     emptySubtext: {
-        color: '#666',
+        color: '#AAA',
         fontSize: 14,
+        marginTop: 8,
+        fontFamily: 'Roboto-Regular',
+        textAlign: 'center',
     },
-    chatMessageBubble: {
-        maxWidth: '80%',
-        padding: 12,
-        borderRadius: 15,
-        marginBottom: 10,
-        flexDirection: 'column',
-    },
-    myMessageBubble: {
-        alignSelf: 'flex-end',
-        backgroundColor: '#007bff',
-        borderBottomRightRadius: 2,
-    },
-    otherMessageBubble: {
-        alignSelf: 'flex-start',
-        backgroundColor: '#2A2A3B',
-        borderBottomLeftRadius: 2,
-        borderWidth: 1,
-        borderColor: '#333',
-    },
-    chatMessageSender: {
-        fontSize: 12,
-        color: '#CCC',
-        marginBottom: 4,
-        fontWeight: 'bold',
-    },
-    chatMessageText: {
-        fontSize: 16,
-        color: '#FFFFFF',
-    },
-    chatMessageTime: {
-        fontSize: 10,
-        color: 'rgba(255,255,255,0.7)',
-        alignSelf: 'flex-end',
-        marginTop: 5,
-    },
-    inputContainer: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        paddingHorizontal: 15,
-        paddingVertical: 10,
-        backgroundColor: '#1E1E2C',
-        borderTopWidth: 1,
-        borderTopColor: '#333',
-    },
-    messageInput: {
-        flex: 1,
-        borderWidth: 1,
-        borderColor: '#555',
-        borderRadius: 25,
-        paddingHorizontal: 15,
-        paddingVertical: Platform.OS === 'ios' ? 12 : 8,
-        marginRight: 10,
-        color: '#E0E0E0',
-        backgroundColor: '#2A2A3B',
-        maxHeight: 120,
-        fontSize: 16,
-    },
-    sendButton: {
-        backgroundColor: '#007bff',
-        borderRadius: 25,
-        width: 50,
-        height: 50,
+    unreadBadge: {
+        backgroundColor: '#FF5252',
+        borderRadius: 10,
+        minWidth: 20,
+        height: 20,
         justifyContent: 'center',
         alignItems: 'center',
+        marginTop: 4,
+        alignSelf: 'flex-start',
     },
-    sendButtonDisabled: {
-        backgroundColor: '#555',
+    unreadBadgeText: {
+        color: '#FFF',
+        fontSize: 12,
+        fontWeight: 'bold',
+        fontFamily: 'Roboto-Bold',
+        paddingHorizontal: 6,
+    },
+    scrollToBottomButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#FF5252',
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        borderRadius: 15,
+        alignSelf: 'center',
+        marginBottom: 8,
+        position: 'absolute',
+        top: 120,
+        zIndex: 1000,
+    },
+    scrollToBottomText: {
+        color: '#FFF',
+        fontSize: 12,
+        fontWeight: 'bold',
+        marginRight: 4,
+        fontFamily: 'Roboto-Bold',
+    },
+    menuOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    },
+    menuContainer: {
+        position: 'absolute',
+        backgroundColor: '#FFF',
+        borderRadius: 12,
+        padding: 8,
+        minWidth: 180,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.25,
+        shadowRadius: 4,
+        elevation: 5,
+    },
+    menuItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingVertical: 12,
+        paddingHorizontal: 16,
+        borderRadius: 8,
+    },
+    menuItemText: {
+        marginLeft: 12,
+        fontSize: 14,
+        color: '#333',
+        fontFamily: 'Roboto-Regular',
     },
 });
 
-export default ChatScreen;
+export default React.memo(ChatScreen);

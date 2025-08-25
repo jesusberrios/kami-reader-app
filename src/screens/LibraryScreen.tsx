@@ -20,6 +20,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import DrawerToggle from '../components/drawerToggle';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
+import { useAlertContext } from '../contexts/AlertContext'; // Importar el contexto de alertas
 
 type Comic = {
     hid: string;
@@ -39,7 +40,7 @@ type SelectedFilters = {
     status: string | null;
     content_rating: string;
     sort: string;
-    [key: string]: any;  // <-- Permite indexar con cualquier string
+    [key: string]: any;
 };
 
 type FilterOption = {
@@ -61,8 +62,11 @@ const LibraryScreen = ({ navigation }: any) => {
     const [showFilters, setShowFilters] = useState(false);
     const insets = useSafeAreaInsets();
 
+    // Obtener las funciones de alerta del contexto
+    const { alertError } = useAlertContext();
+
     const [selectedFilters, setSelectedFilters] = useState<SelectedFilters>({
-        genres: [],           // valor inicial válido (array vacío)
+        genres: [],
         demographic: null,
         country: null,
         status: null,
@@ -198,6 +202,7 @@ const LibraryScreen = ({ navigation }: any) => {
             setPage(page);
         } catch (e: any) {
             setError(e.message);
+            alertError("Error al cargar los cómics. Por favor, intenta nuevamente.");
         } finally {
             setLoading(false);
             setIsFetchingMore(false);

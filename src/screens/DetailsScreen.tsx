@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import {
     View,
     Text,
@@ -10,10 +10,10 @@ import {
     FlatList,
     Platform,
     Share,
-    Alert,
     AccessibilityInfo,
     StatusBar,
-    Dimensions
+    Dimensions,
+    RefreshControl
 } from 'react-native';
 import { RouteProp, useNavigation, useRoute } from '@react-navigation/native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -22,6 +22,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { db, auth } from '../firebase/config';
 import { doc, setDoc, deleteDoc, onSnapshot, collection, getDocs, getDoc, serverTimestamp } from 'firebase/firestore';
 import { RootStackParamList } from '../navigation/types';
+import { useAlertContext } from '../contexts/AlertContext';
 
 type DetailsScreenRouteProp = RouteProp<RootStackParamList, 'Details'>;
 
@@ -63,6 +64,9 @@ type LastReadChapterInfo = {
 };
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const CHAPTERS_PER_PAGE = 100;
+const INITIAL_GROUP_FETCH_LIMIT = 200;
+const AVAILABLE_LANGUAGES = ['es-419', 'es-LA', 'en', 'ja', 'zh'];
 
 const DetailsScreen: React.FC = () => {
     const route = useRoute<DetailsScreenRouteProp>();
@@ -70,21 +74,20 @@ const DetailsScreen: React.FC = () => {
 
     const navigation = useNavigation<any>();
     const insets = useSafeAreaInsets();
+    const { alertError, alertSuccess, alertConfirm } = useAlertContext();
 
     const [comic, setComic] = useState<ComicDetails | null>(null);
     const [chapters, setChapters] = useState<Chapter[]>([]);
     const [loadingComic, setLoadingComic] = useState<boolean>(true);
     const [loadingChapters, setLoadingChapters] = useState<boolean>(false);
+    const [refreshing, setRefreshing] = useState<boolean>(false);
     const [comicError, setComicError] = useState<string | null>(null);
     const [chaptersError, setChaptersError] = useState<string | null>(null);
 
     const [currentPage, setCurrentPage] = useState<number>(1);
     const [hasMoreChapters, setHasMoreChapters] = useState<boolean>(true);
-    const chaptersPerPage = 20;
-    const initialGroupFetchLimit = 100;
 
     const [chapterOrder, setChapterOrder] = useState<0 | 1>(0);
-    const availableLanguages = ['es', 'es-LA', 'en', 'ja', 'zh'];
     const [selectedLanguage, setSelectedLanguage] = useState<string>('es');
     const [availableGroups, setAvailableGroups] = useState<string[]>(['Todos']);
     const [selectedGroup, setSelectedGroup] = useState<string>('Todos');
@@ -96,7 +99,9 @@ const DetailsScreen: React.FC = () => {
     const [readChaptersHids, setReadChaptersHids] = useState<Set<string>>(new Set());
     const [lastReadChapterInfo, setLastReadChapterInfo] = useState<LastReadChapterInfo | null>(null);
     const [isMangaRead, setIsMangaRead] = useState<boolean>(false);
+    const [loadingAllChapters, setLoadingAllChapters] = useState<boolean>(false);
 
+    // Efectos para autenticación y datos de usuario
     useEffect(() => {
         const unsubscribe = auth.onAuthStateChanged(user => {
             setCurrentUserUid(user ? user.uid : null);
@@ -105,102 +110,158 @@ const DetailsScreen: React.FC = () => {
     }, []);
 
     useEffect(() => {
-        if (currentUserUid) {
-            const userDocRef = doc(db, 'users', currentUserUid);
-            const unsubscribeProfile = onSnapshot(userDocRef, (docSnap) => {
-                if (docSnap.exists()) {
-                    const userData = docSnap.data();
-                    setIsPremium(userData?.accountType === 'premium');
-                } else {
-                    setIsPremium(false);
-                }
-            }, (error) => {
+        if (!currentUserUid) {
+            setIsPremium(false);
+            return;
+        }
+
+        const userDocRef = doc(db, 'users', currentUserUid);
+        const unsubscribeProfile = onSnapshot(userDocRef,
+            (docSnap) => {
+                setIsPremium(docSnap.exists() ? docSnap.data()?.accountType === 'premium' : false);
+            },
+            (error) => {
                 console.error("Error fetching user profile:", error);
                 setIsPremium(false);
-            });
-            return unsubscribeProfile;
-        } else {
-            setIsPremium(false);
-        }
+            }
+        );
+        return unsubscribeProfile;
     }, [currentUserUid]);
 
     useEffect(() => {
-        if (currentUserUid && comic?.hid) {
-            const favoriteDocRef = doc(db, 'users', currentUserUid, 'favorites', comic.hid);
-            const unsubscribeFavorite = onSnapshot(favoriteDocRef, (docSnap) => {
-                setIsFavorite(docSnap.exists());
-            }, (error) => {
+        if (!currentUserUid || !comic?.hid) {
+            setIsFavorite(false);
+            return;
+        }
+
+        const favoriteDocRef = doc(db, 'users', currentUserUid, 'favorites', comic.hid);
+        const unsubscribeFavorite = onSnapshot(favoriteDocRef,
+            (docSnap) => setIsFavorite(docSnap.exists()),
+            (error) => {
                 console.error("Error listening to favorite status:", error);
                 setIsFavorite(false);
-            });
-            return unsubscribeFavorite;
-        } else {
-            setIsFavorite(false);
-        }
+            }
+        );
+        return unsubscribeFavorite;
     }, [currentUserUid, comic?.hid]);
 
     useEffect(() => {
-        if (currentUserUid && comic?.hid) {
-            const comicReadDocRef = doc(db, 'users', currentUserUid, 'readComics', comic.hid);
-            const chaptersReadCollectionRef = collection(comicReadDocRef, 'chaptersRead');
+        if (!currentUserUid || !comic?.hid) {
+            setReadChaptersHids(new Set());
+            return;
+        }
 
-            const unsubscribeReadChapters = onSnapshot(chaptersReadCollectionRef, (querySnapshot) => {
+        const comicReadDocRef = doc(db, 'users', currentUserUid, 'readComics', comic.hid);
+        const chaptersReadCollectionRef = collection(comicReadDocRef, 'chaptersRead');
+
+        const unsubscribeReadChapters = onSnapshot(chaptersReadCollectionRef,
+            (querySnapshot) => {
                 const readHids = new Set<string>();
-                querySnapshot.forEach((doc) => {
-                    readHids.add(doc.id);
-                });
+                querySnapshot.forEach((doc) => readHids.add(doc.id));
                 setReadChaptersHids(readHids);
-            }, (error) => {
+            },
+            (error) => {
                 console.error("Error listening to read chapters:", error);
                 setReadChaptersHids(new Set());
-            });
-            return unsubscribeReadChapters;
-        } else {
-            setReadChaptersHids(new Set());
-        }
+            }
+        );
+        return unsubscribeReadChapters;
     }, [currentUserUid, comic?.hid]);
 
     useEffect(() => {
-        if (currentUserUid && comic?.hid && isPremium) {
-            const comicReadDocRef = doc(db, 'users', currentUserUid, 'readComics', comic.hid);
-            const unsubscribe = onSnapshot(comicReadDocRef, (docSnap) => {
+        if (!currentUserUid || !comic?.hid || !isPremium) {
+            setLastReadChapterInfo(null);
+            setIsMangaRead(false);
+            return;
+        }
+
+        const comicReadDocRef = doc(db, 'users', currentUserUid, 'readComics', comic.hid);
+        const unsubscribe = onSnapshot(comicReadDocRef,
+            (docSnap) => {
                 if (docSnap.exists()) {
                     const data = docSnap.data();
-                    if (data?.lastReadChapter) {
-                        setLastReadChapterInfo(data.lastReadChapter);
-                    } else {
-                        setLastReadChapterInfo(null);
-                    }
+                    setLastReadChapterInfo(data?.lastReadChapter || null);
                     setIsMangaRead(data?.isFullMangaRead === true);
                 } else {
                     setLastReadChapterInfo(null);
                     setIsMangaRead(false);
                 }
-            }, (error) => {
+            },
+            (error) => {
                 console.error("Error listening to comic read status:", error);
                 setLastReadChapterInfo(null);
                 setIsMangaRead(false);
-            });
-            return unsubscribe;
-        } else {
-            setLastReadChapterInfo(null);
-            setIsMangaRead(false);
-        }
+            }
+        );
+        return unsubscribe;
     }, [currentUserUid, comic?.hid, isPremium]);
 
+    // Memoizar funciones de utilidad
+    const getStatusText = useCallback((statusCode: number | undefined) => {
+        switch (statusCode) {
+            case 1: return 'En curso';
+            case 2: return 'Completado';
+            case 3: return 'Cancelado';
+            case 4: return 'En pausa';
+            default: return 'Desconocido';
+        }
+    }, []);
+
+    const formatIsoDateString = useCallback((isoString: string) => {
+        const date = new Date(isoString);
+        const options: Intl.DateTimeFormatOptions = {
+            year: 'numeric',
+            month: 'short',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+            timeZoneName: 'short',
+            timeZone: 'UTC',
+        };
+        return date.toLocaleString('es-ES', options);
+    }, []);
+
+    // Fetch de datos del cómic
+    useEffect(() => {
+        if (!slug) {
+            setComicError("Error: No se encontró el identificador del cómic (slug).");
+            setLoadingComic(false);
+            return;
+        }
+
+        const fetchComicDetails = async () => {
+            try {
+                setLoadingComic(true);
+                setComicError(null);
+
+                const response = await fetch(`https://api.comick.fun/v1.0/comic/${slug}/?tachiyomi=true`);
+                if (!response.ok) throw new Error(`Error HTTP: ${response.status}`);
+
+                const data = await response.json();
+                setComic(data.comic);
+            } catch (e: any) {
+                setComicError(e.message || 'Error desconocido al cargar detalles del cómic');
+            } finally {
+                setLoadingComic(false);
+            }
+        };
+
+        fetchComicDetails();
+    }, [slug]);
+
+    // Fetch de grupos
     const fetchAllGroupNames = useCallback(async (comicHid: string) => {
         try {
-            const url = `https://api.comick.fun/comic/${comicHid}/chapters?page=1&limit=${initialGroupFetchLimit}&lang=${selectedLanguage}`;
+            const url = `https://api.comick.fun/comic/${comicHid}/chapters?page=1&limit=${INITIAL_GROUP_FETCH_LIMIT}&lang=${selectedLanguage}`;
             const response = await fetch(url);
-            if (!response.ok) {
-                throw new Error(`Error HTTP: ${response.status} fetching groups`);
-            }
+            if (!response.ok) throw new Error(`Error HTTP: ${response.status} fetching groups`);
+
             const data = await response.json();
             const fetchedChapters: Chapter[] = data.chapters || [];
 
             const uniqueGroups = new Set<string>();
             fetchedChapters.forEach(chap => {
-                if (chap.group_name && Array.isArray(chap.group_name)) {
+                if (chap.group_name?.length) {
                     chap.group_name.forEach(group => uniqueGroups.add(group));
                 }
             });
@@ -214,45 +275,73 @@ const DetailsScreen: React.FC = () => {
         } catch (e: any) {
             console.error('Error fetching group names:', e.message);
         }
-    }, [selectedLanguage, selectedGroup, initialGroupFetchLimit]);
-
-    useEffect(() => {
-        if (!slug) {
-            setComicError("Error: No se encontró el identificador del cómic (slug).");
-            setLoadingComic(false);
-            return;
-        }
-
-        const fetchComicDetails = async () => {
-            try {
-                setLoadingComic(true);
-                setComicError(null);
-
-                const url = `https://api.comick.fun/v1.0/comic/${slug}/?tachiyomi=true`;
-                const response = await fetch(url);
-
-                if (!response.ok) {
-                    throw new Error(`Error HTTP: ${response.status}`);
-                }
-
-                const data = await response.json();
-                setComic(data.comic);
-
-            } catch (e: any) {
-                setComicError(e.message || 'Error desconocido al cargar detalles del cómic');
-            } finally {
-                setLoadingComic(false);
-            }
-        };
-
-        fetchComicDetails();
-    }, [slug]);
+    }, [selectedLanguage, selectedGroup]);
 
     useEffect(() => {
         if (comic?.hid) {
             fetchAllGroupNames(comic.hid);
         }
-    }, [comic?.hid, selectedLanguage, fetchAllGroupNames]);
+    }, [comic?.hid, fetchAllGroupNames]);
+
+    // Fetch de capítulos
+    const fetchAllChapters = useCallback(async (comicHid: string, order: 0 | 1, language: string, group: string) => {
+        setLoadingAllChapters(true);
+        setChaptersError(null);
+
+        try {
+            let allChapters: Chapter[] = [];
+            let page = 1;
+            let hasMore = true;
+
+            while (hasMore) {
+                const chapterUrl = `https://api.comick.fun/comic/${comicHid}/chapters?page=${page}&limit=${CHAPTERS_PER_PAGE}&lang=${language}&chap-order=${order}`;
+                const response = await fetch(chapterUrl);
+                if (!response.ok) throw new Error(`Error HTTP: ${response.status}`);
+
+                const data = await response.json();
+                const chaptersThisPage: Chapter[] = data.chapters || [];
+
+                if (chaptersThisPage.length === 0) {
+                    hasMore = false;
+                    break;
+                }
+
+                let filteredChapters = chaptersThisPage;
+                if (group !== 'Todos') {
+                    filteredChapters = chaptersThisPage.filter(chapter =>
+                        chapter.group_name?.includes(group)
+                    );
+                }
+
+                allChapters = [...allChapters, ...filteredChapters];
+
+                if (chaptersThisPage.length < CHAPTERS_PER_PAGE) {
+                    hasMore = false;
+                } else {
+                    page++;
+                }
+
+                await new Promise(resolve => setTimeout(resolve, 100));
+            }
+
+            // Eliminar duplicados
+            const uniqueChaptersMap = new Map<string, Chapter>();
+            allChapters.forEach(chapter => {
+                const key = `${chapter.chap}-${chapter.group_name?.[0] || ''}`;
+                if (!uniqueChaptersMap.has(key)) {
+                    uniqueChaptersMap.set(key, chapter);
+                }
+            });
+
+            setChapters(Array.from(uniqueChaptersMap.values()));
+            setHasMoreChapters(false);
+        } catch (e: any) {
+            setChaptersError(e.message || 'Error desconocido al cargar capítulos');
+        } finally {
+            setLoadingAllChapters(false);
+            setLoadingChapters(false);
+        }
+    }, []);
 
     const fetchChapters = useCallback(async (page: number, order: 0 | 1, language: string, group: string, reset: boolean = false) => {
         if (!comic?.hid) return;
@@ -261,77 +350,104 @@ const DetailsScreen: React.FC = () => {
         setChaptersError(null);
 
         try {
-            const chapterUrl = `https://api.comick.fun/comic/${comic.hid}/chapters?page=${page}&limit=${chaptersPerPage}&lang=${language}&chap-order=${order}`;
+            const chapterUrl = `https://api.comick.fun/comic/${comic.hid}/chapters?page=${page}&limit=${CHAPTERS_PER_PAGE}&lang=${language}&chap-order=${order}`;
             const response = await fetch(chapterUrl);
-
-            if (!response.ok) {
-                throw new Error(`Error HTTP: ${response.status}`);
-            }
+            if (!response.ok) throw new Error(`Error HTTP: ${response.status}`);
 
             const data = await response.json();
             let allChaptersFetchedThisPage: Chapter[] = data.chapters || [];
 
+            // Eliminar duplicados
             const uniqueChapterMap = new Map<string, Chapter>();
             allChaptersFetchedThisPage.forEach(chapter => {
-                const key = `${chapter.chap}-${chapter.group_name && chapter.group_name.length > 0 ? chapter.group_name[0] : ''}`;
+                const key = `${chapter.chap}-${chapter.group_name?.[0] || ''}`;
                 if (!uniqueChapterMap.has(key)) {
                     uniqueChapterMap.set(key, chapter);
                 }
             });
             let deduplicatedChapters = Array.from(uniqueChapterMap.values());
 
-            let filteredChaptersForDisplay: Chapter[] = deduplicatedChapters;
+            // Filtrar por grupo si es necesario
+            let filteredChaptersForDisplay = deduplicatedChapters;
             if (group !== 'Todos') {
                 filteredChaptersForDisplay = deduplicatedChapters.filter(chapter =>
-                    chapter.group_name && chapter.group_name.includes(group)
+                    chapter.group_name?.includes(group)
                 );
             }
 
             setChapters(prevChapters => {
+                if (reset) return filteredChaptersForDisplay;
+
                 const existingChapterKeys = new Set(prevChapters.map(chap =>
-                    `${chap.chap}-${chap.group_name && chap.group_name.length > 0 ? chap.group_name[0] : ''}`
+                    `${chap.chap}-${chap.group_name?.[0] || ''}`
                 ));
 
                 const newUniqueChapters = filteredChaptersForDisplay.filter(chapter => {
-                    const key = `${chapter.chap}-${chapter.group_name && chapter.group_name.length > 0 ? chapter.group_name[0] : ''}`;
+                    const key = `${chapter.chap}-${chapter.group_name?.[0] || ''}`;
                     return !existingChapterKeys.has(key);
                 });
 
-                return reset ? filteredChaptersForDisplay : [...prevChapters, ...newUniqueChapters];
+                return [...prevChapters, ...newUniqueChapters];
             });
 
-            setHasMoreChapters(allChaptersFetchedThisPage.length === chaptersPerPage);
-
+            setHasMoreChapters(allChaptersFetchedThisPage.length === CHAPTERS_PER_PAGE);
         } catch (e: any) {
             setChaptersError(e.message || 'Error desconocido al cargar capítulos');
         } finally {
             setLoadingChapters(false);
         }
-    }, [comic?.hid, chaptersPerPage]);
+    }, [comic?.hid]);
 
+    // Efecto para cargar capítulos
     useEffect(() => {
-        if (comic?.hid) {
-            setChapters([]);
-            setCurrentPage(1);
-            setHasMoreChapters(true);
+        if (!comic?.hid) return;
+
+        setChapters([]);
+        setCurrentPage(1);
+        setHasMoreChapters(true);
+
+        if (selectedGroup !== 'Todos') {
+            fetchAllChapters(comic.hid, chapterOrder, selectedLanguage, selectedGroup);
+        } else {
             fetchChapters(1, chapterOrder, selectedLanguage, selectedGroup, true);
         }
-    }, [comic?.hid, chapterOrder, selectedLanguage, selectedGroup, fetchChapters]);
+    }, [comic?.hid, chapterOrder, selectedLanguage, selectedGroup, fetchChapters, fetchAllChapters]);
 
     useEffect(() => {
-        if (currentPage > 1) {
+        if (currentPage > 1 && selectedGroup === 'Todos') {
             fetchChapters(currentPage, chapterOrder, selectedLanguage, selectedGroup);
         }
     }, [currentPage, chapterOrder, selectedLanguage, selectedGroup, fetchChapters]);
 
+    // Handlers
     const handleLoadMore = () => {
-        if (!loadingChapters && hasMoreChapters) {
+        if (!loadingChapters && hasMoreChapters && selectedGroup === 'Todos') {
             setCurrentPage(prevPage => prevPage + 1);
         }
     };
+
+    const onRefresh = useCallback(() => {
+        setRefreshing(true);
+        if (comic?.hid) {
+            setChapters([]);
+            setCurrentPage(1);
+            setHasMoreChapters(true);
+
+            if (selectedGroup !== 'Todos') {
+                fetchAllChapters(comic.hid, chapterOrder, selectedLanguage, selectedGroup).finally(() => {
+                    setRefreshing(false);
+                });
+            } else {
+                fetchChapters(1, chapterOrder, selectedLanguage, selectedGroup, true).finally(() => {
+                    setRefreshing(false);
+                });
+            }
+        } else {
+            setRefreshing(false);
+        }
+    }, [comic?.hid, chapterOrder, selectedLanguage, selectedGroup, fetchChapters, fetchAllChapters]);
+
     const handleViewComments = () => {
-        // Llama a la pantalla 'Comments' y pasa el 'mangaTitle' como parámetro
-        // El nombre 'Comments' debe coincidir con el 'name' que le diste en tu Stack.Navigator
         navigation.navigate('Comments', { mangaTitle: comic?.title });
     };
 
@@ -346,72 +462,53 @@ const DetailsScreen: React.FC = () => {
     const toggleGroup = () => {
         const currentIndex = availableGroups.indexOf(selectedGroup);
         const nextIndex = (currentIndex + 1) % availableGroups.length;
-        setSelectedGroup(availableGroups[nextIndex]);
-    };
+        const nextGroup = availableGroups[nextIndex];
+        setSelectedGroup(nextGroup);
 
-    const getStatusText = (statusCode: number | undefined) => {
-        switch (statusCode) {
-            case 1: return 'En curso';
-            case 2: return 'Completado';
-            case 3: return 'Cancelado';
-            case 4: return 'En pausa';
-            default: return 'Desconocido';
+        if (comic?.hid) {
+            setChapters([]);
+            setCurrentPage(1);
+            setHasMoreChapters(true);
+
+            if (nextGroup !== 'Todos') {
+                fetchAllChapters(comic.hid, chapterOrder, selectedLanguage, nextGroup);
+            } else {
+                fetchChapters(1, chapterOrder, selectedLanguage, nextGroup, true);
+            }
         }
-    };
-
-    const formatIsoDateString = (isoString: string) => {
-        const date = new Date(isoString);
-        const options: Intl.DateTimeFormatOptions = {
-            year: 'numeric',
-            month: 'short',
-            day: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit',
-            timeZoneName: 'short',
-            timeZone: 'UTC',
-        };
-        return date.toLocaleString('es-ES', options);
     };
 
     const onShare = async () => {
         try {
             const playStoreLink = 'https://play.google.com/store/apps/details?id=com.yourusername.kamireader';
-
-            // Combine your main message with the Android link
             const message = `¡Descarga Kamireader para leer tus cómics favoritos!\n\nAndroid: ${playStoreLink}`;
 
             const result = await Share.share({
-                message: message, // Use the combined message here
-                title: '¡Descarga Kamireader!', // Title for the share sheet
-                url: playStoreLink, // This URL is used by some sharing apps (e.g., WhatsApp might show a preview)
+                message,
+                title: '¡Descarga Kamireader!',
+                url: playStoreLink,
             });
 
             if (result.action === Share.sharedAction) {
-                if (result.activityType) {
-                    // shared with activity type of result.activityType
-                } else {
-                    // shared
-                }
-            } else if (result.action === Share.dismissedAction) {
-                // dismissed
+                // Opcional: manejar acciones después de compartir
             }
         } catch (error: any) {
-            Alert.alert('Error al compartir', error.message);
+            alertError(error.message || 'Error al compartir');
         }
     };
 
     const toggleFavorite = async () => {
         if (!currentUserUid) {
-            Alert.alert("Acceso denegado", "Debes iniciar sesión para usar esta función.");
+            alertError("Debes iniciar sesión para usar esta función.");
             return;
         }
 
         if (isPremium === false) {
-            Alert.alert("Función Premium", "Esta función está disponible solo para usuarios Premium.");
+            alertError("Esta función está disponible solo para usuarios Premium.");
             return;
         }
         if (!comic?.hid) {
-            Alert.alert("Error", "No se puede añadir a favoritos sin el ID del cómic.");
+            alertError("No se puede añadir a favoritos sin el ID del cómic.");
             return;
         }
 
@@ -421,7 +518,7 @@ const DetailsScreen: React.FC = () => {
 
             if (isFavorite) {
                 await deleteDoc(favoriteDocRef);
-                Alert.alert("Eliminado", "Cómic eliminado de tus favoritos.");
+                alertSuccess("Cómic eliminado de tus favoritos.");
             } else {
                 await setDoc(favoriteDocRef, {
                     favoritedAt: new Date(),
@@ -429,11 +526,11 @@ const DetailsScreen: React.FC = () => {
                     coverUrl: comic.cover_url,
                     slug: comic.slug,
                 });
-                Alert.alert("Añadido", "Cómic añadido a tus favoritos.");
+                alertSuccess("Cómic añadido a tus favoritos.");
             }
         } catch (e: any) {
             console.error("Error toggling favorite:", e);
-            Alert.alert("Error", `No se pudo actualizar favoritos: ${e.message}`);
+            alertError(`No se pudo actualizar favoritos: ${e.message}`);
         } finally {
             setFavoriteLoading(false);
         }
@@ -483,16 +580,10 @@ const DetailsScreen: React.FC = () => {
     }, [comic]);
 
     const toggleReadStatus = async (chapterHid: string, chapterChap: string, currentIsRead: boolean) => {
-        if (!currentUserUid) {
-            /* Alert.alert("Acceso denegado", "Debes iniciar sesión para usar esta función."); */
-            return;
-        }
-        if (isPremium === false) {
-            /* Alert.alert("Función Premium", "Esta función está disponible solo para usuarios Premium."); */
-            return;
-        }
+        if (!currentUserUid) return;
+        if (isPremium === false) return;
         if (!comic?.hid) {
-            Alert.alert("Error", "No se puede marcar el capítulo sin el ID del cómic.");
+            alertError("No se puede marcar el capítulo sin el ID del cómic.");
             return;
         }
 
@@ -504,17 +595,12 @@ const DetailsScreen: React.FC = () => {
             const inProgressMangaDocRef = doc(db, 'users', currentUserUid, 'inProgressManga', comic.hid);
 
             if (currentIsRead) {
-                // If marking as unread, delete the chapter read document
                 await deleteDoc(chapterReadDocRef);
-                Alert.alert("Actualizado", "Capítulo marcado como no leído."); // Optional: provide feedback
+                alertSuccess("Capítulo marcado como no leído.");
 
-                // Re-evaluate lastReadChapter for the manga after unmarking
                 await updateLastReadChapterForComic(comic.hid, currentUserUid);
 
-                // If this was the last read chapter, update inProgressManga
-                // A more robust check might be needed if you have a complex 'last read' logic
                 if (lastReadChapterInfo?.hid === chapterHid) {
-                    // Fetch all remaining read chapters to find the *new* highest
                     const remainingReadChaptersSnapshot = await getDocs(chaptersReadCollectionRef);
                     let newLastReadHid: string | null = null;
                     let newLastReadChapNumber: string | null = null;
@@ -536,96 +622,78 @@ const DetailsScreen: React.FC = () => {
                             lastReadChapterNumber: newLastReadChapNumber,
                         }, { merge: true });
                     } else {
-                        // If no chapters are left as read, clear the inProgressManga's lastReadChapter info
                         await setDoc(inProgressMangaDocRef, {
                             lastReadChapterHid: null,
                             lastReadChapterNumber: null,
                         }, { merge: true });
                     }
                 }
-
-
             } else {
-                // If marking as read, set the chapter read document
                 await setDoc(chapterReadDocRef, { readAt: new Date(), chap: chapterChap });
-                Alert.alert("Actualizado", "Capítulo marcado como leído."); // Optional: provide feedback
-
-                // Update the main comic read status with the new last read chapter
+                alertSuccess("Capítulo marcado como leído.");
+                
                 await updateLastReadChapterForComic(comic.hid, currentUserUid);
 
-                // Update lastReadChapter in the inProgressManga document directly
                 await setDoc(inProgressMangaDocRef, {
                     lastReadChapterHid: chapterHid,
                     lastReadChapterNumber: chapterChap,
                 }, { merge: true });
             }
-
         } catch (e: any) {
             console.error("Error toggling read status:", e);
-            Alert.alert("Error", `No se pudo actualizar el estado de lectura: ${e.message}`);
+            alertError(`No se pudo actualizar el estado de lectura: ${e.message}`);
         }
     };
 
-    const addMangaToInProgress = async (mangaHid: string, mangaTitle: string, p0: { uid: string; }) => {// Removed 'comic: any' from here
-        // as 'comic' should be available in the component scope
-        if (!currentUserUid) {
-            console.error("No user logged in.");
-            return;
-        }
-
-        // --- Critical check: Is 'comic' defined and does it have the necessary properties? ---
+    const addMangaToInProgress = async (mangaHid: string, mangaTitle: string) => {
+        if (!currentUserUid) return;
         if (!comic || !comic.cover_url || !comic.slug) {
-            console.error("Error: Comic data (cover_url or slug) is missing before saving to inProgressManga.");
-            Alert.alert("Error de datos", "No se pudo obtener la información completa del cómic para guardarlo.");
+            alertError("No se pudo obtener la información completa del cómic para guardarlo.");
             return;
         }
-        // ----------------------------------------------------------------------------------
 
         const mangaDocRef = doc(db, 'users', currentUserUid, 'inProgressManga', mangaHid);
 
         try {
             await setDoc(mangaDocRef, {
-                mangaHid: mangaHid,
-                mangaTitle: mangaTitle,
-                // These are the key additions/corrections:
-                coverUrl: comic.cover_url, // Use the correct property from your 'comic' object
-                slug: comic.slug,         // Use the correct property from your 'comic' object
+                mangaHid,
+                mangaTitle,
+                coverUrl: comic.cover_url,
+                slug: comic.slug,
                 startedAt: serverTimestamp(),
                 lastReadChapterHid: null,
                 lastReadChapterNumber: null,
-            }, { merge: true }); // Always use merge: true when updating parts of a document
-
+            }, { merge: true });
         } catch (error) {
             console.error("Error adding manga to inProgressManga:", error);
-            Alert.alert("Error", `No se pudo guardar el progreso: ${error}`);
+            alertError(`No se pudo guardar el progreso: ${error}`);
         }
     };
 
     const toggleMangaReadStatus = async () => {
         if (!currentUserUid) {
-            Alert.alert("Acceso denegado", "Debes iniciar sesión para usar esta función.");
+            alertError("Debes iniciar sesión para usar esta función.");
             return;
         }
         if (isPremium === null) {
-            Alert.alert("Verificando estado Premium", "Por favor, espera mientras verificamos tu estado Premium.");
+            alertError("Por favor, espera mientras verificamos tu estado Premium.");
             return;
         }
         if (isPremium === false) {
-            Alert.alert("Función Premium", "Esta función está disponible solo para usuarios Premium.");
+            alertError("Esta función está disponible solo para usuarios Premium.");
             return;
         }
         if (!comic?.hid) {
-            Alert.alert("Error", "No se puede marcar el manga sin el ID del cómic.");
+            alertError("No se puede marcar el manga sin el ID del cómic.");
             return;
         }
 
         try {
             const comicReadDocRef = doc(db, 'users', currentUserUid, 'readComics', comic.hid);
-            const chaptersReadCollectionRef = collection(comicReadDocRef, 'chaptersRead');
 
             if (isMangaRead) {
                 await deleteDoc(comicReadDocRef);
-                Alert.alert("Actualizado", "Manga marcado como no leído y capítulos desmarcados.");
+                alertSuccess("Manga marcado como no leído y capítulos desmarcados.");
             } else {
                 let lastChapterHid: string | null = null;
                 let lastChapterChap: string | null = null;
@@ -634,8 +702,6 @@ const DetailsScreen: React.FC = () => {
                     const sortedChapters = [...chapters].sort((a, b) => parseFloat(b.chap) - parseFloat(a.chap));
                     lastChapterHid = sortedChapters[0].hid;
                     lastChapterChap = sortedChapters[0].chap;
-                } else if (comic.last_chapter) {
-                    // Fallback to comic.last_chapter if no chapters are loaded yet
                 }
 
                 await setDoc(comicReadDocRef, {
@@ -650,14 +716,14 @@ const DetailsScreen: React.FC = () => {
                     slug: comic.slug,
                 }, { merge: true });
 
-                Alert.alert("Actualizado", "Manga marcado como leído.");
+                alertSuccess("Manga marcado como leído.");
             }
         } catch (e: any) {
             console.error("Error toggling manga read status:", e);
             if (e.code === 'permission-denied') {
-                Alert.alert("Error de Permisos", "No tienes permiso para realizar esta acción. Verifica tus reglas de seguridad de Firestore.");
+                alertError("No tienes permiso para realizar esta acción. Verifica tus reglas de seguridad de Firestore.");
             } else {
-                Alert.alert("Error", `No se pudo actualizar el estado de lectura del manga: ${e.message}`);
+                alertError(`No se pudo actualizar el estado de lectura del manga: ${e.message}`);
             }
         }
     };
@@ -666,7 +732,8 @@ const DetailsScreen: React.FC = () => {
         setChapterOrder(prevOrder => (prevOrder === 0 ? 1 : 0));
     };
 
-    const renderChapterItem = ({ item }: { item: Chapter }) => {
+    // Renderizado de elementos de lista
+    const renderChapterItem = useCallback(({ item }: { item: Chapter }) => {
         const isChapterRead = readChaptersHids.has(item.hid);
 
         return (
@@ -674,30 +741,18 @@ const DetailsScreen: React.FC = () => {
                 style={[styles.chapterItem, isChapterRead && styles.chapterItemRead]}
                 onPress={() => {
                     if (isChapterRead) {
-                        // If already read, offer to unmark it
-                        Alert.alert(
-                            "Desmarcar como leído",
+                        alertConfirm(
                             `¿Estás seguro de que quieres desmarcar el Capítulo ${item.chap} como no leído?`,
-                            [
-                                {
-                                    text: "Cancelar",
-                                    style: "cancel"
-                                },
-                                {
-                                    text: "Sí, desmarcar",
-                                    onPress: () => toggleReadStatus(item.hid, item.chap, true) // Pass true to unmark
-                                }
-                            ]
+                            () => toggleReadStatus(item.hid, item.chap, true),
+                            "Desmarcar como leído",
+                            "Sí, desmarcar",
+                            "Cancelar"
                         );
                     } else {
-                        // If not read, navigate to reader and mark as read
                         navigation.navigate('Reader', { hid: item.hid });
                         if (comic && comic.hid && comic.title && currentUserUid) {
-                            // Mark as read when entering the chapter
-                            toggleReadStatus(item.hid, item.chap, false); // Pass false to mark as read
-                            addMangaToInProgress(comic.hid, comic.title, { uid: currentUserUid });
-                        } else {
-                            console.warn("Could not add manga to in-progress: Missing comic details or user UID.");
+                            toggleReadStatus(item.hid, item.chap, false);
+                            addMangaToInProgress(comic.hid, comic.title);
                         }
                     }
                 }}
@@ -711,7 +766,7 @@ const DetailsScreen: React.FC = () => {
                         {item.title ? <Text style={styles.chapterSubtitle}> - {item.title}</Text> : ''}
                     </Text>
                     <View style={styles.chapterInfoRow}>
-                        {item.group_name && item.group_name.length > 0 && (
+                        {Array.isArray(item.group_name) && item.group_name.length > 0 && (
                             <Text style={styles.chapterGroup} numberOfLines={1} ellipsizeMode="tail">
                                 {item.group_name.join(', ')}
                             </Text>
@@ -724,15 +779,237 @@ const DetailsScreen: React.FC = () => {
                         Publicado: {formatIsoDateString(item.created_at)}
                     </Text>
                 </View>
-                {/* Display a different icon/indicator based on read status */}
                 {isChapterRead ? (
-                    <Ionicons name="checkmark-circle" size={24} color="#4CAF50" /> // Green check for read
+                    <Ionicons name="checkmark-circle" size={24} color="#4CAF50" />
                 ) : (
-                    <Ionicons name="chevron-forward-outline" size={24} color="#FF5252" /> // Arrow for unread
+                    <Ionicons name="chevron-forward-outline" size={24} color="#FF5252" />
                 )}
             </TouchableOpacity>
         );
-    };
+    }, [readChaptersHids, comic, currentUserUid, formatIsoDateString, toggleReadStatus, addMangaToInProgress, alertConfirm, navigation]);
+
+    // Memoizar componentes costosos
+    const memoizedChapterList = useMemo(() => (
+        <FlatList
+            data={chapters}
+            keyExtractor={(item) => item.hid}
+            renderItem={renderChapterItem}
+            onEndReached={handleLoadMore}
+            onEndReachedThreshold={0.5}
+            ListFooterComponent={() => (
+                loadingChapters ? (
+                    <ActivityIndicator size="small" color="#FF5252" style={styles.loadingMore} />
+                ) : null
+            )}
+            ListEmptyComponent={() => (
+                !loadingChapters && !chaptersError && !loadingAllChapters && (
+                    <Text style={styles.emptyChaptersText}>No hay capítulos disponibles en el idioma seleccionado.</Text>
+                )
+            )}
+            scrollEnabled={false}
+        />
+    ), [chapters, loadingChapters, chaptersError, loadingAllChapters, renderChapterItem, handleLoadMore]);
+
+    const memoizedComicDetails = useMemo(() => {
+        if (!comic) return null;
+
+        return (
+            <>
+                <View style={styles.headerContainer}>
+                    <Image
+                        source={{ uri: comic.cover_url }}
+                        style={styles.coverImage}
+                        resizeMode="cover"
+                    />
+                    <View style={styles.infoColumn}>
+                        <Text style={styles.title} numberOfLines={2} ellipsizeMode="tail">
+                            {comic.title}
+                        </Text>
+
+                        <View style={styles.infoRow}>
+                            <Ionicons name="earth-outline" size={16} color="#FF5252" />
+                            <Text style={styles.infoText}>
+                                {comic.country?.toUpperCase() || 'Desconocido'}
+                            </Text>
+                        </View>
+
+                        <View style={styles.infoRow}>
+                            <Ionicons name="time-outline" size={16} color="#FF5252" />
+                            <Text style={styles.infoText}>
+                                {getStatusText(comic.status)}
+                            </Text>
+                        </View>
+
+                        <View style={styles.infoRow}>
+                            <Ionicons name="layers-outline" size={16} color="#FF5252" />
+                            <Text style={styles.infoText}>
+                                {comic.chapter_count || 0} capítulos
+                            </Text>
+                        </View>
+
+                        <View style={styles.infoRow}>
+                            <Ionicons name="star-outline" size={16} color="#FF5252" />
+                            <Text style={styles.infoText}>
+                                {comic.bayesian_rating ? parseFloat(comic.bayesian_rating).toFixed(2) : 'N/A'} ({comic.rating_count?.toLocaleString() || '0'} votos)
+                            </Text>
+                        </View>
+
+                        <View style={styles.infoRow}>
+                            <Ionicons name="heart-outline" size={16} color="#FF5252" />
+                            <Text style={styles.infoText}>
+                                {comic.follow_count?.toLocaleString() || '0'} seguidores
+                            </Text>
+                        </View>
+
+                        {isPremium && lastReadChapterInfo && (
+                            <View style={styles.lastReadContainer}>
+                                <Ionicons name="book-outline" size={18} color="#FFD700" />
+                                <Text style={styles.lastReadText}>
+                                    Último leído: Capítulo {lastReadChapterInfo.chap}
+                                </Text>
+                                <TouchableOpacity
+                                    onPress={() => navigation.navigate('Reader', { hid: lastReadChapterInfo.hid })}
+                                    style={styles.goToLastReadButton}
+                                    accessible={true}
+                                    accessibilityLabel={`Ir al capítulo ${lastReadChapterInfo.chap}`}
+                                    accessibilityRole="button"
+                                >
+                                    <Ionicons name="arrow-forward-circle-outline" size={20} color="#FFD700" />
+                                </TouchableOpacity>
+                            </View>
+                        )}
+                    </View>
+                </View>
+
+                <View style={styles.buttonRow}>
+                    <TouchableOpacity
+                        style={styles.actionButton}
+                        onPress={onShare}
+                        accessible={true}
+                        accessibilityLabel="Compartir cómic"
+                        accessibilityRole="button"
+                    >
+                        <Ionicons name="share-social-outline" size={20} color="#FFF" />
+                        <Text style={styles.actionButtonText}>Compartir</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                        style={[
+                            styles.actionButton,
+                            isPremium === false && styles.actionButtonLocked,
+                            isFavorite && styles.actionButtonActive,
+                        ]}
+                        onPress={toggleFavorite}
+                        disabled={favoriteLoading || isPremium === null || !currentUserUid || isPremium === false}
+                        accessible={true}
+                        accessibilityLabel={isFavorite ? "Quitar de favoritos" : "Añadir a favoritos"}
+                        accessibilityRole="button"
+                    >
+                        {favoriteLoading ? (
+                            <ActivityIndicator size="small" color="#FFF" />
+                        ) : (
+                            <>
+                                <Ionicons
+                                    name={isFavorite ? "bookmark" : "bookmark-outline"}
+                                    size={20}
+                                    color="#FFF"
+                                />
+                                <Text style={styles.actionButtonText}>
+                                    {isPremium === false ? 'Premium' : (isFavorite ? 'Favorito' : 'Favoritos')}
+                                </Text>
+                            </>
+                        )}
+                    </TouchableOpacity>
+
+                    {isPremium !== null && (
+                        <TouchableOpacity
+                            style={[
+                                styles.actionButton,
+                                isPremium === false && styles.actionButtonLocked,
+                                { backgroundColor: isMangaRead ? '#673AB7' : '#2196F3' }
+                            ]}
+                            onPress={toggleMangaReadStatus}
+                            disabled={isPremium === null || !currentUserUid || isPremium === false}
+                            accessible={true}
+                            accessibilityLabel={
+                                isPremium
+                                    ? `Marcar manga como ${isMangaRead ? 'no leído' : 'leído'}`
+                                    : 'Función Premium: Marcar manga como leído'
+                            }
+                            accessibilityRole="button"
+                        >
+                            {isPremium === null || !currentUserUid ? (
+                                <ActivityIndicator size="small" color="#FFF" />
+                            ) : (
+                                <>
+                                    <Ionicons
+                                        name={isMangaRead ? "book" : "book-outline"}
+                                        size={20}
+                                        color="#FFF"
+                                    />
+                                    <Text style={styles.actionButtonText}>
+                                        {isPremium === false ? 'Premium' : (isMangaRead ? 'Leído' : 'Marcar Leído')}
+                                    </Text>
+                                </>
+                            )}
+                        </TouchableOpacity>
+                    )}
+                </View>
+
+                {(comic.authors?.length ?? 0) > 0 && (
+                    <View style={styles.section}>
+                        <View style={styles.sectionHeader}>
+                            <Ionicons name="person-outline" size={20} color="#FF5252" />
+                            <Text style={styles.subtitle}>Autor(es)</Text>
+                        </View>
+                        <Text style={styles.sectionContent}>
+                            {comic.authors?.map((author: any) => author.name).join(', ')}
+                        </Text>
+                    </View>
+                )}
+
+                {(comic.artists?.length ?? 0) > 0 && (
+                    <View style={styles.section}>
+                        <View style={styles.sectionHeader}>
+                            <Ionicons name="color-palette-outline" size={20} color="#FF5252" />
+                            <Text style={styles.subtitle}>Artista(s)</Text>
+                        </View>
+                        <Text style={styles.sectionContent}>
+                            {comic.artists?.map((artist: any) => artist.name).join(', ')}
+                        </Text>
+                    </View>
+                )}
+
+                {(comic.md_comic_md_genres ?? []).length > 0 && (
+                    <View style={styles.section}>
+                        <View style={styles.sectionHeader}>
+                            <Ionicons name="pricetags-outline" size={20} color="#FF5252" />
+                            <Text style={styles.subtitle}>Géneros</Text>
+                        </View>
+                        <View style={styles.genreContainer}>
+                            {(comic.md_comic_md_genres ?? []).map((genre: any, index: number) => (
+                                <View key={index} style={styles.genreTag}>
+                                    <Text style={styles.genreText}>{genre.md_genres.name}</Text>
+                                </View>
+                            ))}
+                        </View>
+                    </View>
+                )}
+
+                {comic.desc && (
+                    <View style={styles.section}>
+                        <View style={styles.sectionHeader}>
+                            <Ionicons name="document-text-outline" size={20} color="#FF5252" />
+                            <Text style={styles.subtitle}>Descripción</Text>
+                        </View>
+                        <Text style={styles.sectionContent}>
+                            {comic.desc.replace(/<[^>]*>?/gm, '')}
+                        </Text>
+                    </View>
+                )}
+            </>
+        );
+    }, [comic, isPremium, lastReadChapterInfo, isFavorite, favoriteLoading, currentUserUid, isMangaRead, getStatusText, onShare, toggleFavorite, toggleMangaReadStatus, navigation]);
 
     return (
         <LinearGradient colors={['#1A1A24', '#2C2C38']} style={styles.container}>
@@ -753,8 +1030,18 @@ const DetailsScreen: React.FC = () => {
                         <Text style={styles.errorText}>No se encontraron detalles para este cómic.</Text>
                     </View>
                 ) : (
-                    <ScrollView style={styles.scrollViewContent} contentContainerStyle={styles.scrollViewContainer}>
-                        {/* Top Bar for Back Button */}
+                    <ScrollView
+                        style={styles.scrollViewContent}
+                        contentContainerStyle={styles.scrollViewContainer}
+                        refreshControl={
+                            <RefreshControl
+                                refreshing={refreshing}
+                                onRefresh={onRefresh}
+                                colors={['#FF5252']}
+                                tintColor={'#FF5252'}
+                            />
+                        }
+                    >
                         <View style={styles.topBar}>
                             <TouchableOpacity
                                 onPress={() => {
@@ -777,205 +1064,8 @@ const DetailsScreen: React.FC = () => {
                             </Text>
                         </View>
 
-                        {/* Header with cover image and basic info */}
-                        <View style={styles.headerContainer}>
-                            <Image
-                                source={{ uri: comic.cover_url }}
-                                style={styles.coverImage}
-                                resizeMode="cover"
-                            />
-                            <View style={styles.infoColumn}>
-                                <Text style={styles.title} numberOfLines={2} ellipsizeMode="tail">
-                                    {comic.title}
-                                </Text>
+                        {memoizedComicDetails}
 
-                                <View style={styles.infoRow}>
-                                    <Ionicons name="earth-outline" size={16} color="#FF5252" />
-                                    <Text style={styles.infoText}>
-                                        {comic.country?.toUpperCase() || 'Desconocido'}
-                                    </Text>
-                                </View>
-
-                                <View style={styles.infoRow}>
-                                    <Ionicons name="time-outline" size={16} color="#FF5252" />
-                                    <Text style={styles.infoText}>
-                                        {getStatusText(comic.status)}
-                                    </Text>
-                                </View>
-
-                                <View style={styles.infoRow}>
-                                    <Ionicons name="layers-outline" size={16} color="#FF5252" />
-                                    <Text style={styles.infoText}>
-                                        {comic.chapter_count || 0} capítulos
-                                    </Text>
-                                </View>
-
-                                <View style={styles.infoRow}>
-                                    <Ionicons name="star-outline" size={16} color="#FF5252" />
-                                    <Text style={styles.infoText}>
-                                        {comic.bayesian_rating ? parseFloat(comic.bayesian_rating).toFixed(2) : 'N/A'} ({comic.rating_count?.toLocaleString() || '0'} votos)
-                                    </Text>
-                                </View>
-
-                                <View style={styles.infoRow}>
-                                    <Ionicons name="heart-outline" size={16} color="#FF5252" />
-                                    <Text style={styles.infoText}>
-                                        {comic.follow_count?.toLocaleString() || '0'} seguidores
-                                    </Text>
-                                </View>
-
-                                {/* Last Read Chapter Info (Premium Only) */}
-                                {isPremium && lastReadChapterInfo && (
-                                    <View style={styles.lastReadContainer}>
-                                        <Ionicons name="book-outline" size={18} color="#FFD700" />
-                                        <Text style={styles.lastReadText}>
-                                            Último leído: Capítulo {lastReadChapterInfo.chap}
-                                        </Text>
-                                        <TouchableOpacity
-                                            onPress={() => navigation.navigate('Reader', { hid: lastReadChapterInfo.hid })}
-                                            style={styles.goToLastReadButton}
-                                            accessible={true}
-                                            accessibilityLabel={`Ir al capítulo ${lastReadChapterInfo.chap}`}
-                                            accessibilityRole="button"
-                                        >
-                                            <Ionicons name="arrow-forward-circle-outline" size={20} color="#FFD700" />
-                                        </TouchableOpacity>
-                                    </View>
-                                )}
-                            </View>
-                        </View>
-
-                        {/* Action Buttons Row */}
-                        <View style={styles.buttonRow}>
-                            <TouchableOpacity
-                                style={styles.actionButton}
-                                onPress={onShare}
-                                accessible={true}
-                                accessibilityLabel="Compartir cómic"
-                                accessibilityRole="button"
-                            >
-                                <Ionicons name="share-social-outline" size={20} color="#FFF" />
-                                <Text style={styles.actionButtonText}>Compartir</Text>
-                            </TouchableOpacity>
-
-                            <TouchableOpacity
-                                style={[
-                                    styles.actionButton,
-                                    isPremium === false && styles.actionButtonLocked,
-                                    isFavorite && styles.actionButtonActive,
-                                ]}
-                                onPress={toggleFavorite}
-                                disabled={favoriteLoading || isPremium === null || !currentUserUid || isPremium === false}
-                                accessible={true}
-                                accessibilityLabel={isFavorite ? "Quitar de favoritos" : "Añadir a favoritos"}
-                                accessibilityRole="button"
-                            >
-                                {favoriteLoading ? (
-                                    <ActivityIndicator size="small" color="#FFF" />
-                                ) : (
-                                    <>
-                                        <Ionicons
-                                            name={isFavorite ? "bookmark" : "bookmark-outline"}
-                                            size={20}
-                                            color="#FFF"
-                                        />
-                                        <Text style={styles.actionButtonText}>
-                                            {isPremium === false ? 'Premium' : (isFavorite ? 'Favorito' : 'Favoritos')}
-                                        </Text>
-                                    </>
-                                )}
-                            </TouchableOpacity>
-
-                            {isPremium !== null && (
-                                <TouchableOpacity
-                                    style={[
-                                        styles.actionButton,
-                                        isPremium === false && styles.actionButtonLocked,
-                                        { backgroundColor: isMangaRead ? '#673AB7' : '#2196F3' }
-                                    ]}
-                                    onPress={toggleMangaReadStatus}
-                                    disabled={isPremium === null || !currentUserUid || isPremium === false}
-                                    accessible={true}
-                                    accessibilityLabel={
-                                        isPremium
-                                            ? `Marcar manga como ${isMangaRead ? 'no leído' : 'leído'}`
-                                            : 'Función Premium: Marcar manga como leído'
-                                    }
-                                    accessibilityRole="button"
-                                >
-                                    {isPremium === null || !currentUserUid ? (
-                                        <ActivityIndicator size="small" color="#FFF" />
-                                    ) : (
-                                        <>
-                                            <Ionicons
-                                                name={isMangaRead ? "book" : "book-outline"}
-                                                size={20}
-                                                color="#FFF"
-                                            />
-                                            <Text style={styles.actionButtonText}>
-                                                {isPremium === false ? 'Premium' : (isMangaRead ? 'Leído' : 'Marcar Leído')}
-                                            </Text>
-                                        </>
-                                    )}
-                                </TouchableOpacity>
-                            )}
-                        </View>
-
-                        {/* Authors */}
-                        {comic.authors && comic.authors.length > 0 && (
-                            <View style={styles.section}>
-                                <View style={styles.sectionHeader}>
-                                    <Ionicons name="person-outline" size={20} color="#FF5252" />
-                                    <Text style={styles.subtitle}>Autor(es)</Text>
-                                </View>
-                                <Text style={styles.sectionContent}>
-                                    {comic.authors.map((author: any) => author.name).join(', ')}
-                                </Text>
-                            </View>
-                        )}
-
-                        {/* Artists */}
-                        {comic.artists && comic.artists.length > 0 && (
-                            <View style={styles.section}>
-                                <View style={styles.sectionHeader}>
-                                    <Ionicons name="color-palette-outline" size={20} color="#FF5252" />
-                                    <Text style={styles.subtitle}>Artista(s)</Text>
-                                </View>
-                                <Text style={styles.sectionContent}>
-                                    {comic.artists.map((artist: any) => artist.name).join(', ')}
-                                </Text>
-                            </View>
-                        )}
-
-                        {/* Genres */}
-                        {comic.md_comic_md_genres && comic.md_comic_md_genres.length > 0 && (
-                            <View style={styles.section}>
-                                <View style={styles.sectionHeader}>
-                                    <Ionicons name="pricetags-outline" size={20} color="#FF5252" />
-                                    <Text style={styles.subtitle}>Géneros</Text>
-                                </View>
-                                <View style={styles.genreContainer}>
-                                    {comic.md_comic_md_genres.map((genre: any, index: number) => (
-                                        <View key={index} style={styles.genreTag}>
-                                            <Text style={styles.genreText}>{genre.md_genres.name}</Text>
-                                        </View>
-                                    ))}
-                                </View>
-                            </View>
-                        )}
-
-                        {/* Description */}
-                        {comic.desc && (
-                            <View style={styles.section}>
-                                <View style={styles.sectionHeader}>
-                                    <Ionicons name="document-text-outline" size={20} color="#FF5252" />
-                                    <Text style={styles.subtitle}>Descripción</Text>
-                                </View>
-                                <Text style={styles.sectionContent}>
-                                    {comic.desc.replace(/<[^>]*>?/gm, '')}
-                                </Text>
-                            </View>
-                        )}
                         <TouchableOpacity
                             style={styles.commentsButton}
                             onPress={handleViewComments}
@@ -996,7 +1086,6 @@ const DetailsScreen: React.FC = () => {
                             </LinearGradient>
                         </TouchableOpacity>
 
-                        {/* Chapters Section */}
                         <View style={styles.section}>
                             <View style={styles.chapterHeader}>
                                 <View style={styles.sectionHeader}>
@@ -1051,25 +1140,15 @@ const DetailsScreen: React.FC = () => {
                                 </View>
                             </View>
 
+                            {loadingAllChapters && (
+                                <View style={styles.loadingContainer}>
+                                    <ActivityIndicator size="small" color="#FF5252" />
+                                    <Text style={styles.loadingText}>Cargando todos los capítulos...</Text>
+                                </View>
+                            )}
+
                             {chaptersError && <Text style={styles.errorText}>{chaptersError}</Text>}
-                            <FlatList
-                                data={chapters}
-                                keyExtractor={(item) => item.hid}
-                                renderItem={renderChapterItem}
-                                onEndReached={handleLoadMore}
-                                onEndReachedThreshold={0.5}
-                                ListFooterComponent={() => (
-                                    loadingChapters ? (
-                                        <ActivityIndicator size="small" color="#FF5252" style={styles.loadingMore} />
-                                    ) : null
-                                )}
-                                ListEmptyComponent={() => (
-                                    !loadingChapters && !chaptersError && (
-                                        <Text style={styles.emptyChaptersText}>No hay capítulos disponibles en el idioma seleccionado.</Text>
-                                    )
-                                )}
-                                scrollEnabled={false}
-                            />
+                            {memoizedChapterList}
                         </View>
                     </ScrollView>
                 )}
@@ -1078,6 +1157,7 @@ const DetailsScreen: React.FC = () => {
     );
 };
 
+// Estilos (sin cambios)
 const styles = StyleSheet.create({
     container: {
         flex: 1,
@@ -1132,7 +1212,7 @@ const styles = StyleSheet.create({
         fontFamily: 'Roboto-Bold',
         flex: 1,
         textAlign: 'center',
-        paddingHorizontal: 40, // Ensure title doesn't overlap absolute positioned back button
+        paddingHorizontal: 40,
     },
     headerContainer: {
         flexDirection: 'row',
@@ -1151,7 +1231,7 @@ const styles = StyleSheet.create({
         height: SCREEN_WIDTH * 0.35 * 1.5,
         borderRadius: 8,
         marginRight: 16,
-        backgroundColor: '#333', // Placeholder background
+        backgroundColor: '#333',
     },
     infoColumn: {
         flex: 1,
@@ -1159,7 +1239,7 @@ const styles = StyleSheet.create({
     },
     title: {
         color: '#FFFFFF',
-        fontSize: 18, // Consider making this larger, e.g., 20 or 22
+        fontSize: 18,
         fontWeight: 'bold',
         fontFamily: 'Roboto-Bold',
         marginBottom: 8,
@@ -1178,41 +1258,39 @@ const styles = StyleSheet.create({
     lastReadContainer: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: 'rgba(255, 215, 0, 0.15)', // Gold color for last read
-        borderRadius: 20, // Fully rounded ends
+        backgroundColor: 'rgba(255, 215, 0, 0.15)',
+        borderRadius: 20,
         paddingVertical: 8,
         paddingHorizontal: 12,
-        marginTop: 8, // Ensure space from elements above
-        marginBottom: 4, // Ensure space from elements below
+        marginTop: 8,
+        marginBottom: 4,
     },
     lastReadText: {
-        color: '#FFD700', // Gold color
+        color: '#FFD700',
         fontSize: 14,
         fontWeight: 'bold',
         fontFamily: 'Roboto-Bold',
         marginLeft: 8,
-        flex: 1, // Allow text to take available space
+        flex: 1,
     },
-    goToLastReadButton: { // This was empty, assuming it's for an icon or text
-        // marginLeft: 'auto', // This pushes it to the very end
-        paddingLeft: 8, // Add some padding if it's an icon
+    goToLastReadButton: {
+        paddingLeft: 8,
     },
     buttonRow: {
         flexDirection: 'row',
-        justifyContent: 'space-between', // This is fine
+        justifyContent: 'space-between',
         marginBottom: 20,
-        // gap: 8, // Alternatively use gap for spacing if preferred over marginHorizontal
     },
     actionButton: {
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
-        backgroundColor: '#4CAF50', // Green for primary action
+        backgroundColor: '#4CAF50',
         paddingVertical: 10,
-        paddingHorizontal: 12, // Can be adjusted
-        borderRadius: 25, // Fully rounded
-        flex: 1, // Each button takes equal space
-        marginHorizontal: 4, // Provides spacing if not using gap in buttonRow
+        paddingHorizontal: 12,
+        borderRadius: 25,
+        flex: 1,
+        marginHorizontal: 4,
     },
     actionButtonText: {
         color: '#FFFFFF',
@@ -1221,90 +1299,84 @@ const styles = StyleSheet.create({
         fontSize: 14,
         fontFamily: 'Roboto-Bold',
     },
-    actionButtonActive: { // For "In Library" or "Following" state
-        backgroundColor: '#FF5252', // Red or another distinct color
+    actionButtonActive: {
+        backgroundColor: '#FF5252',
     },
     actionButtonLocked: {
-        backgroundColor: '#6A6A6A', // Grey for locked/disabled
+        backgroundColor: '#6A6A6A',
         opacity: 0.7,
     },
     section: {
         marginBottom: 10,
-        backgroundColor: 'rgba(30, 30, 30, 0.8)', // Consistent section background
+        backgroundColor: 'rgba(30, 30, 30, 0.8)',
         borderRadius: 12,
         padding: 16,
     },
-    sectionHeader: { // Used for "Description", "Genres", and "Capítulos" titles
+    sectionHeader: {
         flexDirection: 'row',
         alignItems: 'center',
-        marginBottom: 12, // Space below the section title
+        marginBottom: 12,
     },
-    subtitle: { // For "Description", "Genres", "Capítulos"
-        color: '#FF5252', // Accent color
+    subtitle: {
+        color: '#FF5252',
         fontSize: 18,
         fontWeight: 'bold',
         fontFamily: 'Roboto-Bold',
         marginLeft: 8,
     },
-    sectionContent: { // For description text
+    sectionContent: {
         color: '#E0E0E0',
         fontSize: 14,
-        lineHeight: 20, // Improved readability
+        lineHeight: 20,
         fontFamily: 'Roboto-Regular',
     },
     genreContainer: {
         flexDirection: 'row',
-        flexWrap: 'wrap', // Genres will wrap
-        // gap: 8, // Alternative to marginRight/marginBottom on genreTag
+        flexWrap: 'wrap',
     },
     genreTag: {
         backgroundColor: '#333333',
-        borderRadius: 16, // More rounded
+        borderRadius: 16,
         paddingVertical: 6,
         paddingHorizontal: 12,
-        marginRight: 8, // Spacing between tags
-        marginBottom: 8, // Spacing for wrapped tags
+        marginRight: 8,
+        marginBottom: 8,
     },
     genreText: {
         color: '#FFFFFF',
         fontSize: 12,
         fontFamily: 'Roboto-Medium',
     },
-    // --- MODIFICATIONS FOR CHAPTER CONTROLS START HERE ---
-    chapterHeader: { // Container for "Capítulos" title and the filter controls
+    chapterHeader: {
         flexDirection: 'row',
         justifyContent: 'space-between',
-        alignItems: 'flex-start', // Changed from 'center' to 'flex-start'
-        // This helps if controls wrap to multiple lines, title stays at top.
+        alignItems: 'flex-start',
         marginBottom: 12,
     },
-    chapterControls: { // Container for the filter buttons
+    chapterControls: {
         flexDirection: 'row',
         alignItems: 'center',
-        flexWrap: 'wrap',          // *** ADDED: Allows buttons to wrap ***
-        justifyContent: 'flex-end',// *** ADDED: Aligns buttons to the right when they wrap ***
-        flexShrink: 1,             // *** ADDED: Allows this container to shrink if needed ***
-        gap: 6,                    // *** ADDED: Spacing between filter buttons (replaces marginLeft on filterButton) ***
+        flexWrap: 'wrap',
+        justifyContent: 'flex-end',
+        flexShrink: 1,
+        gap: 6,
     },
     filterButton: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: 'rgba(255, 82, 82, 0.15)', // Changed background for better contrast with section
+        backgroundColor: 'rgba(255, 82, 82, 0.15)',
         paddingVertical: 6,
         paddingHorizontal: 10,
         borderRadius: 16,
-        // marginLeft: 8, // *** REMOVED: 'gap' in chapterControls now handles spacing ***
         borderWidth: 1,
         borderColor: 'rgba(255, 82, 82, 0.4)',
     },
     filterButtonText: {
-        color: '#FFD1D1', // Lighter text color for the new button background
+        color: '#FFD1D1',
         marginLeft: 6,
         fontSize: 12,
         fontFamily: 'Roboto-Medium',
-        // maxWidth: 60, // Consider removing or increasing this if text gets cut off too easily with wrapping
     },
-    // --- MODIFICATIONS FOR CHAPTER CONTROLS END HERE ---
     chapterItem: {
         flexDirection: 'row',
         justifyContent: 'space-between',
@@ -1314,14 +1386,14 @@ const styles = StyleSheet.create({
         borderRadius: 8,
         marginBottom: 8,
     },
-    chapterItemRead: { // Style for already read chapters
-        backgroundColor: 'rgba(76, 175, 80, 0.15)', // Greenish tint for read chapters
+    chapterItemRead: {
+        backgroundColor: 'rgba(76, 175, 80, 0.15)',
         borderLeftWidth: 4,
-        borderLeftColor: '#4CAF50', // Green accent
+        borderLeftColor: '#4CAF50',
     },
     chapterItemContent: {
-        flex: 1, // Allow content to take available space
-        marginRight: 12, // Space before action buttons (like download/read)
+        flex: 1,
+        marginRight: 12,
     },
     chapterTitle: {
         color: '#FFFFFF',
@@ -1330,26 +1402,26 @@ const styles = StyleSheet.create({
         fontFamily: 'Roboto-Bold',
         marginBottom: 4,
     },
-    chapterSubtitle: { // For chapter number or scan group if not in its own row
+    chapterSubtitle: {
         color: '#E0E0E0',
         fontSize: 13,
         fontFamily: 'Roboto-Regular',
     },
-    chapterInfoRow: { // Can be used for group/language/date in a single line
+    chapterInfoRow: {
         flexDirection: 'row',
         alignItems: 'center',
         marginBottom: 4,
-        flexWrap: 'wrap', // Allow items to wrap if too long
+        flexWrap: 'wrap',
     },
     chapterGroup: {
         color: '#B0B0B0',
         fontSize: 12,
         fontFamily: 'Roboto-Regular',
         marginRight: 8,
-        flexShrink: 1, // Allow group name to shrink if needed
+        flexShrink: 1,
     },
     chapterLang: {
-        color: '#FF5252', // Accent for language
+        color: '#FF5252',
         fontSize: 12,
         fontWeight: 'bold',
         fontFamily: 'Roboto-Bold',
@@ -1360,36 +1432,17 @@ const styles = StyleSheet.create({
         fontSize: 11,
         fontFamily: 'Roboto-Regular',
     },
-    readButton: { // Generic button for read/download actions on a chapter item
-        width: 36,
-        height: 36,
-        borderRadius: 18, // Circular
-        backgroundColor: 'rgba(255, 255, 255, 0.1)',
-        justifyContent: 'center',
-        alignItems: 'center',
-        marginRight: 8, // If multiple buttons, this gives space
-        position: 'relative', // For potential badge/lock icon
-    },
-    readButtonActive: { // e.g. if downloaded or is current reading chapter
-        backgroundColor: '#4CAF50', // Green
-    },
-    readButtonLocked: { // For premium chapters if user is not premium
-        backgroundColor: '#6A6A6A',
-        opacity: 0.6,
-    },
-    lockIcon: { // Small lock icon badge on a chapter button
-        position: 'absolute',
-        top: -2,
-        right: -2,
-        backgroundColor: '#1E1E1E', // Dark background for the lock
-        borderRadius: 8,
-        padding: 1,
-    },
-    loadingMore: { // For FlatList footer when loading more chapters
+    loadingMore: {
         marginVertical: 16,
-        alignItems: 'center', // Center ActivityIndicator
+        alignItems: 'center',
     },
-    emptyChaptersText: { // If no chapters are available/found
+    loadingContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 10,
+    },
+    emptyChaptersText: {
         color: '#E0E0E0',
         fontSize: 14,
         textAlign: 'center',
@@ -1436,4 +1489,4 @@ const styles = StyleSheet.create({
     },
 });
 
-export default DetailsScreen;
+export default React.memo(DetailsScreen);
