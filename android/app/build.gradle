@@ -109,9 +109,11 @@ android {
         applicationId 'com.yourusername.kamireader' // Asegúrate de que este sea tu Application ID real
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 5 // ¡Incrementa este número para cada nueva versión que subas!
-        versionName "1.0.6" // Versión visible para el usuario
-
+        versionCode 6 // ¡Incrementa este número para cada nueva versión que subas!
+        versionName "1.0.7" // Versión visible para el usuario
+        ndk {
+            abiFilters 'arm64-v8a', 'armeabi-v7a', 'x86_64'
+        }
         // --- INICIO: Solución para react-native-iap ---
         missingDimensionStrategy 'store', 'play'
         // --- FIN: Solución para react-native-iap ---
@@ -154,7 +156,7 @@ android {
     }
     packagingOptions {
         jniLibs {
-            useLegacyPackaging (findProperty('expo.useLegacyPackaging')?.toBoolean() ?: false)
+            useLegacyPackaging false // ⭐ Cambiar esto de 'findProperty...' a 'false'
         }
     }
     androidResources {
