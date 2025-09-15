@@ -405,7 +405,7 @@ const CustomDrawerContent = (props: CustomDrawerContentProps) => {
                 </Animated.View>
 
                 <View style={styles.versionContainer}>
-                    <Text style={styles.footerText}>Kamireader v1.0.6</Text>
+                    <Text style={styles.footerText}>Kamireader v1.0.7</Text>
                     <Text style={styles.footerText}>© {new Date().getFullYear()} KAMI Studios</Text>
                 </View>
             </View>

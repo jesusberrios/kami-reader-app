@@ -1,6 +1,6 @@
 {
   "name": "kami-reader-app",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "main": "index.ts",
   "scripts": {
     "start": "expo start",
@@ -12,6 +12,7 @@
     "@react-native-async-storage/async-storage": "^1.24.0",
     "@react-native-ml-kit/text-recognition": "^1.5.2",
     "@react-native-picker/picker": "^2.11.0",
+    "@react-navigation/core": "^7.12.4",
     "@react-navigation/drawer": "^7.3.12",
     "@react-navigation/native": "^7.1.9",
     "@react-navigation/stack": "^7.3.2",

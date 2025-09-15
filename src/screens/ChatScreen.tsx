@@ -15,10 +15,15 @@ import {
     Modal,
     Pressable,
     ListRenderItem,
+    AppState,
+    AppStateStatus,
+    Alert,
+    Dimensions
 } from 'react-native';
-import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
+import { useNavigation, useRoute } from '@react-navigation/native';
+import type { RouteProp } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
+import { MaterialCommunityIcons, Ionicons, Feather } from '@expo/vector-icons';
 import {
     collection,
     doc,
@@ -32,7 +37,10 @@ import {
     increment,
     getDoc,
     writeBatch,
-    getDocs
+    getDocs,
+    where,
+    DocumentData,
+    deleteField
 } from 'firebase/firestore';
 import { db, auth } from '../firebase/config';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -45,12 +53,16 @@ type Message = {
     recipientId: string;
     timestamp: any;
     read: boolean;
+    sticker?: string;
 };
 
 type User = {
     uid: string;
     username: string;
     avatar: string;
+    isOnline?: boolean;
+    lastSeen?: any;
+    fcmToken?: string;
 };
 
 type ChatScreenRouteProp = RouteProp<{
@@ -59,6 +71,62 @@ type ChatScreenRouteProp = RouteProp<{
         recipientName: string;
     };
 }, 'Chat'>;
+
+// Convertir enlaces de Google Drive
+const convertGoogleDriveLink = (driveLink: string): string => {
+    const match = driveLink.match(/\/d\/(.*?)\//);
+    if (match && match[1]) {
+        return `https://drive.google.com/uc?export=view&id=${match[1]}`;
+    }
+    return driveLink;
+};
+
+// Stickers organizados por categorías
+const ASIAN_STICKERS = {
+    Mujer: [
+        convertGoogleDriveLink('https://drive.google.com/file/d/1Yn9ACMUqfF8sv-X1qlrH8rh__20R3SQK/view?usp=drive_link'),
+        convertGoogleDriveLink('https://drive.google.com/file/d/1ptI26fEocnzbrZPiyFiNNtYXPgMsHrbh/view?usp=drive_link'),
+        convertGoogleDriveLink('https://drive.google.com/file/d/1JdGS4VJ7f9rfWSj3rTOz4dFdiOpludi_/view?usp=drive_link'),
+        convertGoogleDriveLink('https://drive.google.com/file/d/1Y-V1Hwoh9KY7Q5DAG-zzCX_ol4QpHqUs/view?usp=drive_link'),
+        convertGoogleDriveLink('https://drive.google.com/file/d/15mxLytfdFjUUfBMzsSipLiW5pRn9Q0na/view?usp=drive_link'),
+        convertGoogleDriveLink('https://drive.google.com/file/d/1fhA_ohRy0iPxzUD7AB4axBhFrDt5XlTc/view?usp=drive_link'),
+        convertGoogleDriveLink('https://drive.google.com/file/d/11YCNK59ai-GHbY2nM3tcS3_MvNWv0Xe4/view?usp=drive_link'),
+        convertGoogleDriveLink('https://drive.google.com/file/d/1mLT6Psh8ykdObuBkHoHc4GWAVSQIx3oo/view?usp=drive_link'),
+        convertGoogleDriveLink('https://drive.google.com/file/d/1acOua3zyuln_kWw6yBCC8WPnI4rVmrza/view?usp=drive_link'),
+        convertGoogleDriveLink('https://drive.google.com/file/d/1s71xYed7kQuCX1UDoDFxiLWXGNYQEn66/view?usp=drive_link'),
+        convertGoogleDriveLink('https://drive.google.com/file/d/1IBPydx-keR_dYQdcFA4XJgCnZpzv-V1e/view?usp=drive_link'),
+        convertGoogleDriveLink('https://drive.google.com/file/d/1c2mc2RStbkGYZum1bWvLxqN7aJElCVqM/view?usp=drive_link'),
+        convertGoogleDriveLink('https://drive.google.com/file/d/1c2M5hD2aBAxZ0K4ERX-keGZkYq-UKmj4/view?usp=drive_link'),
+        convertGoogleDriveLink('https://drive.google.com/file/d/1Q1uMjMSLcnwgqIXkJGWQt64Xxstsgket/view?usp=drive_link'),
+    ],
+    Hombre: [
+        convertGoogleDriveLink('https://drive.google.com/file/d/1hvQUgPG4AovQti7bs1deyJ_L1xQNYZ2o/view?usp=drive_link'),
+        convertGoogleDriveLink('https://drive.google.com/file/d/1_A50LvgsPjOzXP9BSSqqS9uOH8SfAPok/view?usp=drive_link'),
+        convertGoogleDriveLink('https://drive.google.com/file/d/1lkETMJcetwdPvZZwtiHX8KJB-wNvxKeA/view?usp=drive_link'),
+        convertGoogleDriveLink('https://drive.google.com/file/d/1349FsYFtloQLigVgsYEhSIH0IdL9ZSsc/view?usp=drive_link'),
+        convertGoogleDriveLink('https://drive.google.com/file/d/1ZTO6n5l_UknqvIaEEtTGdXluQ8vyQ6jU/view?usp=drive_link'),
+        convertGoogleDriveLink('https://drive.google.com/file/d/1yF0Dm_RzycX_704VoidSWozN_e5mShLP/view?usp=drive_link'),
+        convertGoogleDriveLink('https://drive.google.com/file/d/1icldpmAgscBNApVsAKmGJnDxu0s63wHK/view?usp=drive_link'),
+        convertGoogleDriveLink('https://drive.google.com/file/d/1d0CB2075ZUqTpzahc7JmWgs0v8MMxdVj/view?usp=drive_link'),
+        convertGoogleDriveLink('https://drive.google.com/file/d/1PCck1Byq9q1PMIjWdcXlt8mzd51XL0V2/view?usp=drive_link'),
+        convertGoogleDriveLink('https://drive.google.com/file/d/13k2hBYR908h4X1-Ur1viRd8Wr1PLbd61/view?usp=drive_link'),
+        convertGoogleDriveLink('https://drive.google.com/file/d/1VtgShMUUXzSVDD1X-dy3c1wWxDkCrux3/view?usp=drive_link'),
+    ],
+};
+
+const STICKER_CATEGORIES = Object.keys(ASIAN_STICKERS);
+
+// Componente para stickers
+const StickerItem = ({ sticker }: { sticker: string }) => {
+    return (
+        <Image
+            source={{ uri: sticker }}
+            style={styles.stickerImage}
+            resizeMode="contain"
+            onError={(e) => console.log('Error loading sticker:', e.nativeEvent.error)}
+        />
+    );
+};
 
 // Componente memoizado para mensajes
 const MessageItem = React.memo(({ item, currentUserId }: { item: Message; currentUserId: string }) => {
@@ -82,12 +150,18 @@ const MessageItem = React.memo(({ item, currentUserId }: { item: Message; curren
                 styles.messageBubble,
                 isCurrentUser ? styles.currentUserBubble : styles.otherUserBubble
             ]}>
-                <Text style={[
-                    styles.messageText,
-                    isCurrentUser ? styles.currentUserText : styles.otherUserText
-                ]}>
-                    {item.text}
-                </Text>
+                {item.sticker ? (
+                    <View style={styles.stickerContainer}>
+                        <StickerItem sticker={item.sticker} />
+                    </View>
+                ) : (
+                    <Text style={[
+                        styles.messageText,
+                        isCurrentUser ? styles.currentUserText : styles.otherUserText
+                    ]}>
+                        {item.text}
+                    </Text>
+                )}
                 <Text style={[
                     styles.timestamp,
                     isCurrentUser ? styles.currentUserTimestamp : styles.otherUserTimestamp
@@ -102,12 +176,15 @@ const MessageItem = React.memo(({ item, currentUserId }: { item: Message; curren
     );
 });
 
+const { width } = Dimensions.get('window');
+
 const ChatScreen = () => {
     const navigation = useNavigation();
     const route = useRoute<ChatScreenRouteProp>();
     const insets = useSafeAreaInsets();
     const flatListRef = useRef<FlatList>(null);
     const inputRef = useRef<TextInput>(null);
+    const stickerFlatListRef = useRef<FlatList>(null);
 
     const { recipientId, recipientName } = route.params;
 
@@ -118,16 +195,55 @@ const ChatScreen = () => {
     const [recipientInfo, setRecipientInfo] = useState<User | null>(null);
     const [unreadCount, setUnreadCount] = useState(0);
     const [menuVisible, setMenuVisible] = useState(false);
-    const [menuPosition, setMenuPosition] = useState({ x: 0, y: 0 });
+    const [isRecipientOnline, setIsRecipientOnline] = useState(false);
+    const [isRecipientTyping, setIsRecipientTyping] = useState(false);
+    const [stickerPickerVisible, setStickerPickerVisible] = useState(false);
+    const [selectedStickerCategory, setSelectedStickerCategory] = useState(STICKER_CATEGORIES[0]);
+    const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+    const appStateRef = useRef(AppState.currentState);
 
     const currentUser = auth.currentUser;
-    const { alertError, alertConfirm, alertSuccess } = useAlertContext();
+    const { alertError, alertConfirm } = useAlertContext();
 
     // Memoizar el ID del chat
     const chatId = useMemo(() => {
         if (!currentUser) return '';
         return [currentUser.uid, recipientId].sort().join('_');
     }, [currentUser, recipientId]);
+
+    // Manejar cambios en el estado de la app
+    const handleAppStateChange = useCallback((nextAppState: AppStateStatus) => {
+        if (appStateRef.current.match(/inactive|background/) && nextAppState === 'active') {
+            // La app volvió al primer plano, marcar mensajes como leídos
+            markMessagesAsRead();
+        }
+        appStateRef.current = nextAppState;
+    }, []);
+
+    // Función throttle para typing
+    const throttle = useCallback((func: Function, delay: number) => {
+        let timeoutId: NodeJS.Timeout | null = null;
+        let lastExecTime = 0;
+
+        return function (this: any, ...args: any[]) {
+            const currentTime = Date.now();
+            const timeSinceLastExec = currentTime - lastExecTime;
+
+            const execute = () => {
+                func.apply(this, args);
+                lastExecTime = currentTime;
+            };
+
+            if (timeSinceLastExec > delay) {
+                execute();
+            } else {
+                if (timeoutId) {
+                    clearTimeout(timeoutId);
+                }
+                timeoutId = setTimeout(execute, delay - timeSinceLastExec);
+            }
+        };
+    }, []);
 
     // Cargar información del destinatario
     useEffect(() => {
@@ -141,6 +257,9 @@ const ChatScreen = () => {
                         uid: recipientId,
                         username: userData.username || recipientName,
                         avatar: userData.avatar || 'https://via.placeholder.com/150',
+                        isOnline: userData.isOnline || false,
+                        lastSeen: userData.lastSeen || null,
+                        fcmToken: userData.fcmToken || null,
                     });
                 }
             } catch (error) {
@@ -152,7 +271,63 @@ const ChatScreen = () => {
         loadRecipientInfo();
     }, [recipientId, recipientName, alertError]);
 
-    // Marcar mensajes como leídos
+    // Estado de conexión del destinatario
+    useEffect(() => {
+        if (!recipientId) return;
+
+        const statusRef = doc(db, 'status', recipientId);
+        const unsubscribe = onSnapshot(statusRef, (doc) => {
+            if (doc.exists()) {
+                setIsRecipientOnline(doc.data().state === 'online');
+
+                setRecipientInfo(prev => prev ? {
+                    ...prev,
+                    isOnline: doc.data().state === 'online',
+                    lastSeen: doc.data().lastSeen
+                } : null);
+            }
+        });
+
+        return () => unsubscribe();
+    }, [recipientId]);
+
+    // Función para manejar el typing (con throttle)
+    const handleTyping = useCallback(throttle(() => {
+        if (!currentUser || !chatId) return;
+
+        const typingRef = doc(db, 'chats', chatId, 'typing', currentUser.uid);
+        setDoc(typingRef, {
+            typing: true,
+            timestamp: serverTimestamp()
+        });
+
+        if (typingTimeoutRef.current) {
+            clearTimeout(typingTimeoutRef.current);
+        }
+
+        typingTimeoutRef.current = setTimeout(() => {
+            setDoc(typingRef, {
+                typing: false,
+                timestamp: serverTimestamp()
+            });
+        }, 2000);
+    }, 1000), [currentUser, chatId]);
+
+    // Escuchar typing del destinatario
+    useEffect(() => {
+        if (!chatId || !recipientId) return;
+
+        const typingRef = doc(db, 'chats', chatId, 'typing', recipientId);
+        const unsubscribe = onSnapshot(typingRef, (doc) => {
+            if (doc.exists()) {
+                setIsRecipientTyping(doc.data().typing === true);
+            }
+        });
+
+        return () => unsubscribe();
+    }, [chatId, recipientId]);
+
+    // Cambia markMessagesAsRead para que sea estable con useCallback
     const markMessagesAsRead = useCallback(async () => {
         if (!currentUser || !chatId) return;
 
@@ -170,7 +345,9 @@ const ChatScreen = () => {
                 });
 
                 const userChatRef = doc(db, 'userChats', currentUser.uid);
-                batch.update(userChatRef, { [`${recipientId}.unreadCount`]: 0 });
+                batch.update(userChatRef, {
+                    [`${recipientId}.unreadCount`]: 0
+                });
 
                 await batch.commit();
                 setUnreadCount(0);
@@ -178,9 +355,9 @@ const ChatScreen = () => {
         } catch (error) {
             console.error('Error marking messages as read:', error);
         }
-    }, [messages, currentUser, recipientId, chatId]);
+    }, [currentUser, chatId, recipientId, messages]); // ← Agrega messages aquí
 
-    // Cargar mensajes en tiempo real
+    // ✅ MANTÉN SOLO la carga de mensajes normal
     useEffect(() => {
         if (!currentUser || !chatId) return;
 
@@ -192,25 +369,38 @@ const ChatScreen = () => {
                 const messagesData: Message[] = [];
                 let unread = 0;
 
-                snapshot.forEach((doc) => {
-                    const messageData = {
-                        id: doc.id,
-                        ...doc.data()
-                    } as Message;
+                snapshot.docChanges().forEach((change) => {
+                    if (change.type === 'added' || change.type === 'modified') {
+                        const messageData = {
+                            id: change.doc.id,
+                            ...change.doc.data()
+                        } as Message;
 
-                    messagesData.push(messageData);
+                        messagesData.push(messageData);
 
-                    if (messageData.senderId === recipientId && !messageData.read) {
-                        unread++;
+                        if (messageData.senderId === recipientId && !messageData.read) {
+                            unread++;
+                        }
                     }
                 });
 
-                setMessages(messagesData);
+                setMessages(prev => {
+                    const combined = [...prev];
+                    messagesData.forEach(newMsg => {
+                        const existingIndex = combined.findIndex(m => m.id === newMsg.id);
+                        if (existingIndex > -1) {
+                            combined[existingIndex] = newMsg;
+                        } else {
+                            combined.push(newMsg);
+                        }
+                    });
+                    return combined.sort((a, b) =>
+                        a.timestamp?.toDate?.() - b.timestamp?.toDate?.()
+                    );
+                });
+
                 setUnreadCount(unread);
                 setLoading(false);
-
-                // Marcar como leídos después de un breve delay
-                setTimeout(markMessagesAsRead, 300);
             },
             (error) => {
                 console.error('Error loading messages:', error);
@@ -220,81 +410,131 @@ const ChatScreen = () => {
         );
 
         return () => unsubscribe();
-    }, [currentUser, chatId, recipientId, markMessagesAsRead, alertError]);
+    }, [currentUser, chatId, recipientId, alertError]);
 
-    // Función para eliminar el chat
-    const deleteChat = useCallback(async () => {
-        if (!currentUser || !chatId) return;
+    const deleteChatForMe = async () => {
+        if (!currentUser) return;
 
-        alertConfirm(
-            '¿Estás seguro de que quieres eliminar este chat? Se borrará todo el historial de mensajes.',
-            async () => {
-                try {
-                    const messagesRef = collection(db, 'chats', chatId, 'messages');
-                    const messagesSnapshot = await getDocs(messagesRef);
+        try {
+            console.log('🗑️ Eliminando chat de MI lista...');
 
-                    const batch = writeBatch(db);
-                    messagesSnapshot.forEach((doc) => {
-                        batch.delete(doc.ref);
-                    });
+            // Solo eliminar de userChats del usuario actual
+            const currentUserChatRef = doc(db, 'userChats', currentUser.uid);
+            const userChatSnap = await getDoc(currentUserChatRef);
 
-                    const chatRef = doc(db, 'chats', chatId);
-                    batch.delete(chatRef);
+            if (userChatSnap.exists()) {
+                const currentData = userChatSnap.data();
 
-                    await batch.commit();
-                    alertSuccess('Chat eliminado correctamente');
-                    navigation.goBack();
-                } catch (error) {
-                    console.error('Error deleting chat:', error);
-                    alertError('No se pudo eliminar el chat');
+                // ✅ CORREGIDO: Definir el tipo explícitamente
+                const updates: { [key: string]: any } = {};
+
+                if (currentData[recipientId]) {
+                    updates[recipientId] = deleteField();
                 }
-            },
-            'Eliminar chat',
-            'Eliminar',
-            'Cancelar'
-        );
-    }, [currentUser, chatId, alertConfirm, alertSuccess, alertError, navigation]);
 
-    // Enviar mensaje
-    const sendMessage = useCallback(async () => {
-        if (!newMessage.trim() || !currentUser || sending || !chatId) return;
+                if (currentData[chatId]) {
+                    updates[chatId] = deleteField();
+                }
+
+                // Buscar por recipientId en los datos
+                for (const key of Object.keys(currentData)) {
+                    const chatData = currentData[key];
+                    if (chatData && chatData.recipientId === recipientId) {
+                        updates[key] = deleteField();
+                        break;
+                    }
+                }
+
+                if (Object.keys(updates).length > 0) {
+                    await updateDoc(currentUserChatRef, updates);
+                    console.log('✅ Chat eliminado de userChats');
+                }
+            }
+
+            // Solo limpiar estado local y navegar
+            setMessages([]);
+            setUnreadCount(0);
+            setMenuVisible(false);
+            navigation.goBack();
+
+        } catch (error) {
+            console.error('❌ Error:', error);
+            alertError('No se pudo eliminar el chat');
+            setMenuVisible(false);
+        }
+    };
+    // Configurar listeners de la app
+    useEffect(() => {
+        const subscription = AppState.addEventListener('change', handleAppStateChange);
+
+        return () => {
+            subscription.remove();
+            if (typingTimeoutRef.current) {
+                clearTimeout(typingTimeoutRef.current);
+            }
+        };
+    }, [handleAppStateChange]);
+
+    // Función optimizada para enviar mensajes
+    const sendMessage = useCallback(async (text?: string, sticker?: string) => {
+        const messageContent = text || newMessage.trim();
+        if (!messageContent && !sticker) return;
+        if (!currentUser || sending || !chatId) return;
 
         setSending(true);
         try {
+            // Guardar mensaje en la subcolección de mensajes
             const messagesRef = collection(db, 'chats', chatId, 'messages');
-
-            await addDoc(messagesRef, {
-                text: newMessage.trim(),
+            const messageData: any = {
                 senderId: currentUser.uid,
                 recipientId: recipientId,
                 timestamp: serverTimestamp(),
                 read: false
-            });
+            };
 
-            // Actualizar userChats en lote
+            // Agregar texto o sticker según corresponda
+            if (sticker) {
+                messageData.sticker = sticker;
+            } else {
+                messageData.text = messageContent;
+            }
+
+            await addDoc(messagesRef, messageData);
+
+            // Actualizar userChats con una sola operación
             const batch = writeBatch(db);
+            const lastMessage = sticker ? '📸 Sticker' : messageContent;
 
+            // Para el usuario actual
             const userChatRef = doc(db, 'userChats', currentUser.uid);
             batch.set(userChatRef, {
                 [recipientId]: {
-                    lastMessage: newMessage.trim(),
+                    lastMessage,
                     timestamp: serverTimestamp(),
-                    unreadCount: 0
+                    unreadCount: 0,
+                    recipientName: recipientInfo?.username || recipientName,
+                    recipientAvatar: recipientInfo?.avatar
                 }
             }, { merge: true });
 
+            // Para el destinatario
             const recipientChatRef = doc(db, 'userChats', recipientId);
             batch.set(recipientChatRef, {
                 [currentUser.uid]: {
-                    lastMessage: newMessage.trim(),
+                    lastMessage,
                     timestamp: serverTimestamp(),
-                    unreadCount: increment(1)
+                    unreadCount: increment(1),
+                    recipientName: currentUser.displayName || 'Usuario',
+                    recipientAvatar: currentUser.photoURL
                 }
             }, { merge: true });
 
             await batch.commit();
-            setNewMessage('');
-            inputRef.current?.focus();
+
+            if (!sticker) {
+                setNewMessage('');
+                inputRef.current?.focus();
+            }
 
         } catch (error) {
             console.error('Error sending message:', error);
@@ -302,7 +542,13 @@ const ChatScreen = () => {
         } finally {
             setSending(false);
         }
-    }, [newMessage, currentUser, sending, chatId, recipientId, alertError]);
+    }, [newMessage, currentUser, sending, chatId, recipientId, alertError, recipientInfo, recipientName]);
+
+    // Enviar sticker
+    const sendSticker = useCallback((sticker: string) => {
+        sendMessage(undefined, sticker);
+        setStickerPickerVisible(false);
+    }, [sendMessage]);
 
     // Renderizar mensajes optimizado
     const renderMessage: ListRenderItem<Message> = useCallback(({ item }) => (
@@ -311,6 +557,16 @@ const ChatScreen = () => {
 
     // Key extractor optimizado
     const keyExtractor = useCallback((item: Message) => item.id, []);
+
+    // Renderizar stickers en el selector
+    const renderSticker = useCallback(({ item }: { item: string }) => (
+        <TouchableOpacity
+            style={styles.stickerItem}
+            onPress={() => sendSticker(item)}
+        >
+            <StickerItem sticker={item} />
+        </TouchableOpacity>
+    ), [sendSticker]);
 
     // Scroll automático al final
     const scrollToEnd = useCallback(() => {
@@ -343,28 +599,25 @@ const ChatScreen = () => {
                     <Text style={styles.headerName} numberOfLines={1}>
                         {recipientInfo?.username || recipientName}
                     </Text>
-                    {unreadCount > 0 && (
-                        <View style={styles.unreadBadge}>
-                            <Text style={styles.unreadBadgeText}>{unreadCount}</Text>
-                        </View>
-                    )}
+                    <Text style={styles.statusText}>
+                        {isRecipientOnline
+                            ? 'En línea'
+                            : recipientInfo?.lastSeen
+                                ? `Visto ${new Date(recipientInfo.lastSeen.toDate()).toLocaleTimeString()}`
+                                : 'Desconectado'
+                        }
+                    </Text>
                 </View>
             </View>
 
             <TouchableOpacity
-                onPress={(e) => {
-                    setMenuPosition({
-                        x: e.nativeEvent.pageX - 100,
-                        y: e.nativeEvent.pageY
-                    });
-                    setMenuVisible(true);
-                }}
+                onPress={() => setMenuVisible(true)}
                 style={styles.menuButton}
             >
                 <MaterialCommunityIcons name="dots-vertical" size={24} color="#FFF" />
             </TouchableOpacity>
         </View>
-    ), [navigation, recipientInfo, recipientName, unreadCount]);
+    ), [navigation, recipientInfo, recipientName, isRecipientOnline]);
 
     const emptyComponent = useMemo(() => (
         <View style={styles.emptyContainer}>
@@ -376,20 +629,55 @@ const ChatScreen = () => {
         </View>
     ), [recipientInfo, recipientName]);
 
-    const scrollToBottomButton = useMemo(() => (
-        unreadCount > 0 && (
-            <TouchableOpacity
-                onPress={() => {
-                    scrollToEnd();
-                    markMessagesAsRead();
-                }}
-                style={styles.scrollToBottomButton}
-            >
-                <Text style={styles.scrollToBottomText}>{unreadCount} nuevo(s)</Text>
-                <Ionicons name="arrow-down" size={16} color="#FFF" />
-            </TouchableOpacity>
-        )
-    ), [unreadCount, scrollToEnd, markMessagesAsRead]);
+    const stickerPickerComponent = useMemo(() => (
+        <Modal transparent animationType="slide" visible={stickerPickerVisible} onRequestClose={() => setStickerPickerVisible(false)}>
+            <View style={styles.stickerPickerContainer}>
+                <Pressable style={{ flex: 1 }} onPress={() => setStickerPickerVisible(false)} />
+
+                <View style={styles.stickerModalContent}>
+                    {/* Categorías */}
+                    <View style={styles.stickerCategorySelector}>
+                        {STICKER_CATEGORIES.map(category => (
+                            <TouchableOpacity
+                                key={category}
+                                style={[
+                                    styles.categoryButton,
+                                    selectedStickerCategory === category && styles.categoryButtonActive
+                                ]}
+                                onPress={() => setSelectedStickerCategory(category)}
+                            >
+                                <Text style={[
+                                    styles.categoryText,
+                                    selectedStickerCategory === category && styles.categoryTextActive
+                                ]}>
+                                    {category}
+                                </Text>
+                            </TouchableOpacity>
+                        ))}
+                    </View>
+
+                    {/* Stickers */}
+                    <FlatList
+                        ref={stickerFlatListRef}
+                        data={ASIAN_STICKERS[selectedStickerCategory as keyof typeof ASIAN_STICKERS]}
+                        renderItem={renderSticker}
+                        keyExtractor={(item, index) => index.toString()}
+                        numColumns={3}
+                        showsVerticalScrollIndicator={true}
+                        contentContainerStyle={{ paddingBottom: 16 }}
+                        key={selectedStickerCategory} // ✅ forzar remount al cambiar categoría
+                    />
+
+                    <TouchableOpacity
+                        style={styles.closeStickerButton}
+                        onPress={() => setStickerPickerVisible(false)}
+                    >
+                        <Text style={styles.closeStickerText}>Cerrar</Text>
+                    </TouchableOpacity>
+                </View>
+            </View>
+        </Modal>
+    ), [stickerPickerVisible, selectedStickerCategory, renderSticker]);
 
     if (loading) {
         return (
@@ -411,7 +699,27 @@ const ChatScreen = () => {
             <SafeAreaView style={[styles.safeArea, { paddingTop: insets.top }]}>
 
                 {headerComponent}
-                {scrollToBottomButton}
+
+                {isRecipientTyping && (
+                    <View style={styles.typingIndicator}>
+                        <Text style={styles.typingText}>
+                            {recipientInfo?.username || recipientName} está escribiendo...
+                        </Text>
+                    </View>
+                )}
+
+                {unreadCount > 0 && (
+                    <TouchableOpacity
+                        onPress={() => {
+                            scrollToEnd();
+                            markMessagesAsRead();
+                        }}
+                        style={styles.scrollToBottomButton}
+                    >
+                        <Text style={styles.scrollToBottomText}>{unreadCount} nuevo(s)</Text>
+                        <Ionicons name="arrow-down" size={16} color="#FFF" />
+                    </TouchableOpacity>
+                )}
 
                 <FlatList
                     ref={flatListRef}
@@ -433,30 +741,41 @@ const ChatScreen = () => {
                     style={styles.inputContainer}
                 >
                     <View style={styles.messageInputContainer}>
+                        <TouchableOpacity
+                            onPress={() => setStickerPickerVisible(true)}
+                            style={styles.mediaButton}
+                        >
+                            <Ionicons name="happy-outline" size={24} color="#FFF" />
+                        </TouchableOpacity>
+
                         <TextInput
                             ref={inputRef}
                             style={styles.messageInput}
                             placeholder="Escribe un mensaje..."
                             placeholderTextColor="#666"
                             value={newMessage}
-                            onChangeText={setNewMessage}
+                            onChangeText={(text) => {
+                                setNewMessage(text);
+                                handleTyping();
+                            }}
                             multiline
                             maxLength={500}
-                            onSubmitEditing={sendMessage}
+                            onSubmitEditing={() => sendMessage()}
                             returnKeyType="send"
                             blurOnSubmit={false}
                         />
+
                         <TouchableOpacity
-                            style={[styles.sendButton, !newMessage.trim() && styles.sendButtonDisabled]}
-                            onPress={sendMessage}
+                            style={[styles.sendButton, (!newMessage.trim() && !sending) && styles.sendButtonDisabled]}
+                            onPress={() => sendMessage()}
                             disabled={!newMessage.trim() || sending}
                         >
                             {sending ? (
                                 <ActivityIndicator size="small" color="#FFF" />
                             ) : (
-                                <MaterialCommunityIcons
+                                <Feather
                                     name="send"
-                                    size={24}
+                                    size={20}
                                     color={newMessage.trim() ? "#FFF" : "#666"}
                                 />
                             )}
@@ -464,10 +783,12 @@ const ChatScreen = () => {
                     </View>
                 </KeyboardAvoidingView>
 
+                {stickerPickerComponent}
+
                 {menuVisible && (
                     <Modal transparent animationType="fade" onRequestClose={() => setMenuVisible(false)}>
                         <Pressable style={styles.menuOverlay} onPress={() => setMenuVisible(false)}>
-                            <View style={[styles.menuContainer, { top: menuPosition.y, left: menuPosition.x }]}>
+                            <View style={styles.menuContainer}>
                                 <TouchableOpacity
                                     style={styles.menuItem}
                                     onPress={() => {
@@ -478,6 +799,22 @@ const ChatScreen = () => {
                                     <MaterialCommunityIcons name="account-eye" size={20} color="#333" />
                                     <Text style={styles.menuItemText}>Ver perfil</Text>
                                 </TouchableOpacity>
+                                {/*  <TouchableOpacity
+                                    style={styles.menuItem}
+                                    onPress={() => {
+                                        setMenuVisible(false);
+                                        alertConfirm(
+                                            "¿Estás seguro de que quieres eliminar este chat? Esto solo lo eliminará para ti.", // message
+                                            deleteChatForMe, // onConfirm
+                                            "Eliminar chat", // title
+                                            "Eliminar", // confirmText (opcional)
+                                            "Cancelar" // cancelText (opcional)
+                                        );
+                                    }}
+                                >
+                                    <MaterialCommunityIcons name="delete" size={20} color="#FF5252" />
+                                    <Text style={[styles.menuItemText, { color: '#FF5252' }]}>Eliminar chat</Text>
+                                </TouchableOpacity> */}
                             </View>
                         </Pressable>
                     </Modal>
@@ -487,10 +824,15 @@ const ChatScreen = () => {
     );
 };
 
-// Estilos optimizados
+// Estilos
 const styles = StyleSheet.create({
-    container: { flex: 1 },
-    safeArea: { flex: 1 },
+    container: {
+        flex: 1,
+        backgroundColor: '#1A1A24'
+    },
+    safeArea: {
+        flex: 1
+    },
     loadingContainer: {
         flex: 1,
         justifyContent: 'center',
@@ -510,12 +852,14 @@ const styles = StyleSheet.create({
         borderBottomWidth: 1,
         borderBottomColor: 'rgba(255,255,255,0.1)',
     },
-    backButton: { padding: 8 },
+    backButton: {
+        padding: 8,
+        marginRight: 8
+    },
     headerUserInfo: {
         flexDirection: 'row',
         alignItems: 'center',
         flex: 1,
-        marginHorizontal: 12,
     },
     avatar: {
         width: 40,
@@ -530,16 +874,23 @@ const styles = StyleSheet.create({
     headerName: {
         color: '#FFF',
         fontSize: 16,
-        fontWeight: 'bold',
-        fontFamily: 'Roboto-Bold',
+        fontWeight: '600',
+        fontFamily: 'Roboto-Medium',
     },
-    menuButton: { padding: 8 },
+    statusText: {
+        color: '#AAA',
+        fontSize: 12,
+        fontFamily: 'Roboto-Regular',
+    },
+    menuButton: {
+        padding: 8
+    },
     messagesList: {
         flexGrow: 1,
         padding: 16,
     },
     messageContainer: {
-        marginBottom: 8,
+        marginBottom: 12,
     },
     currentUserMessage: {
         alignItems: 'flex-end',
@@ -563,6 +914,7 @@ const styles = StyleSheet.create({
     messageText: {
         fontSize: 16,
         fontFamily: 'Roboto-Regular',
+        lineHeight: 20,
     },
     currentUserText: {
         color: '#FFF',
@@ -586,6 +938,14 @@ const styles = StyleSheet.create({
     unreadDot: {
         color: '#FF5252',
         fontWeight: 'bold',
+    },
+    stickerContainer: {
+        padding: 4,
+    },
+    stickerImage: {
+        width: (width - 16 * 2 - 8 * 4) / 3.5, // padding del modal y margin entre items
+        height: (width - 16 * 2 - 8 * 4) / 3.5,
+        resizeMode: 'contain',
     },
     inputContainer: {
         padding: 16,
@@ -681,6 +1041,8 @@ const styles = StyleSheet.create({
     },
     menuContainer: {
         position: 'absolute',
+        top: 50,
+        right: 10,
         backgroundColor: '#FFF',
         borderRadius: 12,
         padding: 8,
@@ -703,6 +1065,73 @@ const styles = StyleSheet.create({
         fontSize: 14,
         color: '#333',
         fontFamily: 'Roboto-Regular',
+    },
+    stickerPickerContainer: {
+        flex: 1,
+        justifyContent: 'flex-end',
+        backgroundColor: 'rgba(0,0,0,0.5)', // Fondo semitransparente
+    },
+    stickerModalContent: {
+        backgroundColor: '#2C2C38',
+        borderTopLeftRadius: 20,
+        borderTopRightRadius: 20,
+        padding: 16,
+        maxHeight: '60%',
+    },
+    stickerCategorySelector: {
+        flexDirection: 'row',
+        marginBottom: 16,
+    },
+    categoryButton: {
+        paddingHorizontal: 16,
+        paddingVertical: 8,
+        marginRight: 8,
+        backgroundColor: 'rgba(255,255,255,0.1)',
+        borderRadius: 20,
+    },
+    categoryButtonActive: {
+        backgroundColor: '#FF5252',
+    },
+    categoryText: {
+        color: '#FFF',
+        fontSize: 12,
+    },
+    categoryTextActive: {
+        color: '#FFF',
+        fontWeight: 'bold',
+    },
+    stickerItem: {
+        padding: 8,
+        margin: 4,
+        backgroundColor: 'rgba(255,255,255,0.1)',
+        borderRadius: 8,
+    },
+    stickerGrid: {
+        paddingBottom: 16,
+    },
+    closeStickerButton: {
+        backgroundColor: '#FF5252',
+        padding: 12,
+        borderRadius: 20,
+        alignItems: 'center',
+        marginTop: 16,
+    },
+    closeStickerText: {
+        color: '#FFF',
+        fontWeight: 'bold',
+    },
+    typingIndicator: {
+        padding: 8,
+        alignItems: 'center',
+    },
+    typingText: {
+        color: '#AAA',
+        fontSize: 12,
+        fontStyle: 'italic',
+    },
+    mediaButton: {
+        padding: 8,
+        marginRight: 8,
     },
 });
 

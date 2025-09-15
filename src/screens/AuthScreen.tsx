@@ -357,7 +357,7 @@ const AuthScreen = () => {
 
             alert(
                 'Verificación requerida',
-                'Se ha enviado un correo de verificación a tu dirección de email. Por favor verifica tu correo antes de iniciar sesión.',
+                'Se ha enviado un correo de verificación a tu dirección de email, este puede encontrarse en SPAM revisar. Por favor verifica tu correo antes de iniciar sesión.',
                 [{ text: 'OK', onPress: () => setIsLogin(true) }]
             );
         } catch (error: any) {
