@@ -212,6 +212,7 @@ const LibraryScreen = ({ navigation }: any) => {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [searchQuery, setSearchQuery] = useState('');
+    const [committedSearchQuery, setCommittedSearchQuery] = useState('');
     const [showFilters, setShowFilters] = useState(false);
     const [selectedSort, setSelectedSort] = useState<SortKey>('default');
     const [pendingSort, setPendingSort] = useState<SortKey>('default');
@@ -228,6 +229,7 @@ const LibraryScreen = ({ navigation }: any) => {
     const isMounted = useRef(true);
     const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const requestIdRef = useRef(0);
+    const allComicsRef = useRef<Comic[]>([]);
 
     const { alertError } = useAlertContext();
 
@@ -239,6 +241,10 @@ const LibraryScreen = ({ navigation }: any) => {
             if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
         };
     }, []);
+
+    useEffect(() => {
+        allComicsRef.current = allComics;
+    }, [allComics]);
 
     const applyFiltersAndSort = useCallback((
         list: Comic[],
@@ -290,7 +296,8 @@ const LibraryScreen = ({ navigation }: any) => {
                 : list.length >= PAGE_LIMIT;
 
             if (isMounted.current) {
-                const merged = append ? mergeUniqueComics(allComics, list) : list;
+                const merged = append ? mergeUniqueComics(allComicsRef.current, list) : list;
+                allComicsRef.current = merged;
                 setAllComics(merged);
                 applyFiltersAndSort(merged, selectedSort, selectedSource, selectedStatus, selectedRating);
                 setCurrentPage(page);
@@ -305,12 +312,12 @@ const LibraryScreen = ({ navigation }: any) => {
                 setIsFetchingMore(false);
             }
         }
-    }, [selectedSort, selectedSource, selectedStatus, selectedRating, applyFiltersAndSort, allComics]);
+    }, [selectedSort, selectedSource, selectedStatus, selectedRating, applyFiltersAndSort]);
 
-    const searchComics = useCallback(async (options?: { page?: number; append?: boolean }) => {
+    const searchComics = useCallback(async (options?: { page?: number; append?: boolean; query?: string }) => {
         const page = options?.page ?? 1;
         const append = options?.append ?? false;
-        const q = searchQuery.trim();
+        const q = (options?.query ?? committedSearchQuery).trim();
         const requestId = append ? requestIdRef.current : ++requestIdRef.current;
         if (!q) {
             loadLatest({ page: 1, append: false });
@@ -318,6 +325,16 @@ const LibraryScreen = ({ navigation }: any) => {
         }
 
         if (q.length < 2) {
+            if (isMounted.current) {
+                setLoading(false);
+                setIsFetchingMore(false);
+                setError(null);
+                setAllComics([]);
+                setComics([]);
+                allComicsRef.current = [];
+                setHasMore(false);
+                setCurrentPage(1);
+            }
             return;
         }
 
@@ -357,7 +374,8 @@ const LibraryScreen = ({ navigation }: any) => {
                 : relevant.length >= PAGE_LIMIT;
 
             if (isMounted.current && requestId === requestIdRef.current) {
-                const merged = append ? mergeUniqueComics(allComics, relevant) : relevant;
+                const merged = append ? mergeUniqueComics(allComicsRef.current, relevant) : relevant;
+                allComicsRef.current = merged;
                 setAllComics(merged);
                 applyFiltersAndSort(merged, selectedSort, selectedSource, selectedStatus, selectedRating);
                 setCurrentPage(page);
@@ -373,39 +391,33 @@ const LibraryScreen = ({ navigation }: any) => {
                 setIsFetchingMore(false);
             }
         }
-    }, [searchQuery, selectedSort, selectedSource, selectedStatus, selectedRating, applyFiltersAndSort, loadLatest, allComics]);
+    }, [committedSearchQuery, selectedSort, selectedSource, selectedStatus, selectedRating, applyFiltersAndSort, loadLatest]);
 
-    useEffect(() => {
-        if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
-
+    const runSearch = useCallback(() => {
         const q = searchQuery.trim();
         setCurrentPage(1);
         setHasMore(true);
 
         if (!q) {
+            setCommittedSearchQuery('');
             loadLatest({ page: 1, append: false });
             return;
         }
 
-        searchDebounceRef.current = setTimeout(() => {
-            searchComics({ page: 1, append: false });
-        }, 380);
-
-        return () => {
-            if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
-        };
-    }, [searchQuery, searchComics, loadLatest]);
+        setCommittedSearchQuery(q);
+        searchComics({ page: 1, append: false, query: q });
+    }, [searchQuery, loadLatest, searchComics]);
 
     const handleLoadMore = useCallback(() => {
         if (loading || isFetchingMore || !hasMore) return;
 
         const nextPage = currentPage + 1;
-        if (searchQuery.trim()) {
+        if (committedSearchQuery.trim()) {
             searchComics({ page: nextPage, append: true });
         } else {
             loadLatest({ page: nextPage, append: true });
         }
-    }, [loading, isFetchingMore, hasMore, currentPage, searchQuery, searchComics, loadLatest]);
+    }, [loading, isFetchingMore, hasMore, currentPage, committedSearchQuery, searchComics, loadLatest]);
 
     const applyFilters = useCallback(() => {
         setSelectedSort(pendingSort);
@@ -494,16 +506,16 @@ const LibraryScreen = ({ navigation }: any) => {
                             placeholderTextColor="#888"
                             value={searchQuery}
                             onChangeText={setSearchQuery}
-                            onSubmitEditing={() => searchComics({ page: 1, append: false })}
+                            onSubmitEditing={runSearch}
                             returnKeyType="search"
                         />
                         {searchQuery !== '' && (
-                            <TouchableOpacity onPress={() => { setSearchQuery(''); loadLatest({ page: 1, append: false }); }} style={styles.clearSearchButton}>
+                            <TouchableOpacity onPress={() => { setSearchQuery(''); setCommittedSearchQuery(''); loadLatest({ page: 1, append: false }); }} style={styles.clearSearchButton}>
                                 <MaterialCommunityIcons name="close-circle" size={20} color="#888" />
                             </TouchableOpacity>
                         )}
                     </View>
-                    <TouchableOpacity style={styles.searchButton} onPress={() => searchComics({ page: 1, append: false })}>
+                    <TouchableOpacity style={styles.searchButton} onPress={runSearch}>
                         <Text style={styles.searchButtonText}>Buscar</Text>
                     </TouchableOpacity>
                 </View>
