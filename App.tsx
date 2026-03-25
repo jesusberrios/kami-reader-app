@@ -5,7 +5,9 @@ import { StatusBar, View, ActivityIndicator, Text } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createDrawerNavigator } from '@react-navigation/drawer';
 import { createStackNavigator } from '@react-navigation/stack';
+import { CardStyleInterpolators, TransitionSpecs } from '@react-navigation/stack';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Firebase imports
 import { auth, db } from './src/firebase/config';
@@ -28,6 +30,7 @@ import AddFriendsScreen from './src/screens/AddFriendsScreen';
 import ChatScreen from './src/screens/ChatScreen';
 import NewsScreen from './src/screens/NewsScreen';
 import NewsDetailScreen from './src/screens/NewsDetailScreen';
+import TutorialScreen from './src/screens/TutorialScreen';
 import { AlertProvider } from './src/contexts/AlertContext';
 // Navigation Types - Actualizado para v6+
 export type RootStackParamList = {
@@ -46,6 +49,7 @@ export type RootStackParamList = {
 
 export type DrawerParamList = {
   Home: undefined;
+  Tutorial: undefined;
   Profile: undefined;
   Library: undefined;
   AddFriends: undefined;
@@ -67,6 +71,43 @@ function MainDrawerNavigator() {
   const [userPlan, setUserPlan] = useState<'free' | 'premium' | null>(null);
   const [pendingRequests, setPendingRequests] = useState(0);
   const [unreadMessages, setUnreadMessages] = useState(0);
+  const [initialDrawerRoute, setInitialDrawerRoute] = useState<keyof DrawerParamList>('Home');
+  const [checkingTutorial, setCheckingTutorial] = useState(true);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const checkTutorialSeen = async () => {
+      const user = auth.currentUser;
+      if (!user) {
+        if (isMounted) {
+          setInitialDrawerRoute('Home');
+          setCheckingTutorial(false);
+        }
+        return;
+      }
+
+      try {
+        const tutorialKey = `tutorialSeen:${user.uid}`;
+        const tutorialSeen = await AsyncStorage.getItem(tutorialKey);
+        if (!isMounted) return;
+
+        setInitialDrawerRoute(tutorialSeen === '1' ? 'Home' : 'Tutorial');
+      } catch {
+        if (!isMounted) return;
+        setInitialDrawerRoute('Home');
+      } finally {
+        if (isMounted) {
+          setCheckingTutorial(false);
+        }
+      }
+    };
+
+    checkTutorialSeen();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   useEffect(() => {
     const user = auth.currentUser;
@@ -123,8 +164,18 @@ function MainDrawerNavigator() {
     };
   }, []);
 
+  if (checkingTutorial) {
+    return (
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#0F0F15' }}>
+        <ActivityIndicator size="large" color="#FF5252" />
+        <Text style={{ color: '#FFF', marginTop: 10, fontSize: 16 }}>Preparando tutorial...</Text>
+      </View>
+    );
+  }
+
   return (
     <Drawer.Navigator
+      initialRouteName={initialDrawerRoute}
       drawerContent={(props) => (
         <CustomDrawerContent
           {...props}
@@ -161,6 +212,16 @@ function MainDrawerNavigator() {
         },
       }}
     >
+      <Drawer.Screen
+        name="Tutorial"
+        component={TutorialScreen}
+        options={{
+          drawerLabel: 'Tutorial',
+          drawerIcon: ({ color, size }) => (
+            <MaterialCommunityIcons name="school-outline" size={size} color={color} />
+          ),
+        }}
+      />
       <Drawer.Screen
         name="Home"
         component={HomeScreen}
@@ -276,12 +337,10 @@ export default function App() {
           if (userDoc.exists()) {
             setUser(currentUser);
           } else {
-            console.warn("User profile not found in Firestore for UID:", currentUser.uid);
             await auth.signOut();
             setUser(null);
           }
         } catch (error) {
-          console.error("Error verifying user profile at App root:", error);
           await auth.signOut();
           setUser(null);
         }
@@ -322,24 +381,12 @@ export default function App() {
             gestureEnabled: true,
             gestureDirection: 'horizontal',
             gestureResponseDistance: 50,
-            cardStyleInterpolator: ({ current, layouts }) => ({
-              cardStyle: {
-                transform: [
-                  {
-                    translateX: current.progress.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [layouts.screen.width, 0],
-                    }),
-                  },
-                ],
-              },
-              overlayStyle: {
-                opacity: current.progress.interpolate({
-                  inputRange: [0, 1],
-                  outputRange: [0, 0.5],
-                }),
-              },
-            }),
+            animationEnabled: true,
+            cardStyleInterpolator: CardStyleInterpolators.forHorizontalIOS,
+            transitionSpec: {
+              open: TransitionSpecs.TransitionIOSSpec,
+              close: TransitionSpecs.TransitionIOSSpec,
+            },
           }}
         >
           {user ? (

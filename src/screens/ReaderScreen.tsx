@@ -8,8 +8,10 @@ import {
     TouchableOpacity,
     StatusBar,
     Animated,
+    RefreshControl,
+    NativeModules,
 } from 'react-native';
-import { useRoute, useNavigation } from '@react-navigation/native';
+import { useRoute, useNavigation, useFocusEffect } from '@react-navigation/native';
 import { RootStackParamList } from '../navigation/types';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -17,6 +19,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { FlashList } from '@shopify/flash-list';
 import { BannerAd, BannerAdSize, MobileAds, TestIds } from 'react-native-google-mobile-ads';
+import { FlingGestureHandler, Directions, State } from 'react-native-gesture-handler';
 import { auth, db } from '../firebase/config';
 import { collection, doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore';
 import { useAlertContext } from '../contexts/AlertContext';
@@ -45,6 +48,8 @@ type ChapterMeta = {
     title?: string;
     number?: string;
 };
+
+type ChapterChangeMode = 'horizontal' | 'vertical';
 
 const fetchJsonWithTimeout = async (url: string, timeoutMs = REQUEST_TIMEOUT_MS) => {
     const controller = new AbortController();
@@ -120,6 +125,11 @@ const ReaderScreen = () => {
     const [prevCompositeSlug, setPrevCompositeSlug] = useState<string | null>(null);
     const [showControls, setShowControls] = useState(true);
     const [plan, setPlan] = useState<'free' | 'premium'>('free');
+    const [chapterChangeMode, setChapterChangeMode] = useState<ChapterChangeMode>('horizontal');
+    const [chapterIndex, setChapterIndex] = useState(-1);
+    const [totalChapters, setTotalChapters] = useState(0);
+    const [hudLocked, setHudLocked] = useState(false);
+    const [prevChapterRefreshing, setPrevChapterRefreshing] = useState(false);
 
     const flashListRef = useRef<FlashList<ReaderImage>>(null);
     const controlsOpacity = useRef(new Animated.Value(1)).current;
@@ -128,6 +138,7 @@ const ReaderScreen = () => {
     const imagesRef = useRef<ReaderImage[]>([]);
     const prefetchInFlightRef = useRef(false);
     const lastPrefetchStartRef = useRef(-1);
+    const chapterSwitchInProgressRef = useRef(false);
 
     const parsed = useMemo(() => parseComposite(currentCompositeSlug), [currentCompositeSlug]);
 
@@ -135,21 +146,40 @@ const ReaderScreen = () => {
         imagesRef.current = images;
     }, [images]);
 
+    useFocusEffect(
+        useCallback(() => {
+            NativeModules.ImmersiveModule?.hideNavigationBar?.();
+            return () => {
+                NativeModules.ImmersiveModule?.showNavigationBar?.();
+            };
+        }, [])
+    );
+
     useEffect(() => {
-        const fetchPlan = async () => {
+        const fetchUserReaderSettings = async () => {
             const user = auth.currentUser;
             if (!user) {
                 setPlan('free');
+                setChapterChangeMode('horizontal');
                 return;
             }
             try {
                 const snap = await getDoc(doc(db, 'users', user.uid));
-                setPlan(snap.exists() && snap.data()?.accountType === 'premium' ? 'premium' : 'free');
+                if (!snap.exists()) {
+                    setPlan('free');
+                    setChapterChangeMode('horizontal');
+                    return;
+                }
+
+                const data = snap.data();
+                setPlan(data?.accountType === 'premium' ? 'premium' : 'free');
+                setChapterChangeMode(data?.chapterChangeMode === 'vertical' ? 'vertical' : 'horizontal');
             } catch {
                 setPlan('free');
+                setChapterChangeMode('horizontal');
             }
         };
-        fetchPlan();
+        fetchUserReaderSettings();
     }, []);
 
     const prefetchImages = useCallback(async (imageList: ReaderImage[], startIndex: number, count: number = IMAGE_PREFETCH_WINDOW) => {
@@ -278,6 +308,8 @@ const ReaderScreen = () => {
             }
 
             setChapterTitle(currentChapter ? `Cap. ${currentChapter.number || ''} ${currentChapter.title || ''}`.trim() : 'Capitulo');
+            setChapterIndex(currentIndex);
+            setTotalChapters(chapters.length);
             setNextCompositeSlug(nextChapter?.slug || null);
             setPrevCompositeSlug(prevChapter?.slug || null);
             setImages(imgs);
@@ -331,6 +363,55 @@ const ReaderScreen = () => {
         setCurrentCompositeSlug(compositeSlug);
     };
 
+    const handleSwipeLeft = useCallback(({ nativeEvent }: any) => {
+        if (nativeEvent.state === State.END) {
+            showAndResetControls();
+            changeChapter(nextCompositeSlug);
+        }
+    }, [nextCompositeSlug, showAndResetControls]);
+
+    const handleSwipeRight = useCallback(({ nativeEvent }: any) => {
+        if (nativeEvent.state === State.END) {
+            showAndResetControls();
+            changeChapter(prevCompositeSlug);
+        }
+    }, [prevCompositeSlug, showAndResetControls]);
+
+    const handleVerticalEndReached = useCallback(() => {
+        if (chapterChangeMode !== 'vertical') return;
+        if (loadingChapter) return;
+        if (!nextCompositeSlug) return;
+        if (chapterSwitchInProgressRef.current) return;
+
+        chapterSwitchInProgressRef.current = true;
+        showAndResetControls();
+        changeChapter(nextCompositeSlug);
+    }, [chapterChangeMode, loadingChapter, nextCompositeSlug, showAndResetControls]);
+
+    const handlePullToPrevChapter = useCallback(() => {
+        if (!prevCompositeSlug || chapterSwitchInProgressRef.current) return;
+        chapterSwitchInProgressRef.current = true;
+        setPrevChapterRefreshing(true);
+        changeChapter(prevCompositeSlug);
+    }, [prevCompositeSlug]);
+
+    const handleHudToggle = useCallback(() => {
+        if (hudLocked) {
+            setHudLocked(false);
+            showAndResetControls();
+        } else {
+            setHudLocked(true);
+            if (autoHideTimeoutRef.current) clearTimeout(autoHideTimeoutRef.current);
+            Animated.timing(controlsOpacity, { toValue: 0, duration: 180, useNativeDriver: true })
+                .start(() => setShowControls(false));
+        }
+    }, [hudLocked, controlsOpacity, showAndResetControls]);
+
+    useEffect(() => {
+        chapterSwitchInProgressRef.current = false;
+        setPrevChapterRefreshing(false);
+    }, [currentCompositeSlug]);
+
     const renderImageItem = useCallback(({ item, index }: { item: ReaderImage; index: number }) => <ReaderImageItem item={item} index={index} />, []);
 
     const handleViewableItemsChanged = useRef(({ viewableItems }: { viewableItems: Array<{ index: number | null }> }) => {
@@ -356,14 +437,7 @@ const ReaderScreen = () => {
                             <Ionicons name="arrow-back" size={28} color="#fff" />
                         </TouchableOpacity>
                         <Text style={styles.chapterTitle} numberOfLines={1}>{chapterTitle}</Text>
-                        <View style={styles.controlsRight}>
-                            <TouchableOpacity onPress={() => changeChapter(prevCompositeSlug)} disabled={!prevCompositeSlug} accessibilityLabel="Capitulo anterior">
-                                <Ionicons name="chevron-back" size={28} color={prevCompositeSlug ? '#fff' : '#555'} />
-                            </TouchableOpacity>
-                            <TouchableOpacity onPress={() => changeChapter(nextCompositeSlug)} disabled={!nextCompositeSlug} accessibilityLabel="Capitulo siguiente">
-                                <Ionicons name="chevron-forward" size={28} color={nextCompositeSlug ? '#fff' : '#555'} />
-                            </TouchableOpacity>
-                        </View>
+                        <View style={styles.topBarSpacer} />
                     </View>
                 </Animated.View>
             )}
@@ -374,23 +448,86 @@ const ReaderScreen = () => {
                 </View>
             )}
 
-            <FlashList
-                key={currentCompositeSlug}
-                ref={flashListRef}
-                data={images}
-                estimatedItemSize={Math.max(520, screenHeight)}
-                initialNumToRender={3}
-                keyExtractor={(item) => item.id}
-                renderItem={renderImageItem}
-                removeClippedSubviews
-                showsVerticalScrollIndicator={false}
-                onScrollBeginDrag={showAndResetControls}
-                onMomentumScrollBegin={showAndResetControls}
-                drawDistance={screenHeight}
-                onViewableItemsChanged={handleViewableItemsChanged}
-                viewabilityConfig={{ itemVisiblePercentThreshold: 15 }}
-                scrollEventThrottle={16}
-            />
+            {chapterChangeMode === 'horizontal' ? (
+                <FlingGestureHandler direction={Directions.LEFT} onHandlerStateChange={handleSwipeLeft}>
+                    <FlingGestureHandler direction={Directions.RIGHT} onHandlerStateChange={handleSwipeRight}>
+                        <View style={styles.readerContent}>
+                            <FlashList
+                                key={currentCompositeSlug}
+                                ref={flashListRef}
+                                data={images}
+                                estimatedItemSize={Math.max(520, screenHeight)}
+                                keyExtractor={(item) => item.id}
+                                renderItem={renderImageItem}
+                                removeClippedSubviews
+                                showsVerticalScrollIndicator={false}
+                                onScrollBeginDrag={hudLocked ? undefined : showAndResetControls}
+                                onMomentumScrollBegin={hudLocked ? undefined : showAndResetControls}
+                                drawDistance={screenHeight}
+                                onViewableItemsChanged={handleViewableItemsChanged}
+                                viewabilityConfig={{ itemVisiblePercentThreshold: 15 }}
+                                scrollEventThrottle={16}
+                            />
+                        </View>
+                    </FlingGestureHandler>
+                </FlingGestureHandler>
+            ) : (
+                <View style={styles.readerContent}>
+                    <FlashList
+                        key={currentCompositeSlug}
+                        ref={flashListRef}
+                        data={images}
+                        estimatedItemSize={Math.max(520, screenHeight)}
+                        keyExtractor={(item) => item.id}
+                        renderItem={renderImageItem}
+                        removeClippedSubviews
+                        showsVerticalScrollIndicator={false}
+                        onScrollBeginDrag={hudLocked ? undefined : showAndResetControls}
+                        onMomentumScrollBegin={hudLocked ? undefined : showAndResetControls}
+                        drawDistance={screenHeight}
+                        onViewableItemsChanged={handleViewableItemsChanged}
+                        viewabilityConfig={{ itemVisiblePercentThreshold: 15 }}
+                        scrollEventThrottle={16}
+                        onEndReached={handleVerticalEndReached}
+                        onEndReachedThreshold={0.2}
+                        refreshControl={
+                            prevCompositeSlug ? (
+                                <RefreshControl
+                                    refreshing={prevChapterRefreshing}
+                                    onRefresh={handlePullToPrevChapter}
+                                    colors={['#FF5555']}
+                                />
+                            ) : undefined
+                        }
+                    />
+                </View>
+            )}
+
+            {showControls && (
+                <Animated.View style={[styles.bottomBar, { opacity: controlsOpacity, paddingBottom: insets.bottom + (plan === 'free' ? 62 : 6) }]}>
+                    <LinearGradient colors={['transparent', 'rgba(0,0,0,0.72)']} style={StyleSheet.absoluteFill} />
+                    <View style={styles.bottomBarContent}>
+                        {chapterIndex >= 0 && totalChapters > 0 && (
+                            <Text style={styles.chapterCounter}>
+                                {totalChapters - chapterIndex} / {totalChapters}
+                            </Text>
+                        )}
+                        <TouchableOpacity onPress={handleHudToggle} style={styles.hudToggleBtn} accessibilityLabel="Ocultar controles">
+                            <Ionicons name="eye-off-outline" size={20} color="rgba(255,255,255,0.65)" />
+                        </TouchableOpacity>
+                    </View>
+                </Animated.View>
+            )}
+
+            {hudLocked && (
+                <TouchableOpacity
+                    style={[styles.hudUnlockHint, { bottom: insets.bottom + (plan === 'free' ? 62 : 10) }]}
+                    onPress={handleHudToggle}
+                    activeOpacity={0.8}
+                >
+                    <View style={styles.hudUnlockBar} />
+                </TouchableOpacity>
+            )}
 
             {plan === 'free' && (
                 <View style={[styles.bannerContainer, { bottom: insets.bottom + 5 }]}>
@@ -430,10 +567,12 @@ const styles = StyleSheet.create({
         marginHorizontal: 10,
         textAlign: 'center',
     },
-    controlsRight: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 10,
+    topBarSpacer: {
+        width: 28,
+        height: 28,
+    },
+    readerContent: {
+        flex: 1,
     },
     imageContainer: {
         marginBottom: 0,
@@ -453,6 +592,44 @@ const styles = StyleSheet.create({
         alignSelf: 'center',
         width: '100%',
         maxWidth: 468,
+    },
+    bottomBar: {
+        position: 'absolute',
+        width: '100%',
+        bottom: 0,
+        zIndex: 10,
+        paddingTop: 36,
+        paddingHorizontal: 16,
+    },
+    bottomBarContent: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'flex-end',
+    },
+    chapterCounter: {
+        flex: 1,
+        color: 'rgba(255,255,255,0.72)',
+        fontSize: 12,
+        fontWeight: '600',
+        letterSpacing: 0.5,
+    },
+    hudToggleBtn: {
+        padding: 8,
+    },
+    hudUnlockHint: {
+        position: 'absolute',
+        alignSelf: 'center',
+        width: 48,
+        height: 20,
+        justifyContent: 'center',
+        alignItems: 'center',
+        zIndex: 20,
+    },
+    hudUnlockBar: {
+        width: 36,
+        height: 4,
+        borderRadius: 2,
+        backgroundColor: 'rgba(255,255,255,0.22)',
     },
 });
 

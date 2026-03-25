@@ -15,6 +15,7 @@ export type RootStackParamList = {
 
 export type DrawerParamList = {
     Home: undefined;
+    Tutorial: undefined;
     Profile: undefined;
     Library: undefined;
 };

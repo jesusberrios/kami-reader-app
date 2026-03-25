@@ -19,6 +19,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BannerAd, BannerAdSize, TestIds } from 'react-native-google-mobile-ads';
 import { useAlertContext } from '../contexts/AlertContext'; // Importar el contexto de alertas
+import { formatReadingTime } from '../services/readingStatsService';
 
 type UserData = {
     username?: string;
@@ -73,20 +74,6 @@ const CustomDrawerContent = (props: CustomDrawerContentProps) => {
 
     // Obtener las funciones de alerta del contexto
     const { alertError, alertConfirm } = useAlertContext();
-
-    const formatReadingTime = (milliseconds: number): string => {
-        const totalSeconds = Math.floor(milliseconds / 1000);
-        const hours = Math.floor(totalSeconds / 3600);
-        const minutes = Math.floor((totalSeconds % 3600) / 60);
-
-        if (hours > 0) {
-            return `${hours}h ${minutes}m`;
-        } else if (minutes > 0) {
-            return `${minutes}m`;
-        } else {
-            return '0m';
-        }
-    };
 
     useEffect(() => {
         setTotalPending(pendingRequests + unreadMessages);

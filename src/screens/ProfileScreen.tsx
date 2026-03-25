@@ -12,23 +12,36 @@ import {
     Animated,
     Easing
 } from 'react-native';
-import { useNavigation, useFocusEffect, useRoute, RouteProp } from '@react-navigation/native';
+import { useNavigation, useFocusEffect, useRoute } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { DrawerNavigationProp } from '@react-navigation/drawer';
 import { RootStackParamList, DrawerParamList } from '../navigation/types';
 import { db } from '../firebase/config';
-import { doc, getDoc, updateDoc, collection, getDocs, query, where, arrayUnion } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, arrayUnion } from 'firebase/firestore';
 import AuthService from '../services/auth.service';
 import * as ImagePicker from 'expo-image-picker';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAlertContext } from '../contexts/AlertContext'; // Importar el contexto de alertas
+import {
+    READER_ACHIEVEMENTS,
+    ReaderAchievement,
+    ReadingStats,
+    formatReadingTime,
+    getAchievementProgress,
+    getUnlockedAchievementIds,
+    getUserReadingStats,
+    resetUserReadingStats,
+    syncUserAchievements,
+} from '../services/readingStatsService';
 
 type ProfileScreenNavigationProp = StackNavigationProp<RootStackParamList, 'Profile'> &
     DrawerNavigationProp<DrawerParamList, 'Profile'>;
 
-type ProfileScreenRouteProp = RouteProp<RootStackParamList, 'Profile'>;
+type ProfileScreenRouteProp = {
+    params?: RootStackParamList['Profile'];
+};
 
 interface UserProfile {
     uid: string;
@@ -36,23 +49,9 @@ interface UserProfile {
     email: string;
     avatar: string;
     accountType: 'free' | 'premium';
-    readingStats: {
-        totalRead: number;
-        hoursSpent: number;
-        favorites: number;
-    };
-    totalReadingTimeMs?: number;
+    chapterChangeMode?: 'horizontal' | 'vertical';
+    readingStats: ReadingStats;
     isFriend?: boolean;
-}
-
-interface Achievement {
-    id: string;
-    name: string;
-    icon: string;
-    description: string;
-    isPremium: boolean;
-    progress?: number;
-    target?: number;
 }
 
 const ProfileScreen = () => {
@@ -61,10 +60,11 @@ const ProfileScreen = () => {
     const insets = useSafeAreaInsets();
 
     // Obtener las funciones de alerta del contexto
-    const { alertError, alertSuccess } = useAlertContext();
+    const { alertError, alertSuccess, alertConfirm } = useAlertContext();
 
     const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
-    const [achievements, setAchievements] = useState<Achievement[]>([]);
+    const [achievements] = useState<ReaderAchievement[]>(READER_ACHIEVEMENTS);
+    const [unlockedAchievements, setUnlockedAchievements] = useState<string[]>([]);
     const [loading, setLoading] = useState(true);
     const [isEditingUsername, setIsEditingUsername] = useState(false);
     const [newUsername, setNewUsername] = useState('');
@@ -85,20 +85,6 @@ const ProfileScreen = () => {
         }).start();
     }, []);
 
-    const formatReadingTime = (milliseconds: number): string => {
-        const totalSeconds = Math.floor(milliseconds / 1000);
-        const hours = Math.floor(totalSeconds / 3600);
-        const minutes = Math.floor((totalSeconds % 3600) / 60);
-
-        if (hours > 0) {
-            return `${hours}h ${minutes}m`;
-        } else if (minutes > 0) {
-            return `${minutes}m`;
-        } else {
-            return '0m';
-        }
-    };
-
     const animateButtonPress = () => {
         Animated.sequence([
             Animated.timing(scaleValue, {
@@ -118,11 +104,7 @@ const ProfileScreen = () => {
 
     useFocusEffect(
         useCallback(() => {
-            const fetchData = async () => {
-                await fetchUserProfile();
-                await fetchAchievements();
-            };
-            fetchData();
+            fetchUserProfile();
         }, [targetUserId])
     );
 
@@ -136,16 +118,7 @@ const ProfileScreen = () => {
 
             if (userDocSnap.exists()) {
                 const data = userDocSnap.data();
-                const totalReadingTimeMs = data.totalReadingTime || 0;
-                const hoursSpent = totalReadingTimeMs / (1000 * 60 * 60);
-
-                // Fetch favorites count
-                const favoritesSnapshot = await getDocs(collection(db, 'users', targetUserId, 'favorites'));
-                const favoritesCount = favoritesSnapshot.size;
-
-                // Fetch read manga count
-                const readComicsSnapshot = await getDocs(collection(db, 'users', targetUserId, 'readComics'));
-                const totalRead = readComicsSnapshot.size;
+                const readingStats = await getUserReadingStats(targetUserId);
 
                 // Check if this user is a friend (only for non-own profiles)
                 let isFriend = false;
@@ -163,14 +136,18 @@ const ProfileScreen = () => {
                     email: data.email || '',
                     avatar: data.avatar || '',
                     accountType: data.accountType || 'free',
-                    readingStats: {
-                        totalRead,
-                        hoursSpent,
-                        favorites: favoritesCount
-                    },
-                    totalReadingTimeMs,
+                    chapterChangeMode: data.chapterChangeMode === 'vertical' ? 'vertical' : 'horizontal',
+                    readingStats,
                     isFriend
                 });
+
+                const unlocked = getUnlockedAchievementIds(readingStats);
+                setUnlockedAchievements(unlocked);
+                if (isOwnProfile && currentUser?.uid === targetUserId) {
+                    syncUserAchievements(targetUserId, unlocked).catch(() => {
+                        // silently ignored
+                    });
+                }
 
                 if (isOwnProfile) {
                     setNewUsername(data.username || data.email?.split('@')[0] || 'Usuario');
@@ -180,20 +157,6 @@ const ProfileScreen = () => {
             alertError('No se pudo cargar el perfil');
         } finally {
             setLoading(false);
-        }
-    };
-
-    const fetchAchievements = async () => {
-        try {
-            const achievementsColRef = collection(db, 'achievements');
-            const snapshot = await getDocs(achievementsColRef);
-            const achievementsData: Achievement[] = snapshot.docs.map(doc => ({
-                id: doc.id,
-                ...doc.data()
-            } as Achievement));
-            setAchievements(achievementsData);
-        } catch (error) {
-            // silently ignored
         }
     };
 
@@ -280,42 +243,38 @@ const ProfileScreen = () => {
         });
     };
 
-    const isAchievementUnlocked = (achievement: Achievement): boolean => {
-        if (!userProfile) return false;
+    const handleChangeChapterMode = async (mode: 'horizontal' | 'vertical') => {
+        if (!currentUser || !isOwnProfile) return;
+        if (userProfile?.chapterChangeMode === mode) return;
 
-        switch (achievement.id) {
-            case 'first-read':
-                return userProfile.readingStats.totalRead > 0;
-            case 'avid-reader':
-                return userProfile.readingStats.totalRead >= 5;
-            case 'bookworm':
-                return userProfile.readingStats.totalRead >= 20;
-            case 'marathon':
-                return userProfile.readingStats.hoursSpent >= 10;
-            case 'collector':
-                return userProfile.readingStats.favorites >= 10;
-            default:
-                return false;
+        try {
+            await updateDoc(doc(db, 'users', currentUser.uid), { chapterChangeMode: mode });
+            setUserProfile((prev) => prev ? { ...prev, chapterChangeMode: mode } : null);
+            alertSuccess('Preferencia de lectura actualizada');
+        } catch (error) {
+            alertError('No se pudo actualizar la preferencia de lectura');
         }
     };
 
-    const getAchievementProgress = (achievement: Achievement): number => {
-        if (!userProfile) return 0;
 
-        switch (achievement.id) {
-            case 'first-read':
-                return Math.min(userProfile.readingStats.totalRead, 1);
-            case 'avid-reader':
-                return Math.min(userProfile.readingStats.totalRead / 5, 1);
-            case 'bookworm':
-                return Math.min(userProfile.readingStats.totalRead / 20, 1);
-            case 'marathon':
-                return Math.min(userProfile.readingStats.hoursSpent / 10, 1);
-            case 'collector':
-                return Math.min(userProfile.readingStats.favorites / 10, 1);
-            default:
-                return 0;
-        }
+    const handleResetStats = async () => {
+        if (!currentUser || !isOwnProfile) return;
+
+        alertConfirm(
+            'Se reiniciara tu tiempo de lectura y mangas completados. Esta accion no se puede deshacer.',
+            async () => {
+                try {
+                    await resetUserReadingStats(currentUser.uid);
+                    await fetchUserProfile();
+                    alertSuccess('Estadisticas reiniciadas correctamente');
+                } catch {
+                    alertError('No se pudieron reiniciar las estadisticas');
+                }
+            },
+            'Reiniciar estadisticas',
+            'Reiniciar',
+            'Cancelar'
+        );
     };
 
     if (loading || !userProfile) {
@@ -462,25 +421,37 @@ const ProfileScreen = () => {
                         <View style={styles.section}>
                             <Text style={styles.sectionTitle}>Estadísticas</Text>
                             {userProfile.accountType === 'premium' || isOwnProfile ? (
-                                <View style={styles.statsGrid}>
-                                    <View style={styles.statCard}>
-                                        <Ionicons name="book" size={24} color="#FF6E6E" />
-                                        <Text style={styles.statValue}>{userProfile.readingStats.totalRead}</Text>
-                                        <Text style={styles.statLabel}>Lecturas</Text>
+                                <>
+                                    <View style={styles.statsGrid}>
+                                        <View style={styles.statCard}>
+                                            <Ionicons name="book" size={24} color="#FF6E6E" />
+                                            <Text style={styles.statValue}>{userProfile.readingStats.totalRead}</Text>
+                                            <Text style={styles.statLabel}>Lecturas</Text>
+                                        </View>
+                                        <View style={styles.statCard}>
+                                            <Ionicons name="time" size={24} color="#FF6E6E" />
+                                            <Text style={styles.statValue}>
+                                                {formatReadingTime(userProfile.readingStats.totalReadingTimeMs || 0)}
+                                            </Text>
+                                            <Text style={styles.statLabel}>Tiempo</Text>
+                                        </View>
+                                        <View style={styles.statCard}>
+                                            <Ionicons name="heart" size={24} color="#FF6E6E" />
+                                            <Text style={styles.statValue}>{userProfile.readingStats.favorites}</Text>
+                                            <Text style={styles.statLabel}>Favoritos</Text>
+                                        </View>
                                     </View>
-                                    <View style={styles.statCard}>
-                                        <Ionicons name="time" size={24} color="#FF6E6E" />
-                                        <Text style={styles.statValue}>
-                                            {formatReadingTime(userProfile.totalReadingTimeMs || 0)}
-                                        </Text>
-                                        <Text style={styles.statLabel}>Tiempo</Text>
-                                    </View>
-                                    <View style={styles.statCard}>
-                                        <Ionicons name="heart" size={24} color="#FF6E6E" />
-                                        <Text style={styles.statValue}>{userProfile.readingStats.favorites}</Text>
-                                        <Text style={styles.statLabel}>Favoritos</Text>
-                                    </View>
-                                </View>
+                                    {isOwnProfile && (
+                                        <TouchableOpacity
+                                            style={styles.resetStatsButton}
+                                            onPress={handleResetStats}
+                                            activeOpacity={0.85}
+                                        >
+                                            <Ionicons name="refresh-circle-outline" size={18} color="#FFD3D3" />
+                                            <Text style={styles.resetStatsText}>Reiniciar estadisticas</Text>
+                                        </TouchableOpacity>
+                                    )}
+                                </>
                             ) : (
                                 <View style={styles.lockedSection}>
                                     <MaterialCommunityIcons name="lock" size={40} color="#B0BEC5" />
@@ -503,13 +474,74 @@ const ProfileScreen = () => {
                         </View>
 
                         {/* Achievements Section */}
+                        {isOwnProfile && (
+                            <View style={styles.section}>
+                                <Text style={styles.sectionTitle}>Lectura</Text>
+                                <View style={styles.settingCard}>
+                                    <Text style={styles.settingLabel}>Cambio de capitulo</Text>
+                                    <View style={styles.modeOptionsRow}>
+                                        <TouchableOpacity
+                                            style={[
+                                                styles.modeOption,
+                                                (userProfile.chapterChangeMode || 'horizontal') === 'horizontal' && styles.modeOptionActive,
+                                            ]}
+                                            onPress={() => handleChangeChapterMode('horizontal')}
+                                            activeOpacity={0.85}
+                                        >
+                                            <Ionicons
+                                                name="swap-horizontal"
+                                                size={16}
+                                                color={(userProfile.chapterChangeMode || 'horizontal') === 'horizontal' ? '#FFF' : '#AAA'}
+                                            />
+                                            <Text
+                                                style={[
+                                                    styles.modeOptionText,
+                                                    (userProfile.chapterChangeMode || 'horizontal') === 'horizontal' && styles.modeOptionTextActive,
+                                                ]}
+                                            >
+                                                Horizontal
+                                            </Text>
+                                        </TouchableOpacity>
+
+                                        <TouchableOpacity
+                                            style={[
+                                                styles.modeOption,
+                                                (userProfile.chapterChangeMode || 'horizontal') === 'vertical' && styles.modeOptionActive,
+                                            ]}
+                                            onPress={() => handleChangeChapterMode('vertical')}
+                                            activeOpacity={0.85}
+                                        >
+                                            <Ionicons
+                                                name="swap-vertical"
+                                                size={16}
+                                                color={(userProfile.chapterChangeMode || 'horizontal') === 'vertical' ? '#FFF' : '#AAA'}
+                                            />
+                                            <Text
+                                                style={[
+                                                    styles.modeOptionText,
+                                                    (userProfile.chapterChangeMode || 'horizontal') === 'vertical' && styles.modeOptionTextActive,
+                                                ]}
+                                            >
+                                                Vertical
+                                            </Text>
+                                        </TouchableOpacity>
+                                    </View>
+                                    <Text style={styles.settingHint}>
+                                        Horizontal: desliza a los lados. Vertical: al final del capitulo pasa al siguiente automaticamente.
+                                    </Text>
+                                </View>
+                            </View>
+                        )}
+
                         <View style={styles.section}>
                             <Text style={styles.sectionTitle}>Logros</Text>
                             {userProfile.accountType === 'premium' || isOwnProfile ? (
                                 achievements.length > 0 ? (
                                     achievements.map(achievement => {
-                                        const unlocked = isAchievementUnlocked(achievement);
-                                        const progress = getAchievementProgress(achievement);
+                                            const unlocked = unlockedAchievements.includes(achievement.id);
+                                            const progress = userProfile
+                                                ? getAchievementProgress(achievement, userProfile.readingStats)
+                                                : 0;
 
                                         return (
                                             <View key={achievement.id} style={styles.achievementCard}>
@@ -804,6 +836,76 @@ const styles = StyleSheet.create({
         fontSize: 12,
         color: '#AAA',
         textTransform: 'uppercase',
+        fontFamily: 'Roboto-Regular',
+    },
+    resetStatsButton: {
+        marginTop: 8,
+        alignSelf: 'flex-end',
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+        borderRadius: 10,
+        backgroundColor: 'rgba(255, 110, 110, 0.18)',
+        borderWidth: 1,
+        borderColor: 'rgba(255, 110, 110, 0.3)',
+    },
+    resetStatsText: {
+        color: '#FFD3D3',
+        fontSize: 12,
+        fontWeight: '700',
+        fontFamily: 'Roboto-Bold',
+        textTransform: 'uppercase',
+    },
+    settingCard: {
+        backgroundColor: 'rgba(30, 30, 45, 0.6)',
+        borderRadius: 15,
+        padding: 16,
+        borderWidth: 1,
+        borderColor: 'rgba(255, 255, 255, 0.05)',
+        gap: 12,
+    },
+    settingLabel: {
+        color: '#FFF',
+        fontSize: 15,
+        fontWeight: '700',
+        fontFamily: 'Roboto-Bold',
+    },
+    modeOptionsRow: {
+        flexDirection: 'row',
+        gap: 10,
+    },
+    modeOption: {
+        flex: 1,
+        borderRadius: 12,
+        paddingVertical: 12,
+        paddingHorizontal: 10,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.12)',
+        backgroundColor: 'rgba(255,255,255,0.02)',
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+    },
+    modeOptionActive: {
+        backgroundColor: 'rgba(255, 110, 110, 0.8)',
+        borderColor: '#FF6E6E',
+    },
+    modeOptionText: {
+        color: '#AAA',
+        fontSize: 14,
+        fontWeight: '600',
+        fontFamily: 'Roboto-Medium',
+    },
+    modeOptionTextActive: {
+        color: '#FFF',
+    },
+    settingHint: {
+        color: '#B0BEC5',
+        fontSize: 12,
+        lineHeight: 18,
         fontFamily: 'Roboto-Regular',
     },
     achievementCard: {
