@@ -15,6 +15,7 @@ import { db, auth } from '../firebase/config';
 import { signOut } from 'firebase/auth';
 import { MaterialCommunityIcons, Ionicons, Feather } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BannerAd, BannerAdSize, TestIds } from 'react-native-google-mobile-ads';
 import { useAlertContext } from '../contexts/AlertContext'; // Importar el contexto de alertas
@@ -59,6 +60,7 @@ const UserPlanBadge = ({ accountType }: { accountType: 'free' | 'premium' }) => 
 
 const CustomDrawerContent = (props: CustomDrawerContentProps) => {
     const { pendingRequests = 0, unreadMessages = 0 } = props;
+    const insets = useSafeAreaInsets();
     const [userData, setUserData] = useState<UserData | null>(null);
     const [favoritesCount, setFavoritesCount] = useState<number>(0);
     const [mangasReadCount, setMangasReadCount] = useState<number>(0);
@@ -130,15 +132,15 @@ const CustomDrawerContent = (props: CustomDrawerContentProps) => {
                     if (Date.now() > fetchedUserData.subscriptionEndDate) {
                         try {
                             await updateDoc(userDocRef, { accountType: 'free' });
-                        } catch (error) {
-                            console.error("Error reverting subscription to free:", error);
+                        } catch {
+                            // silently ignored
                         }
                     }
                 } else if (fetchedUserData.accountType === 'premium' && !fetchedUserData.subscriptionEndDate) {
                     try {
                         await updateDoc(userDocRef, { accountType: 'free' });
-                    } catch (error) {
-                        console.error("Error reverting premium user without end date:", error);
+                    } catch {
+                        // silently ignored
                     }
                 }
             } else {
@@ -148,7 +150,6 @@ const CustomDrawerContent = (props: CustomDrawerContentProps) => {
             userLoaded = true;
             checkIfAllLoaded();
         }, (error) => {
-            console.error("Error fetching user data in drawer:", error);
             setUserData(null);
             setTotalReadingTimeMs(0);
             userLoaded = true;
@@ -160,7 +161,6 @@ const CustomDrawerContent = (props: CustomDrawerContentProps) => {
             favoritesLoaded = true;
             checkIfAllLoaded();
         }, (error) => {
-            console.error("Error fetching favorites count in drawer:", error);
             setFavoritesCount(0);
             favoritesLoaded = true;
             checkIfAllLoaded();
@@ -171,7 +171,6 @@ const CustomDrawerContent = (props: CustomDrawerContentProps) => {
             readComicsLoaded = true;
             checkIfAllLoaded();
         }, (error) => {
-            console.error("Error fetching mangas read count in drawer:", error);
             setMangasReadCount(0);
             readComicsLoaded = true;
             checkIfAllLoaded();
@@ -288,11 +287,20 @@ const CustomDrawerContent = (props: CustomDrawerContentProps) => {
         >
             <DrawerContentScrollView
                 {...props}
-                contentContainerStyle={styles.drawerContainer}
+                contentContainerStyle={[
+                    styles.drawerContainer,
+                    { paddingTop: insets.top + 8 },
+                ]}
                 showsVerticalScrollIndicator={false}
             >
                 {/* User Profile Section */}
                 <View style={styles.userHeader}>
+                    <LinearGradient
+                        colors={['rgba(255,110,110,0.18)', 'rgba(107,138,253,0.08)']}
+                        style={styles.userHeaderGlow}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 1 }}
+                    />
                     <View style={styles.avatarContainer}>
                         <Image
                             source={userData?.avatar ? { uri: userData.avatar } : require('../../assets/icon.png')}
@@ -375,7 +383,7 @@ const CustomDrawerContent = (props: CustomDrawerContentProps) => {
             </DrawerContentScrollView>
 
             {/* Footer */}
-            <View style={styles.footerContainer}>
+            <View style={[styles.footerContainer, { paddingBottom: insets.bottom + 12 }]}>
                 {!isPremiumUser && (
                     <View style={[styles.adBanner, { width: drawerWidth }]}>
                         <BannerAd
@@ -405,7 +413,7 @@ const CustomDrawerContent = (props: CustomDrawerContentProps) => {
                 </Animated.View>
 
                 <View style={styles.versionContainer}>
-                    <Text style={styles.footerText}>Kamireader v1.0.7</Text>
+                    <Text style={styles.footerText}>Kamireader v1.0.8</Text>
                     <Text style={styles.footerText}>© {new Date().getFullYear()} KAMI Studios</Text>
                 </View>
             </View>
@@ -418,16 +426,26 @@ const styles = StyleSheet.create({
         flex: 1,
     },
     drawerContainer: {
-        paddingTop: 10,
+        paddingTop: 12,
         paddingBottom: 20,
     },
     userHeader: {
+        position: 'relative',
         flexDirection: 'row',
         alignItems: 'center',
-        paddingHorizontal: 20,
-        paddingVertical: 25,
+        marginHorizontal: 12,
+        marginTop: 2,
+        marginBottom: 10,
+        paddingHorizontal: 14,
+        paddingVertical: 16,
+        borderRadius: 16,
+        overflow: 'hidden',
+        backgroundColor: 'rgba(255,255,255,0.03)',
         borderBottomWidth: 1,
-        borderBottomColor: 'rgba(255,255,255,0.08)',
+        borderBottomColor: 'rgba(255,255,255,0.12)',
+    },
+    userHeaderGlow: {
+        ...StyleSheet.absoluteFillObject,
     },
     avatarContainer: {
         position: 'relative',
@@ -489,8 +507,8 @@ const styles = StyleSheet.create({
         textTransform: 'uppercase',
     },
     statsContainer: {
-        paddingHorizontal: 15,
-        marginVertical: 15,
+        paddingHorizontal: 12,
+        marginVertical: 8,
     },
     statsBackground: {
         flexDirection: 'row',
@@ -555,7 +573,13 @@ const styles = StyleSheet.create({
         textAlign: 'center',
     },
     navigationContainer: {
-        marginTop: 5,
+        marginTop: 8,
+        marginHorizontal: 12,
+        borderRadius: 14,
+        paddingVertical: 8,
+        backgroundColor: 'rgba(255,255,255,0.03)',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.08)',
     },
     drawerItem: {
         borderRadius: 10,
@@ -572,6 +596,7 @@ const styles = StyleSheet.create({
         padding: 15,
         borderTopWidth: 1,
         borderTopColor: 'rgba(255, 255, 255, 0.08)',
+        backgroundColor: 'rgba(0,0,0,0.1)',
     },
     adBanner: {
         alignItems: 'center',

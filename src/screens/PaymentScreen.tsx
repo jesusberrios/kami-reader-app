@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, SafeAreaView, Platform, TouchableOpacity, StatusBar, ScrollView, Dimensions, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, Platform, TouchableOpacity, StatusBar, ScrollView, Dimensions, ActivityIndicator } from 'react-native';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import * as RNIap from 'react-native-iap';
@@ -55,6 +56,7 @@ const products: Product[] = [
 ];
 
 const PaymentScreen = () => {
+    const insets = useSafeAreaInsets();
     const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
     const [purchaseStatus, setPurchaseStatus] = useState<'idle' | 'processing' | 'success' | 'failure'>('idle');
     const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -73,25 +75,13 @@ const PaymentScreen = () => {
             try {
                 setProductsLoading(true);
                 const connected = await RNIap.initConnection();
-                console.log(connected ? 'RNIap: Conexión a la tienda exitosa.' : 'RNIap: No se pudo conectar a la tienda.');
 
                 if (connected) {
                     const fetchedSubscriptions: RNIapSubscription[] = await RNIap.getSubscriptions({ skus: productIds });
                     setAvailableProducts(fetchedSubscriptions);
-
-                    console.log('RNIap: Suscripciones disponibles:', fetchedSubscriptions.map(p => ({
-                        id: p.productId,
-                        title: p.title,
-                        price: getProductPrice(p.productId),
-                    })));
-
-                    const purchases = await RNIap.getAvailablePurchases();
-                    if (purchases.length > 0) {
-                        console.log('RNIap: Compras pendientes encontradas:', purchases);
-                    }
+                    await RNIap.getAvailablePurchases();
                 }
             } catch (error: any) {
-                console.error('RNIap Error al inicializar IAP:', error);
                 alertError(`Error al inicializar la tienda: ${error.message}. Por favor, inténtalo de nuevo.`);
                 setPurchaseStatus('failure');
             } finally {
@@ -104,8 +94,6 @@ const PaymentScreen = () => {
         // Set up purchase listeners
         purchaseUpdateListenerRef.current = RNIap.purchaseUpdatedListener(
             async (purchase: Purchase) => {
-                console.log('RNIap: Compra actualizada recibida:', purchase);
-
                 if (purchase.transactionId) {
                     setPurchaseStatus('success');
 
@@ -126,21 +114,17 @@ const PaymentScreen = () => {
                                     subscriptionEndDate: subscriptionEndDate.getTime(),
                                     lastPurchasedProductId: purchase.productId,
                                 });
-                                console.log('Firestore: Usuario actualizado a Premium.');
 
                                 // Mostrar éxito con el contexto de alertas
                                 alertSuccess(`Has adquirido ${availableProducts.find(p => p.productId === purchase.productId)?.title || 'un producto'}. ¡Disfruta de tu acceso Premium!`);
 
                             } catch (firestoreError) {
-                                console.error('Firestore Error al actualizar después de la compra:', firestoreError);
                                 alertError('Tu compra fue exitosa, pero no se pudo actualizar tu estado Premium en la base de datos. Por favor, contacta a soporte.');
                             }
                         } else {
-                            console.warn('RNIap: Producto comprado no encontrado en la lista local:', purchase.productId);
                             alertError('Hemos registrado tu compra, pero no pudimos identificar el producto. Contacta a soporte si no ves los beneficios.');
                         }
                     } else {
-                        console.warn('RNIap: No se encontró un usuario autenticado después de una compra exitosa.');
                         alertError('Tu compra fue procesada, pero no pudimos vincularla a tu cuenta. Asegúrate de iniciar sesión y contacta a soporte si necesitas ayuda.');
                     }
                     // --- End Firestore Update ---
@@ -148,14 +132,10 @@ const PaymentScreen = () => {
                     try {
                         // IMPORTANTE: Para suscripciones, siempre usar isConsumable: false
                         await RNIap.finishTransaction({ purchase, isConsumable: false });
-                        console.log('RNIap: Transacción finalizada con éxito.');
                     } catch (finishError) {
-                        console.error('RNIap Error al finalizar la transacción:', finishError);
-                        // No mostrar alerta de error aquí para no confundir al usuario
-                        // El pago ya fue exitoso, solo hubo problema al finalizar en la tienda
+                        // finishTransaction error is non-critical; purchase was already successful
                     }
                 } else {
-                    console.log('RNIap: Compra recibida sin transactionId:', purchase);
                     setErrorMessage('Tu compra está pendiente o no se pudo completar.');
                     setPurchaseStatus('failure');
                 }
@@ -164,8 +144,7 @@ const PaymentScreen = () => {
 
         purchaseErrorListenerRef.current = RNIap.purchaseErrorListener(
             (error: RNIapPurchaseError) => {
-                console.error('RNIap Error de compra:', error);
-                setPurchaseStatus('failure');
+
 
                 if (error.code !== 'E_USER_CANCELLED') {
                     let userMessage = 'Ocurrió un error inesperado al procesar tu pago.';
@@ -202,7 +181,6 @@ const PaymentScreen = () => {
                 purchaseErrorListenerRef.current.remove();
             }
             RNIap.endConnection();
-            console.log('RNIap: Conexión con la tienda finalizada.');
         };
     }, [alertError, alertSuccess]); // Añadir dependencias del contexto
 
@@ -218,8 +196,6 @@ const PaymentScreen = () => {
         setErrorMessage(null);
 
         try {
-            console.log('RNIap: Solicitando compra para SKU:', selectedProduct.id);
-
             if (selectedProduct.type === 'subscription') {
                 if (Platform.OS === 'android') {
                     const productToBuy = availableProducts.find(p => p.productId === selectedProduct.id);
@@ -234,7 +210,6 @@ const PaymentScreen = () => {
                             }]
                         });
                     } else {
-                        console.error('Android Subscription Error: No subscriptionOfferDetails found');
                         alertError('No se encontraron detalles de oferta válidos para este plan. Asegúrate de que las ofertas estén configuradas en Google Play Console.');
                         setPurchaseStatus('failure');
                         return;
@@ -246,7 +221,6 @@ const PaymentScreen = () => {
                 await RNIap.requestPurchase({ sku: selectedProduct.id });
             }
         } catch (error: any) {
-            console.error('RNIap Error al iniciar la compra:', error);
             setPurchaseStatus('failure');
             if (error.code !== 'E_USER_CANCELLED') {
                 alertError(`Error al iniciar la compra: ${error.message || 'Ocurrió un error inesperado.'}`);
@@ -413,7 +387,7 @@ const styles = StyleSheet.create({
         paddingBottom: 30,
     },
     header: {
-        paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 0) + 20 : 30,
+        paddingTop: 20,
         paddingBottom: 20,
         paddingHorizontal: 20,
         alignItems: 'center',

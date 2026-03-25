@@ -190,7 +190,6 @@ const FriendsScreen = () => {
             setReceivedRequests(receivedData);
 
         } catch (error) {
-            console.error('Error loading friends data:', error);
             alertError('No se pudieron cargar los amigos y solicitudes');
         } finally {
             setLoading(false);
@@ -214,8 +213,8 @@ const FriendsScreen = () => {
                             unreadCount: unreadCounts?.[userId] || 0
                         };
                     }
-                } catch (error) {
-                    console.error(`Error loading user ${userId}:`, error);
+                } catch {
+                    // silently ignored
                 }
                 return null;
             })
@@ -272,7 +271,6 @@ const FriendsScreen = () => {
                 setSearchResults(usersWithStatus);
             }
         } catch (error) {
-            console.error('Error searching users:', error);
             alertError('No se pudo realizar la búsqueda');
         } finally {
             setIsSearching(false);
@@ -372,7 +370,6 @@ const FriendsScreen = () => {
             loadFriendsData();
 
         } catch (error) {
-            console.error(`Error in ${operation} operation:`, error);
             alertError(`No se pudo completar la operación`);
         }
     }, [currentUser, alertSuccess, alertError, loadFriendsData]);
@@ -394,7 +391,6 @@ const FriendsScreen = () => {
             loadFriendsData();
 
         } catch (error) {
-            console.error('Error sending friend request:', error);
             alertError('No se pudo enviar la solicitud');
         }
     }, [currentUser, alertSuccess, alertError, loadFriendsData]);

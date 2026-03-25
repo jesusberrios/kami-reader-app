@@ -134,8 +134,11 @@ function MainDrawerNavigator() {
       )}
       screenOptions={{
         drawerStyle: {
-          width: 280,
+          width: 296,
           backgroundColor: '#121218',
+          borderTopRightRadius: 18,
+          borderBottomRightRadius: 18,
+          overflow: 'hidden',
         },
         drawerType: 'slide',
         overlayColor: 'rgba(0, 0, 0, 0.5)',
@@ -144,16 +147,17 @@ function MainDrawerNavigator() {
         swipeMinDistance: 50,
         drawerActiveTintColor: '#FF6E6E',
         drawerInactiveTintColor: '#C5C5D6',
-        drawerActiveBackgroundColor: 'rgba(255, 110, 110, 0.12)',
+        drawerActiveBackgroundColor: 'rgba(255, 110, 110, 0.18)',
         drawerItemStyle: {
-          borderRadius: 8,
-          marginHorizontal: 8,
-          marginVertical: 2,
+          borderRadius: 12,
+          marginHorizontal: 10,
+          marginVertical: 3,
+          paddingHorizontal: 2,
         },
         drawerLabelStyle: {
           fontFamily: 'Roboto-Medium',
           fontSize: 14,
-          marginLeft: -8,
+          marginLeft: -6,
         },
       }}
     >

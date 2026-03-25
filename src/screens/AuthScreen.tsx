@@ -221,8 +221,8 @@ const AuthScreen = () => {
                         setUpdateModalVisible(true);
                     }
                 }
-            } catch (error) {
-                console.error("Error inicializando auth:", error);
+            } catch {
+                // silently ignored
             }
         };
 
@@ -293,7 +293,6 @@ const AuthScreen = () => {
                 setLoading(false);
             }
         } catch (error) {
-            console.error("Error verificando perfil:", error);
             alertError('No se pudo verificar tu perfil. Por favor, reinicia la aplicación.');
             await AuthService.logout();
             setLoading(false);
@@ -398,7 +397,7 @@ const AuthScreen = () => {
     const toggleAuthMode = useCallback(() => setIsLogin(prev => !prev), []);
 
     const openExternalLink = useCallback((url: string) => {
-        Linking.openURL(url).catch(err => console.error("Couldn't load page", err));
+        Linking.openURL(url).catch(() => {});
     }, []);
 
     if (loading && !updateModalVisible) {

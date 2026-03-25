@@ -13,8 +13,8 @@ import {
     Platform,
     RefreshControl,
     ScrollView,
+    Linking,
 } from 'react-native';
-import axios from 'axios';
 import { DrawerActions } from '@react-navigation/native';
 import { collection, doc, getDoc, getDocs } from 'firebase/firestore'; // Removed query, where as they are not needed for this subcollection fetch
 import { db } from '../firebase/config';
@@ -27,6 +27,7 @@ import DrawerToggle from '../components/drawerToggle';
 import { getAppVersion } from '../utils/versionUtils';
 import UpdateRequiredModal from '../components/updateRequiredModal';
 import FloatingChatBubble from '../components/floatingChatBubble';
+import { getLatestManga } from '../services/backendApi';
 
 // Import the new utilities
 import { getFlagEmoji, formatTimeAgo } from '../utils/flagUtils';
@@ -42,8 +43,31 @@ const APP_IDS = {
     ios: '5cd6ecff-6004-4696-b780-172ff5ca8a22',
     android: 'com.yourusername.kamireader' // Asegúrate de cambiar esto por el ID de tu paquete Android
 };
-// URL del backend (10.0.2.2 para emulador Android, cambiar a IP real para dispositivo físico)
-const BACKEND_URL = 'https://backend-kami-api-production.up.railway.app';
+const DONATION_URL = process.env.EXPO_PUBLIC_DONATION_URL || 'https://ko-fi.com/sukisoft';
+
+const getStatusLabel = (value?: string, fallbackLabel?: string) => {
+    const raw = String(value || '').toLowerCase();
+    if (fallbackLabel) return fallbackLabel;
+    if (raw.includes('ongoing') || raw.includes('curso')) return 'En curso';
+    if (raw.includes('completed') || raw.includes('finaliz') || raw.includes('complet')) return 'Finalizado';
+    if (raw.includes('hiatus') || raw.includes('pausa')) return 'En pausa';
+    if (raw.includes('cancel')) return 'Cancelado';
+    return 'Desconocido';
+};
+
+const getStatusBadgeStyles = (value?: string) => {
+    const raw = String(value || '').toLowerCase();
+    if (raw.includes('completed') || raw.includes('finaliz') || raw.includes('complet')) {
+        return { backgroundColor: 'rgba(76, 217, 100, 0.85)', textColor: '#F4FFF6' };
+    }
+    if (raw.includes('hiatus') || raw.includes('pausa')) {
+        return { backgroundColor: 'rgba(255, 179, 71, 0.9)', textColor: '#1A1200' };
+    }
+    if (raw.includes('cancel')) {
+        return { backgroundColor: 'rgba(229, 57, 53, 0.9)', textColor: '#FFECEC' };
+    }
+    return { backgroundColor: 'rgba(66, 165, 245, 0.9)', textColor: '#ECF6FF' };
+};
 
 // Types
 type LatestManga = {
@@ -53,6 +77,8 @@ type LatestManga = {
     source: string;
     score: string;
     totalChapters: number;
+    status?: string;
+    statusLabel?: string;
     contentRating?: string;
     language?: string;
 };
@@ -113,7 +139,6 @@ const HomeScreen = ({ navigation }: any) => {
                 }
             }
         } catch (error) {
-            // console.error("Error checking app version:", error); // Removed log
         }
     }, []);
 
@@ -133,10 +158,11 @@ const HomeScreen = ({ navigation }: any) => {
     };
 
     // Data fetching
-    const fetchTopComics = useCallback(async () => {
+    const fetchTopComics = useCallback(async (options?: { forceRefresh?: boolean }) => {
         setComicsLoading(true);
         try {
-            const cachedComics = await getCachedData('topComics');
+            const forceRefresh = options?.forceRefresh === true;
+            const cachedComics = forceRefresh ? null : await getCachedData('topComics');
             if (cachedComics) {
                 if (isMounted.current) {
                     setTopSafe(cachedComics.safe);
@@ -146,25 +172,14 @@ const HomeScreen = ({ navigation }: any) => {
                 return;
             }
 
-            const [topMixedRes, topEroticRes] = await Promise.all([
-                axios.get(`${BACKEND_URL}/latest`, {
-                    params: {
-                        page: 1,
-                        limit: 60,
-                        sort: 'score_desc',
-                    },
-                    timeout: 8000,
-                }),
-                axios.get(`${BACKEND_URL}/latest`, {
-                    params: {
-                        page: 1,
-                        limit: 20,
-                        sort: 'score_desc',
-                        contentRating: 'erotica',
-                    },
-                    timeout: 8000,
-                }),
-            ]);
+            const topMixedRes = await getLatestManga({
+                page: 1,
+                limit: 60,
+                sort: 'score_desc',
+            }, {
+                ttlMs: 2 * 60 * 1000,
+                forceRefresh,
+            });
 
             if (isMounted.current) {
                 const mapBackendComic = (item: any) => ({
@@ -177,8 +192,8 @@ const HomeScreen = ({ navigation }: any) => {
                     content_rating: item.contentRating || 'safe',
                 });
 
-                const mixedComics = (topMixedRes.data?.results || []).map(mapBackendComic);
-                const eroticRaw = (topEroticRes.data?.results || []).map(mapBackendComic);
+                const mixedComics = (topMixedRes?.results || []).map(mapBackendComic);
+                const eroticRaw = mixedComics.filter((comic: any) => comic.content_rating === 'erotica');
 
                 // Top seguros = no erotico (+18)
                 const safeComics = mixedComics
@@ -193,7 +208,6 @@ const HomeScreen = ({ navigation }: any) => {
                 await setCacheData('topComics', { safe: safeComics, erotic: eroticComics });
             }
         } catch (error) {
-            // console.error('Error fetching top comics:', error); // Removed log
         } finally {
             if (isMounted.current) {
                 setComicsLoading(false);
@@ -214,7 +228,6 @@ const HomeScreen = ({ navigation }: any) => {
                 }
             }
         } catch (error) {
-            // console.error('Error fetching user plan:', error); // Removed log
         }
     }, []);
 
@@ -239,7 +252,6 @@ const HomeScreen = ({ navigation }: any) => {
                 await setCacheData('appNews', fetchedNews);
             }
         } catch (error) {
-            // console.error('Error fetching news:', error); // Removed log
         }
     }, []);
 
@@ -257,87 +269,73 @@ const HomeScreen = ({ navigation }: any) => {
 
             const querySnapshot = await getDocs(userInProgressRef);
 
-            // console.log('Number of documents found in subcollection:', querySnapshot.size); // Removed log
-            if (querySnapshot.empty) {
-                // console.log('Subcollection "inProgressManga" is EMPTY for this user.'); // Removed log
-            }
-
-            const readingProgressData: { slug: string; lastReadChapterNumber: number; coverUrl: string }[] = [];
+            const readingProgressData: {
+                slug: string;
+                title: string;
+                source: string;
+                lastReadChapterNumber: number;
+                coverUrl: string;
+            }[] = [];
             querySnapshot.forEach((doc) => {
-                const data = doc.data() as { lastReadChapterNumber?: number; coverUrl?: string; slug?: string };
+                const data = doc.data() as {
+                    lastReadChapterNumber?: number;
+                    coverUrl?: string;
+                    slug?: string;
+                    mangaTitle?: string;
+                    comicTitle?: string;
+                    source?: string;
+                };
 
                 const comicSlug = String(data.slug || doc.id || '').trim();
-                // console.log(data, 'Document data for slug:', comicSlug); // Removed log
-
                 if (comicSlug) {
                     readingProgressData.push({
                         slug: comicSlug,
+                        title: String(data.mangaTitle || data.comicTitle || comicSlug)
+                            .replace(/-/g, ' ')
+                            .replace(/\b\w/g, (s) => s.toUpperCase()),
+                        source: String(data.source || 'zonatmo'),
                         lastReadChapterNumber: data.lastReadChapterNumber || 0,
                         coverUrl: data.coverUrl || ''
                     });
-                    // console.log(`Added slug from subcollection doc ID: ${comicSlug}, Chapter: ${data.lastReadChapterNumber}, Cover: ${data.coverUrl}`); // Removed log
                 } else {
-                    // console.warn(`Document ${doc.id} in inProgressManga subcollection has no valid slug (document ID is empty).`); // Removed log
                 }
             });
 
-            // console.log('Collected readingProgressData:', readingProgressData); // Removed log
-
             if (readingProgressData.length === 0) {
-                // console.log('No valid reading progress data collected. Setting continue reading comics to empty.'); // Removed log
                 setContinueReadingComics([]);
                 return;
             }
 
-            const comicsToDisplay: Chapter[] = [];
-            for (const progressItem of readingProgressData) {
-                const slug = progressItem.slug;
-                const lastReadChapterNumber = progressItem.lastReadChapterNumber;
-                const coverUrl = progressItem.coverUrl;
-
-                try {
-                    const comicDetailsRes = await axios.get(`${BACKEND_URL}/manga/${encodeURIComponent(slug)}`, { timeout: 8000 });
-                    const manga = comicDetailsRes.data?.manga;
-                    if (!manga) {
-                        continue;
-                    }
-
-                    comicsToDisplay.push({
-                        hid: manga.slug,
-                        title: manga.title,
-                        cover: coverUrl || manga.cover || 'https://via.placeholder.com/150x200?text=No+Cover',
-                        slug: manga.slug,
-                        content_rating: manga.contentRating || 'safe',
-                        lang: manga.language || 'es-419',
-                        updated_at: new Date().toISOString(),
-                        lastReadChapter: `Cap. ${lastReadChapterNumber}`
-                    });
-                } catch {
-                    // Ignorar entradas antiguas incompatibles (ej: IDs legacy de Comick)
-                }
-            }
-            // console.log('Final comicsToDisplay array:', comicsToDisplay.map(c => c.title)); // Removed log
+            const comicsToDisplay: Chapter[] = readingProgressData.map((progressItem) => ({
+                hid: `${progressItem.source}:${progressItem.slug}`,
+                title: progressItem.title || 'Manga',
+                cover: progressItem.coverUrl || 'https://via.placeholder.com/150x200?text=No+Cover',
+                slug: progressItem.slug,
+                content_rating: 'safe',
+                lang: 'es-419',
+                updated_at: new Date().toISOString(),
+                lastReadChapter: `Cap. ${progressItem.lastReadChapterNumber}`,
+            }));
             if (isMounted.current) {
                 setContinueReadingComics(comicsToDisplay);
             }
         } catch (error) {
-            // console.error('Error fetching continue reading comics from user inProgressManga subcollection:', error); // Removed log
             if (isMounted.current) {
                 setContinueReadingComics([]);
             }
         }
     }, []);
 
-    const fetchLatestMangas = useCallback(async () => {
+    const fetchLatestMangas = useCallback(async (options?: { forceRefresh?: boolean }) => {
         setLatestLoading(true);
         try {
-            const res = await axios.get(`${BACKEND_URL}/latest`, {
-                params: { page: 1, limit: 24, sort: 'new' },
-                timeout: 8000,
+            const res = await getLatestManga({ page: 1, limit: 24 }, {
+                ttlMs: 60 * 1000,
+                forceRefresh: options?.forceRefresh === true,
             });
             
-            if (isMounted.current && res.data?.results) {
-                setLatestMangas(res.data.results);
+            if (isMounted.current && Array.isArray(res?.results)) {
+                setLatestMangas(res.results);
             }
         } catch (error) {
             // silencioso si el backend no está disponible
@@ -399,11 +397,11 @@ const HomeScreen = ({ navigation }: any) => {
     const handleRefresh = useCallback(async () => {
         setRefreshing(true);
         await Promise.all([
-            fetchTopComics(),
+            fetchTopComics({ forceRefresh: true }),
             fetchNews(),
             fetchUserPlan(),
             fetchContinueReadingComics(),
-            fetchLatestMangas(),
+            fetchLatestMangas({ forceRefresh: true }),
         ]);
         if (isMounted.current) {
             setRefreshing(false);
@@ -421,6 +419,19 @@ const HomeScreen = ({ navigation }: any) => {
 
     const handleNewsPress = useCallback((newsItem: NewsItem) => {
         navigation.navigate('NewsDetail', { newsItem });
+    }, [navigation]);
+
+    const handleOpenDonation = useCallback(async () => {
+        try {
+            const supported = await Linking.canOpenURL(DONATION_URL);
+            if (supported) {
+                await Linking.openURL(DONATION_URL);
+                return;
+            }
+            navigation.navigate('Payment');
+        } catch {
+            navigation.navigate('Payment');
+        }
     }, [navigation]);
 
 
@@ -547,6 +558,20 @@ const HomeScreen = ({ navigation }: any) => {
                         </View>
                     </LinearGradient>
 
+                    <TouchableOpacity style={styles.donationCard} onPress={handleOpenDonation} activeOpacity={0.85}>
+                        <LinearGradient colors={['#F59E0B33', '#FB718533']} style={StyleSheet.absoluteFill} />
+                        <View style={styles.donationTopRow}>
+                            <MaterialCommunityIcons name="gift-outline" size={22} color="#FFD599" />
+                            <Text style={styles.donationTitle}>Donaciones</Text>
+                        </View>
+                        <Text style={styles.donationText}>
+                            Ayudanos a sostener el backend y mantener actualizaciones en tiempo real.
+                        </Text>
+                        <View style={styles.donationButton}>
+                            <Text style={styles.donationButtonText}>Apoyar proyecto</Text>
+                        </View>
+                    </TouchableOpacity>
+
                     {/* News Section */}
                     {news.length > 0 && (
                         <View style={styles.sectionContainer}>
@@ -609,8 +634,16 @@ const HomeScreen = ({ navigation }: any) => {
                                                 <Text style={styles.scoreText}>{item.score}</Text>
                                             </View>
                                         )}
-                                        <View style={styles.sourceTag}>
-                                            <Text style={styles.sourceTagText}>{item.source || 'zonatmo'}</Text>
+                                        <View style={[
+                                            styles.statusTag,
+                                            { backgroundColor: getStatusBadgeStyles(item.status).backgroundColor },
+                                        ]}>
+                                            <Text style={[
+                                                styles.statusTagText,
+                                                { color: getStatusBadgeStyles(item.status).textColor },
+                                            ]}>
+                                                {getStatusLabel(item.status, item.statusLabel)}
+                                            </Text>
                                         </View>
                                     </TouchableOpacity>
                                 )}
@@ -867,6 +900,47 @@ const styles = StyleSheet.create({
         marginTop: 4,
         lineHeight: 18,
     },
+    donationCard: {
+        marginHorizontal: 20,
+        marginBottom: 16,
+        borderRadius: 14,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.12)',
+        padding: 14,
+        overflow: 'hidden',
+    },
+    donationTopRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+    },
+    donationTitle: {
+        color: '#FFF7E6',
+        fontSize: 16,
+        fontFamily: 'Roboto-Bold',
+    },
+    donationText: {
+        marginTop: 8,
+        color: '#FFE7C2',
+        fontSize: 12,
+        lineHeight: 18,
+        fontFamily: 'Roboto-Regular',
+    },
+    donationButton: {
+        marginTop: 10,
+        alignSelf: 'flex-start',
+        backgroundColor: 'rgba(255,255,255,0.14)',
+        borderColor: 'rgba(255,255,255,0.2)',
+        borderWidth: 1,
+        borderRadius: 999,
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+    },
+    donationButtonText: {
+        color: '#FFF3DD',
+        fontSize: 12,
+        fontFamily: 'Roboto-Medium',
+    },
     sectionLoadingIndicator: {
         marginTop: 10,
         marginBottom: 10,
@@ -1007,19 +1081,17 @@ const styles = StyleSheet.create({
         fontFamily: 'Roboto-Medium',
         marginLeft: 2,
     },
-    sourceTag: {
+    statusTag: {
         position: 'absolute',
         top: 8,
         left: 8,
-        backgroundColor: 'rgba(0,0,0,0.65)',
         borderRadius: 8,
         paddingHorizontal: 6,
         paddingVertical: 3,
     },
-    sourceTagText: {
-        color: '#EAEAFF',
+    statusTagText: {
         fontSize: 9,
-        fontFamily: 'Roboto-Medium',
+        fontFamily: 'Roboto-Bold',
         textTransform: 'uppercase',
     },
     adBannerContainer: {

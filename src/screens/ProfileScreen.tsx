@@ -8,10 +8,7 @@ import {
     ActivityIndicator,
     TextInput,
     ScrollView,
-    Platform,
     StatusBar,
-    Dimensions,
-    SafeAreaView,
     Animated,
     Easing
 } from 'react-native';
@@ -180,7 +177,6 @@ const ProfileScreen = () => {
                 }
             }
         } catch (error) {
-            console.error('Error fetching profile:', error);
             alertError('No se pudo cargar el perfil');
         } finally {
             setLoading(false);
@@ -197,7 +193,7 @@ const ProfileScreen = () => {
             } as Achievement));
             setAchievements(achievementsData);
         } catch (error) {
-            console.error('Error fetching achievements:', error);
+            // silently ignored
         }
     };
 
@@ -213,7 +209,6 @@ const ProfileScreen = () => {
             setIsEditingUsername(false);
             alertSuccess('Nombre actualizado correctamente');
         } catch (error) {
-            console.error('Error updating username:', error);
             alertError('No se pudo actualizar el nombre');
         }
     };
@@ -249,7 +244,6 @@ const ProfileScreen = () => {
             setUserProfile(prev => prev ? { ...prev, avatar: base64Image } : null);
             alertSuccess('Avatar actualizado correctamente');
         } catch (error) {
-            console.error('Error updating avatar:', error);
             alertError('No se pudo actualizar el avatar');
         } finally {
             setUploadingAvatar(false);
@@ -273,7 +267,6 @@ const ProfileScreen = () => {
 
             alertSuccess('Solicitud de amistad enviada correctamente');
         } catch (error) {
-            console.error('Error sending friend request:', error);
             alertError('No se pudo enviar la solicitud de amistad');
         }
     };
@@ -338,7 +331,7 @@ const ProfileScreen = () => {
         <Animated.View style={[styles.container, { opacity: fadeAnim }]}>
             <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
             <LinearGradient colors={['#0F0F1A', '#1E1E28']} style={styles.gradient}>
-                <SafeAreaView style={[styles.safeArea, { paddingTop: insets.top }]} >
+                <View style={[styles.safeArea, { paddingTop: insets.top }]}>
                     <ScrollView contentContainerStyle={styles.scrollContainer}>
                         {/* Header */}
                         <View style={styles.header}>
@@ -602,7 +595,7 @@ const ProfileScreen = () => {
                             </TouchableOpacity>
                         )}
                     </ScrollView>
-                </SafeAreaView>
+                </View>
             </LinearGradient>
         </Animated.View>
     );

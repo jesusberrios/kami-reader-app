@@ -123,7 +123,6 @@ const StickerItem = ({ sticker }: { sticker: string }) => {
             source={{ uri: sticker }}
             style={styles.stickerImage}
             resizeMode="contain"
-            onError={(e) => console.log('Error loading sticker:', e.nativeEvent.error)}
         />
     );
 };
@@ -263,7 +262,6 @@ const ChatScreen = () => {
                     });
                 }
             } catch (error) {
-                console.error('Error loading recipient info:', error);
                 alertError('No se pudo cargar la información del destinatario');
             }
         };
@@ -352,8 +350,8 @@ const ChatScreen = () => {
                 await batch.commit();
                 setUnreadCount(0);
             }
-        } catch (error) {
-            console.error('Error marking messages as read:', error);
+        } catch {
+            // silently ignored
         }
     }, [currentUser, chatId, recipientId, messages]); // ← Agrega messages aquí
 
@@ -403,7 +401,6 @@ const ChatScreen = () => {
                 setLoading(false);
             },
             (error) => {
-                console.error('Error loading messages:', error);
                 alertError('Error al cargar los mensajes');
                 setLoading(false);
             }
@@ -416,8 +413,6 @@ const ChatScreen = () => {
         if (!currentUser) return;
 
         try {
-            console.log('🗑️ Eliminando chat de MI lista...');
-
             // Solo eliminar de userChats del usuario actual
             const currentUserChatRef = doc(db, 'userChats', currentUser.uid);
             const userChatSnap = await getDoc(currentUserChatRef);
@@ -447,7 +442,6 @@ const ChatScreen = () => {
 
                 if (Object.keys(updates).length > 0) {
                     await updateDoc(currentUserChatRef, updates);
-                    console.log('✅ Chat eliminado de userChats');
                 }
             }
 
@@ -458,7 +452,6 @@ const ChatScreen = () => {
             navigation.goBack();
 
         } catch (error) {
-            console.error('❌ Error:', error);
             alertError('No se pudo eliminar el chat');
             setMenuVisible(false);
         }
@@ -537,7 +530,6 @@ const ChatScreen = () => {
             }
 
         } catch (error) {
-            console.error('Error sending message:', error);
             alertError('No se pudo enviar el mensaje');
         } finally {
             setSending(false);

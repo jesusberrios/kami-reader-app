@@ -45,7 +45,7 @@ const NewsDetailScreen = () => {
 
     return (
         <LinearGradient colors={['#0F0F1A', '#252536']} style={styles.container}>
-            <SafeAreaView style={[styles.safeArea, { paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 0) : insets.top }]}> 
+            <SafeAreaView style={[styles.safeArea, { paddingTop: insets.top }]}> 
                 <View style={styles.headerRow}>
                     <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
                         <Ionicons name="arrow-back" size={24} color="#FFF" />

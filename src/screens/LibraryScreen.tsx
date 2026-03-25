@@ -21,12 +21,8 @@ import DrawerToggle from '../components/drawerToggle';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
 import { useAlertContext } from '../contexts/AlertContext';
+import { backendUrl } from '../config/backend';
 
-const BACKEND_URL = Platform.select({
-    android: 'https://backend-kami-api-production.up.railway.app',
-    ios: 'https://backend-kami-api-production.up.railway.app',
-    default: 'https://backend-kami-api-production.up.railway.app',
-}) || 'https://backend-kami-api-production.up.railway.app';
 const REQUEST_TIMEOUT_MS = 8000;
 const PAGE_LIMIT = 24;
 
@@ -39,6 +35,7 @@ type Comic = {
     totalChapters?: number;
     description?: string;
     status?: string;
+    statusLabel?: string;
     contentRating?: string;
     genres?: string[];
     badges?: string[];
@@ -85,6 +82,30 @@ const RATING_OPTIONS: FilterOption[] = [
     { label: 'Suggestivo', value: 'suggestive' },
     { label: '18+', value: 'erotica' },
 ];
+
+const getStatusLabel = (value?: string, fallbackLabel?: string) => {
+    if (fallbackLabel) return fallbackLabel;
+    const raw = String(value || '').toLowerCase();
+    if (raw.includes('ongoing') || raw.includes('curso')) return 'En curso';
+    if (raw.includes('completed') || raw.includes('finaliz') || raw.includes('complet')) return 'Finalizado';
+    if (raw.includes('hiatus') || raw.includes('pausa')) return 'En pausa';
+    if (raw.includes('cancel')) return 'Cancelado';
+    return 'Desconocido';
+};
+
+const getStatusBadgeStyles = (value?: string) => {
+    const raw = String(value || '').toLowerCase();
+    if (raw.includes('completed') || raw.includes('finaliz') || raw.includes('complet')) {
+        return { backgroundColor: 'rgba(76, 217, 100, 0.88)', textColor: '#F4FFF6' };
+    }
+    if (raw.includes('hiatus') || raw.includes('pausa')) {
+        return { backgroundColor: 'rgba(255, 179, 71, 0.92)', textColor: '#1A1200' };
+    }
+    if (raw.includes('cancel')) {
+        return { backgroundColor: 'rgba(229, 57, 53, 0.9)', textColor: '#FFECEC' };
+    }
+    return { backgroundColor: 'rgba(66, 165, 245, 0.9)', textColor: '#ECF6FF' };
+};
 
 const STOP_WORDS = new Set(['the', 'of', 'a', 'an', 'la', 'el', 'los', 'las', 'de', 'del', 'y']);
 
@@ -247,7 +268,7 @@ const LibraryScreen = ({ navigation }: any) => {
             query.append('page', String(page));
             query.append('limit', String(PAGE_LIMIT));
 
-            const data = await fetchJsonWithTimeout(`${BACKEND_URL}/latest${query.toString() ? `?${query.toString()}` : ''}`);
+            const data = await fetchJsonWithTimeout(`${backendUrl('/latest')}${query.toString() ? `?${query.toString()}` : ''}`);
             const list: Comic[] = (data.results || []).map((item: any) => ({
                 slug: item.slug,
                 title: item.title || 'Sin título',
@@ -257,6 +278,7 @@ const LibraryScreen = ({ navigation }: any) => {
                 totalChapters: item.totalChapters || 0,
                 description: item.description || '',
                 status: item.status || 'unknown',
+                statusLabel: item.statusLabel || '',
                 contentRating: item.contentRating || 'safe',
                 genres: Array.isArray(item.genres) ? item.genres : [],
                 badges: Array.isArray(item.badges) ? item.badges : [],
@@ -312,7 +334,7 @@ const LibraryScreen = ({ navigation }: any) => {
             query.append('page', String(page));
             query.append('limit', String(PAGE_LIMIT));
 
-            const data = await fetchJsonWithTimeout(`${BACKEND_URL}/search?${query.toString()}`);
+            const data = await fetchJsonWithTimeout(`${backendUrl('/search')}?${query.toString()}`);
             const list: Comic[] = (data.results || []).map((item: any) => ({
                 slug: item.slug,
                 title: item.title || 'Sin título',
@@ -322,6 +344,7 @@ const LibraryScreen = ({ navigation }: any) => {
                 totalChapters: item.totalChapters || 0,
                 description: item.description || '',
                 status: item.status || 'unknown',
+                statusLabel: item.statusLabel || '',
                 contentRating: item.contentRating || 'safe',
                 genres: Array.isArray(item.genres) ? item.genres : [],
                 badges: Array.isArray(item.badges) ? item.badges : [],
@@ -430,7 +453,7 @@ const LibraryScreen = ({ navigation }: any) => {
 
     return (
         <LinearGradient colors={['#0F0F15', '#20202A']} style={styles.container}>
-            <SafeAreaView style={[styles.safeArea, { paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 0) : insets.top }]}>
+            <SafeAreaView style={[styles.safeArea, { paddingTop: insets.top }]}>
                 {/* Header */}
                 <View style={styles.header}>
                     <TouchableOpacity
@@ -565,8 +588,20 @@ const LibraryScreen = ({ navigation }: any) => {
                                     <Text style={styles.scoreText}>{item.score}</Text>
                                 </View>
                             )}
-                            <View style={styles.sourceBadge}>
-                                <Text style={styles.sourceBadgeText}>{item.source}</Text>
+                            <View
+                                style={[
+                                    styles.statusBadge,
+                                    { backgroundColor: getStatusBadgeStyles(item.status).backgroundColor },
+                                ]}
+                            >
+                                <Text
+                                    style={[
+                                        styles.statusBadgeText,
+                                        { color: getStatusBadgeStyles(item.status).textColor },
+                                    ]}
+                                >
+                                    {getStatusLabel(item.status, item.statusLabel)}
+                                </Text>
                             </View>
                         </TouchableOpacity>
                     )}
@@ -941,18 +976,16 @@ const styles = StyleSheet.create({
         fontFamily: 'Roboto-Medium',
         marginLeft: 2,
     },
-    sourceBadge: {
+    statusBadge: {
         position: 'absolute',
         top: 8,
         left: 8,
-        backgroundColor: 'rgba(255, 82, 82, 0.85)',
         borderRadius: 5,
         paddingHorizontal: 6,
         paddingVertical: 3,
     },
-    sourceBadgeText: {
-        color: '#FFFFFF',
-        fontFamily: 'Roboto-Medium',
+    statusBadgeText: {
+        fontFamily: 'Roboto-Bold',
         fontSize: 10,
     },
     emptyContainer: {

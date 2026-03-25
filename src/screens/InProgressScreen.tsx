@@ -267,7 +267,7 @@ export default function InProgressScreen() {
         return (
             <LinearGradient colors={['#0F0F1A', '#252536']} style={styles.container}>
                 <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
-                <SafeAreaView style={[styles.safeArea, { paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : insets.top }]}>
+                <SafeAreaView style={[styles.safeArea, { paddingTop: insets.top }]}>
                     {renderTopBar}
                     <View style={styles.emptyContent}>
                         <Ionicons name="book-outline" size={80} color="#B0BEC5" />
@@ -290,7 +290,7 @@ export default function InProgressScreen() {
     return (
         <LinearGradient colors={['#0F0F1A', '#252536']} style={styles.container}>
             <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
-            <SafeAreaView style={[styles.safeArea, { paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : insets.top }]}>
+            <SafeAreaView style={[styles.safeArea, { paddingTop: insets.top }]}>
                 {renderTopBar}
 
                 <FlatList

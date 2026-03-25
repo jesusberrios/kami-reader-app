@@ -21,8 +21,8 @@ import { db, auth } from '../firebase/config';
 import { doc, setDoc, deleteDoc, onSnapshot, collection, getDoc, serverTimestamp } from 'firebase/firestore';
 import { RootStackParamList } from '../navigation/types';
 import { useAlertContext } from '../contexts/AlertContext';
+import { backendUrl } from '../config/backend';
 
-const BACKEND_URL = 'https://backend-kami-api-production.up.railway.app';
 const REQUEST_TIMEOUT_MS = 8000;
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const COVER_WIDTH = Math.min(176, SCREEN_WIDTH * 0.42);
@@ -45,6 +45,7 @@ type Manga = {
     description?: string;
     source: string;
     status?: string;
+    statusLabel?: string;
     country?: string;
     language?: string;
     contentRating?: string;
@@ -144,7 +145,7 @@ const DetailsScreen: React.FC = () => {
         setLoading(true);
         setError(null);
         try {
-            const data = await fetchJsonWithTimeout(`${BACKEND_URL}/manga/${encodeURIComponent(slug)}`);
+            const data = await fetchJsonWithTimeout(backendUrl(`/manga/${encodeURIComponent(slug)}`));
             const raw = data?.manga;
             if (!raw) throw new Error('Respuesta inválida del backend.');
 
@@ -165,6 +166,7 @@ const DetailsScreen: React.FC = () => {
                 description: raw.description || '',
                 source: raw.source || 'zonatmo',
                 status: raw.status || 'unknown',
+                statusLabel: raw.statusLabel || '',
                 country: raw.country || 'unknown',
                 language: raw.language || 'es-419',
                 contentRating: raw.contentRating || 'safe',
@@ -467,7 +469,7 @@ const DetailsScreen: React.FC = () => {
     return (
         <LinearGradient colors={['#1A1A24', '#2C2C38']} style={styles.container}>
             <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
-            <SafeAreaView style={[styles.safeArea, { paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : insets.top }]}>
+            <SafeAreaView style={[styles.safeArea, { paddingTop: insets.top }]}>
                 <ScrollView
                     contentContainerStyle={styles.scrollContent}
                     refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#FF5252" />}
@@ -479,8 +481,7 @@ const DetailsScreen: React.FC = () => {
                                 <Text style={styles.title} numberOfLines={2}>{manga.title}</Text>
 
                                 <View style={styles.quickMetaRow}>
-                                    <Text style={styles.quickMetaChip}>{manga.source}</Text>
-                                    <Text style={styles.quickMetaChip}>{normalizeStatus(manga.status)}</Text>
+                                    <Text style={styles.quickMetaChip}>{manga.statusLabel || normalizeStatus(manga.status)}</Text>
                                     <Text style={styles.quickMetaChip}>{manga.contentRating || 'safe'}</Text>
                                 </View>
 

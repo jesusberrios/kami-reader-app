@@ -20,13 +20,13 @@ import { BannerAd, BannerAdSize, MobileAds, TestIds } from 'react-native-google-
 import { auth, db } from '../firebase/config';
 import { collection, doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore';
 import { useAlertContext } from '../contexts/AlertContext';
+import { backendUrl } from '../config/backend';
 
 const { width: screenWidth } = Dimensions.get('window');
 const { height: screenHeight } = Dimensions.get('window');
-const BACKEND_URL = 'https://backend-kami-api-production.up.railway.app';
 const REQUEST_TIMEOUT_MS = 8000;
 const AUTO_HIDE_DELAY = 4500;
-const IMAGE_PREFETCH_WINDOW = 3;
+const IMAGE_PREFETCH_WINDOW = 5;
 
 const AD_UNIT_ID = __DEV__ ? TestIds.BANNER : 'ca-app-pub-6584977537844104/1888694522';
 MobileAds().initialize();
@@ -72,7 +72,7 @@ const parseComposite = (compositeSlug: string) => {
     };
 };
 
-const ReaderImageItem = React.memo(({ item }: { item: ReaderImage }) => {
+const ReaderImageItem = React.memo(({ item, index }: { item: ReaderImage; index: number }) => {
     const initialRatio = item.w > 0 ? (item.h / item.w) : (1200 / 800);
     const [ratio, setRatio] = useState(initialRatio);
     const height = screenWidth * ratio;
@@ -90,7 +90,7 @@ const ReaderImageItem = React.memo(({ item }: { item: ReaderImage }) => {
                 transition={0}
                 cachePolicy="memory-disk"
                 recyclingKey={item.url}
-                priority="normal"
+                priority={index < 4 ? 'high' : 'normal'}
                 onLoad={(event) => {
                     const width = Number(event?.source?.width || 0);
                     const imageHeight = Number(event?.source?.height || 0);
@@ -125,8 +125,13 @@ const ReaderScreen = () => {
     const controlsOpacity = useRef(new Animated.Value(1)).current;
     const autoHideTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const prefetchedUrlsRef = useRef<Set<string>>(new Set());
+    const imagesRef = useRef<ReaderImage[]>([]);
 
     const parsed = useMemo(() => parseComposite(currentCompositeSlug), [currentCompositeSlug]);
+
+    useEffect(() => {
+        imagesRef.current = images;
+    }, [images]);
 
     useEffect(() => {
         const fetchPlan = async () => {
@@ -170,8 +175,8 @@ const ReaderScreen = () => {
 
         try {
             const [imagesData, mangaData] = await Promise.all([
-                fetchJsonWithTimeout(`${BACKEND_URL}/chapter/${encodeURIComponent(parsed.mangaSlug)}/${encodeURIComponent(parsed.chapterSlug)}/images`),
-                fetchJsonWithTimeout(`${BACKEND_URL}/manga/${encodeURIComponent(parsed.mangaSlug)}`),
+                fetchJsonWithTimeout(backendUrl(`/chapter/${encodeURIComponent(parsed.mangaSlug)}/${encodeURIComponent(parsed.chapterSlug)}/images`)),
+                fetchJsonWithTimeout(backendUrl(`/manga/${encodeURIComponent(parsed.mangaSlug)}`)),
             ]);
 
             const duplicateCount = new Map<string, number>();
@@ -309,7 +314,7 @@ const ReaderScreen = () => {
         setCurrentCompositeSlug(compositeSlug);
     };
 
-    const renderImageItem = useCallback(({ item }: { item: ReaderImage }) => <ReaderImageItem item={item} />, []);
+    const renderImageItem = useCallback(({ item, index }: { item: ReaderImage; index: number }) => <ReaderImageItem item={item} index={index} />, []);
 
     const handleViewableItemsChanged = useRef(({ viewableItems }: { viewableItems: Array<{ index: number | null }> }) => {
         const maxVisibleIndex = viewableItems.reduce((acc, it) => {
@@ -318,7 +323,7 @@ const ReaderScreen = () => {
         }, -1);
 
         if (maxVisibleIndex >= 0) {
-            prefetchImages(images, maxVisibleIndex + 1);
+            prefetchImages(imagesRef.current, maxVisibleIndex + 1);
         }
     }).current;
 
@@ -363,7 +368,7 @@ const ReaderScreen = () => {
                 showsVerticalScrollIndicator={false}
                 onScrollBeginDrag={showAndResetControls}
                 onMomentumScrollBegin={showAndResetControls}
-                drawDistance={screenHeight * 1.25}
+                drawDistance={screenHeight * 2}
                 onViewableItemsChanged={handleViewableItemsChanged}
                 viewabilityConfig={{ itemVisiblePercentThreshold: 15 }}
                 scrollEventThrottle={16}

@@ -179,8 +179,8 @@ const CommentsScreen: React.FC = () => {
                     if (userDoc.exists()) {
                         setUserData(userDoc.data() as UserData);
                     }
-                } catch (error) {
-                    console.error("Error fetching user data:", error);
+                } catch {
+                    // silently ignored
                 }
             }
         };
@@ -209,7 +209,6 @@ const CommentsScreen: React.FC = () => {
                 setLoading(false);
             },
             (error) => {
-                console.error("Error fetching comments:", error);
                 setLoading(false);
             }
         );
@@ -262,7 +261,6 @@ const CommentsScreen: React.FC = () => {
 
             setNewComment('');
         } catch (error) {
-            console.error("Error posting comment:", error);
             alertError('No se pudo publicar el comentario. Inténtalo de nuevo.');
         } finally {
             setSending(false);
@@ -287,7 +285,6 @@ const CommentsScreen: React.FC = () => {
                         lastUpdated: serverTimestamp()
                     });
                 } catch (error) {
-                    console.error("Error deleting comment:", error);
                     alertError('No se pudo eliminar el comentario. Inténtalo de nuevo.');
                 } finally {
                     setDeletingCommentId(null);
@@ -330,7 +327,6 @@ const CommentsScreen: React.FC = () => {
                 });
             }
         } catch (error) {
-            console.error("Error updating like status:", error);
             alertError('No se pudo actualizar el estado de "Me gusta".');
         }
     }, [currentUser, mangaTitle, alertError]);
