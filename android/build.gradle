@@ -32,9 +32,9 @@ allprojects {
 }
 
 ext {
-    compileSdkVersion = 35 // ⭐⭐ ¡IMPORTANTE! Debe ser 34 o superior
+  compileSdkVersion = 36 // Required by androidx.core:core-ktx 1.17+
     minSdkVersion = 24
-    targetSdkVersion = 35 // ⭐¡También debe ser 34!
+  targetSdkVersion = 36
     ndkVersion = "27.2.12479018" // NDK r27+ required for 16 KB page size support (Android 15+)
 }
 

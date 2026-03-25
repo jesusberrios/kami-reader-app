@@ -7,14 +7,12 @@ import {
     ActivityIndicator,
     TouchableOpacity,
     Image,
-    SafeAreaView,
     StatusBar,
-    Platform,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import Ionicons from 'react-native-vector-icons/Ionicons';
+import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { auth, db } from '../firebase/config';
 import { collection, deleteDoc, doc, onSnapshot, orderBy, query } from 'firebase/firestore';
 import { useAlertContext } from '../contexts/AlertContext';
@@ -114,7 +112,12 @@ export default function FavoritesScreen() {
     }, [alertConfirm, alertError, alertSuccess, currentUserUid]);
 
     const handleGoBack = useCallback(() => {
-        navigation.goBack();
+        if (navigation.canGoBack()) {
+            navigation.goBack();
+            return;
+        }
+
+        navigation.navigate('Home');
     }, [navigation]);
 
     const handleAuthNavigation = useCallback(() => {

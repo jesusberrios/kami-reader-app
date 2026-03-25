@@ -533,7 +533,7 @@ const ReaderScreen = () => {
                 <View style={[styles.bannerContainer, { bottom: insets.bottom + 5 }]}>
                     <BannerAd
                         unitId={AD_UNIT_ID}
-                        size={BannerAdSize.ADAPTIVE_BANNER}
+                        size={BannerAdSize.ANCHORED_ADAPTIVE_BANNER}
                         requestOptions={{ requestNonPersonalizedAdsOnly: true }}
                     />
                 </View>

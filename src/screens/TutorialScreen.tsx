@@ -13,7 +13,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { auth } from '../firebase/config';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useRoute } from '@react-navigation/native';
 
 const { width: screenWidth } = Dimensions.get('window');
 
@@ -53,6 +53,7 @@ const TUTORIAL_STEPS: TutorialStep[] = [
 
 const TutorialScreen = () => {
     const navigation = useNavigation<any>();
+    const route = useRoute<any>();
     const scrollRef = useRef<ScrollView>(null);
     const [currentIndex, setCurrentIndex] = useState(0);
 
@@ -82,7 +83,15 @@ const TutorialScreen = () => {
             const tutorialKey = `tutorialSeen:${user.uid}`;
             await AsyncStorage.setItem(tutorialKey, '1');
         }
-        navigation.navigate('Home');
+        if (route.params?.manual && navigation.canGoBack()) {
+            navigation.goBack();
+            return;
+        }
+
+        navigation.reset({
+            index: 0,
+            routes: [{ name: 'Main' }],
+        });
     };
 
     return (

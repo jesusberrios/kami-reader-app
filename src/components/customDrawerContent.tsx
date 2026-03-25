@@ -197,6 +197,11 @@ const CustomDrawerContent = (props: CustomDrawerContentProps) => {
         );
     };
 
+    const handleOpenTutorial = () => {
+        props.navigation.closeDrawer();
+        navigation.navigate('Tutorial' as never, { manual: true } as never);
+    };
+
     const isPremiumUser = userData?.accountType === 'premium';
     const drawerWidth = Dimensions.get('window').width * 0.65;
 
@@ -361,6 +366,16 @@ const CustomDrawerContent = (props: CustomDrawerContentProps) => {
 
                 {/* Navigation Items */}
                 <View style={styles.navigationContainer}>
+                    <TouchableOpacity
+                        style={styles.tutorialButton}
+                        onPress={handleOpenTutorial}
+                        activeOpacity={0.8}
+                    >
+                        <View style={styles.tutorialButtonContent}>
+                            <MaterialCommunityIcons name="school-outline" size={22} color="#C5C5D6" />
+                            <Text style={styles.tutorialButtonText}>Tutorial</Text>
+                        </View>
+                    </TouchableOpacity>
                     <DrawerItemList
                         state={props.state}
                         navigation={props.navigation}
@@ -400,7 +415,7 @@ const CustomDrawerContent = (props: CustomDrawerContentProps) => {
                 </Animated.View>
 
                 <View style={styles.versionContainer}>
-                    <Text style={styles.footerText}>Kamireader v1.0.8</Text>
+                    <Text style={styles.footerText}>Kamireader v1.0.9</Text>
                     <Text style={styles.footerText}>© {new Date().getFullYear()} KAMI Studios</Text>
                 </View>
             </View>
@@ -567,6 +582,23 @@ const styles = StyleSheet.create({
         backgroundColor: 'rgba(255,255,255,0.03)',
         borderWidth: 1,
         borderColor: 'rgba(255,255,255,0.08)',
+    },
+    tutorialButton: {
+        borderRadius: 12,
+        marginHorizontal: 10,
+        marginVertical: 3,
+        paddingHorizontal: 14,
+        paddingVertical: 13,
+    },
+    tutorialButtonContent: {
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    tutorialButtonText: {
+        fontFamily: 'Roboto-Medium',
+        fontSize: 14,
+        color: '#C5C5D6',
+        marginLeft: 14,
     },
     drawerItem: {
         borderRadius: 10,

@@ -3,6 +3,7 @@
 export type RootStackParamList = {
     Auth: undefined;
     Main: undefined;
+    Tutorial: { manual?: boolean } | undefined;
     Details: { slug: string };
     Reader: { hid: string };
     News: undefined;
@@ -15,7 +16,6 @@ export type RootStackParamList = {
 
 export type DrawerParamList = {
     Home: undefined;
-    Tutorial: undefined;
     Profile: undefined;
     Library: undefined;
 };

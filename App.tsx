@@ -36,6 +36,7 @@ import { AlertProvider } from './src/contexts/AlertContext';
 export type RootStackParamList = {
   Auth: undefined;
   Main: undefined;
+  Tutorial: { manual?: boolean } | undefined;
   Details: { slug: string };
   Reader: { hid: string };
   AddFriends: undefined;
@@ -49,7 +50,6 @@ export type RootStackParamList = {
 
 export type DrawerParamList = {
   Home: undefined;
-  Tutorial: undefined;
   Profile: undefined;
   Library: undefined;
   AddFriends: undefined;
@@ -71,43 +71,6 @@ function MainDrawerNavigator() {
   const [userPlan, setUserPlan] = useState<'free' | 'premium' | null>(null);
   const [pendingRequests, setPendingRequests] = useState(0);
   const [unreadMessages, setUnreadMessages] = useState(0);
-  const [initialDrawerRoute, setInitialDrawerRoute] = useState<keyof DrawerParamList>('Home');
-  const [checkingTutorial, setCheckingTutorial] = useState(true);
-
-  useEffect(() => {
-    let isMounted = true;
-
-    const checkTutorialSeen = async () => {
-      const user = auth.currentUser;
-      if (!user) {
-        if (isMounted) {
-          setInitialDrawerRoute('Home');
-          setCheckingTutorial(false);
-        }
-        return;
-      }
-
-      try {
-        const tutorialKey = `tutorialSeen:${user.uid}`;
-        const tutorialSeen = await AsyncStorage.getItem(tutorialKey);
-        if (!isMounted) return;
-
-        setInitialDrawerRoute(tutorialSeen === '1' ? 'Home' : 'Tutorial');
-      } catch {
-        if (!isMounted) return;
-        setInitialDrawerRoute('Home');
-      } finally {
-        if (isMounted) {
-          setCheckingTutorial(false);
-        }
-      }
-    };
-
-    checkTutorialSeen();
-    return () => {
-      isMounted = false;
-    };
-  }, []);
 
   useEffect(() => {
     const user = auth.currentUser;
@@ -164,18 +127,8 @@ function MainDrawerNavigator() {
     };
   }, []);
 
-  if (checkingTutorial) {
-    return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#0F0F15' }}>
-        <ActivityIndicator size="large" color="#FF5252" />
-        <Text style={{ color: '#FFF', marginTop: 10, fontSize: 16 }}>Preparando tutorial...</Text>
-      </View>
-    );
-  }
-
   return (
     <Drawer.Navigator
-      initialRouteName={initialDrawerRoute}
       drawerContent={(props) => (
         <CustomDrawerContent
           {...props}
@@ -212,16 +165,6 @@ function MainDrawerNavigator() {
         },
       }}
     >
-      <Drawer.Screen
-        name="Tutorial"
-        component={TutorialScreen}
-        options={{
-          drawerLabel: 'Tutorial',
-          drawerIcon: ({ color, size }) => (
-            <MaterialCommunityIcons name="school-outline" size={size} color={color} />
-          ),
-        }}
-      />
       <Drawer.Screen
         name="Home"
         component={HomeScreen}
@@ -328,6 +271,8 @@ function MainDrawerNavigator() {
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [loadingAuth, setLoadingAuth] = useState(true);
+  const [loadingTutorial, setLoadingTutorial] = useState(true);
+  const [needsTutorial, setNeedsTutorial] = useState(false);
 
   useEffect(() => {
     const unsubscribe = auth.onAuthStateChanged(async (currentUser) => {
@@ -336,28 +281,39 @@ export default function App() {
           const userDoc = await getDoc(doc(db, "users", currentUser.uid));
           if (userDoc.exists()) {
             setUser(currentUser);
+            try {
+              const tutorialKey = `tutorialSeen:${currentUser.uid}`;
+              const tutorialSeen = await AsyncStorage.getItem(tutorialKey);
+              setNeedsTutorial(tutorialSeen !== '1');
+            } catch {
+              setNeedsTutorial(false);
+            }
           } else {
             await auth.signOut();
             setUser(null);
+            setNeedsTutorial(false);
           }
         } catch (error) {
           await auth.signOut();
           setUser(null);
+          setNeedsTutorial(false);
         }
       } else {
         setUser(null);
+        setNeedsTutorial(false);
       }
       setLoadingAuth(false);
+      setLoadingTutorial(false);
     });
 
     return () => unsubscribe();
   }, []);
 
-  if (loadingAuth) {
+  if (loadingAuth || loadingTutorial) {
     return (
       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#0F0F15' }}>
         <ActivityIndicator size="large" color="#FF5252" />
-        <Text style={{ color: '#FFF', marginTop: 10, fontSize: 16 }}>Verificando sesión...</Text>
+        <Text style={{ color: '#FFF', marginTop: 10, fontSize: 16 }}>Preparando app...</Text>
       </View>
     );
   }
@@ -371,6 +327,8 @@ export default function App() {
           barStyle="light-content"
         />
         <Stack.Navigator
+          key={!user ? 'guest' : needsTutorial ? 'user-tutorial' : 'user-main'}
+          initialRouteName={!user ? 'Auth' : needsTutorial ? 'Tutorial' : 'Main'}
           screenOptions={{
             headerShown: false,
             cardStyle: {
@@ -401,6 +359,15 @@ export default function App() {
             <Stack.Screen
               name="Auth"
               component={AuthScreen}
+              options={{
+                gestureEnabled: false,
+              }}
+            />
+          )}
+          {user && (
+            <Stack.Screen
+              name="Tutorial"
+              component={TutorialScreen}
               options={{
                 gestureEnabled: false,
               }}
