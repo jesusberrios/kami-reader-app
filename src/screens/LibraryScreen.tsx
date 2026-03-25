@@ -25,6 +25,7 @@ import { backendUrl } from '../config/backend';
 
 const REQUEST_TIMEOUT_MS = 8000;
 const PAGE_LIMIT = 24;
+const SEARCH_CACHE_TTL_MS = 5 * 60 * 1000;
 
 type Comic = {
     slug: string;
@@ -39,6 +40,8 @@ type Comic = {
     contentRating?: string;
     genres?: string[];
     badges?: string[];
+    normalizedTitle?: string;
+    normalizedDescription?: string;
 };
 
 type SortKey = 'default' | 'title_asc' | 'title_desc' | 'score_desc';
@@ -122,6 +125,36 @@ const tokenize = (value: string) =>
         .map((x) => x.trim())
         .filter((x) => x.length > 1 && !STOP_WORDS.has(x));
 
+const mapApiComic = (item: any): Comic => {
+    const title = item.title || 'Sin título';
+    const description = item.description || '';
+    return {
+        slug: item.slug,
+        title,
+        cover: item.cover || '',
+        source: item.source || 'zonatmo',
+        score: item.score || '0.0',
+        totalChapters: item.totalChapters || 0,
+        description,
+        status: item.status || 'unknown',
+        statusLabel: item.statusLabel || '',
+        contentRating: item.contentRating || 'safe',
+        genres: Array.isArray(item.genres) ? item.genres : [],
+        badges: Array.isArray(item.badges) ? item.badges : [],
+        normalizedTitle: normalizeText(title),
+        normalizedDescription: normalizeText(description),
+    };
+};
+
+const buildSearchCacheKey = (
+    query: string,
+    page: number,
+    source: SourceKey,
+    status: StatusKey,
+    rating: RatingKey,
+    sort: SortKey,
+) => `${normalizeText(query)}|p:${page}|s:${source}|st:${status}|r:${rating}|o:${sort}`;
+
 const applyRelevanceFilter = (list: Comic[], query: string): Comic[] => {
     const q = normalizeText(query);
     const qTokens = tokenize(query);
@@ -129,8 +162,8 @@ const applyRelevanceFilter = (list: Comic[], query: string): Comic[] => {
     if (!q || qTokens.length === 0) return list;
 
     const ranked = list.map((item) => {
-        const title = normalizeText(item.title || '');
-        const desc = normalizeText(item.description || '');
+        const title = item.normalizedTitle || normalizeText(item.title || '');
+        const desc = item.normalizedDescription || normalizeText(item.description || '');
 
         let score = 0;
         let matched = 0;
@@ -230,6 +263,7 @@ const LibraryScreen = ({ navigation }: any) => {
     const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const requestIdRef = useRef(0);
     const allComicsRef = useRef<Comic[]>([]);
+    const searchCacheRef = useRef<Map<string, { timestamp: number; results: Comic[]; totalPages?: number }>>(new Map());
 
     const { alertError } = useAlertContext();
 
@@ -275,20 +309,7 @@ const LibraryScreen = ({ navigation }: any) => {
             query.append('limit', String(PAGE_LIMIT));
 
             const data = await fetchJsonWithTimeout(`${backendUrl('/latest')}${query.toString() ? `?${query.toString()}` : ''}`);
-            const list: Comic[] = (data.results || []).map((item: any) => ({
-                slug: item.slug,
-                title: item.title || 'Sin título',
-                cover: item.cover || '',
-                source: item.source || 'zonatmo',
-                score: item.score || '0.0',
-                totalChapters: item.totalChapters || 0,
-                description: item.description || '',
-                status: item.status || 'unknown',
-                statusLabel: item.statusLabel || '',
-                contentRating: item.contentRating || 'safe',
-                genres: Array.isArray(item.genres) ? item.genres : [],
-                badges: Array.isArray(item.badges) ? item.badges : [],
-            }));
+            const list: Comic[] = (data.results || []).map(mapApiComic);
 
             const totalPagesRaw = Number(data?.pagination?.totalPages);
             const nextHasMore = Number.isFinite(totalPagesRaw)
@@ -343,6 +364,31 @@ const LibraryScreen = ({ navigation }: any) => {
 
         setError(null);
         try {
+            const cacheKey = buildSearchCacheKey(q, page, selectedSource, selectedStatus, selectedRating, selectedSort);
+            const cached = searchCacheRef.current.get(cacheKey);
+            const isCacheFresh = !!cached && (Date.now() - cached.timestamp) <= SEARCH_CACHE_TTL_MS;
+
+            if (isCacheFresh && cached) {
+                const nextHasMoreFromCache = typeof cached.totalPages === 'number'
+                    ? page < cached.totalPages
+                    : cached.results.length >= PAGE_LIMIT;
+
+                if (isMounted.current && requestId === requestIdRef.current) {
+                    const merged = append ? mergeUniqueComics(allComicsRef.current, cached.results) : cached.results;
+                    allComicsRef.current = merged;
+                    setAllComics(merged);
+                    applyFiltersAndSort(merged, selectedSort, selectedSource, selectedStatus, selectedRating);
+                    setCurrentPage(page);
+                    setHasMore(nextHasMoreFromCache);
+                }
+
+                if (isMounted.current && requestId === requestIdRef.current) {
+                    setLoading(false);
+                    setIsFetchingMore(false);
+                }
+                return;
+            }
+
             const query = new URLSearchParams({ title: q });
             if (selectedSource !== 'all') query.append('source', selectedSource);
             if (selectedStatus !== 'all') query.append('status', selectedStatus);
@@ -352,20 +398,7 @@ const LibraryScreen = ({ navigation }: any) => {
             query.append('limit', String(PAGE_LIMIT));
 
             const data = await fetchJsonWithTimeout(`${backendUrl('/search')}?${query.toString()}`);
-            const list: Comic[] = (data.results || []).map((item: any) => ({
-                slug: item.slug,
-                title: item.title || 'Sin título',
-                cover: item.cover || '',
-                source: item.source || 'zonatmo',
-                score: item.score || '0.0',
-                totalChapters: item.totalChapters || 0,
-                description: item.description || '',
-                status: item.status || 'unknown',
-                statusLabel: item.statusLabel || '',
-                contentRating: item.contentRating || 'safe',
-                genres: Array.isArray(item.genres) ? item.genres : [],
-                badges: Array.isArray(item.badges) ? item.badges : [],
-            }));
+            const list: Comic[] = (data.results || []).map(mapApiComic);
 
             const relevant = applyRelevanceFilter(list, q);
             const totalPagesRaw = Number(data?.pagination?.totalPages);
@@ -374,6 +407,12 @@ const LibraryScreen = ({ navigation }: any) => {
                 : relevant.length >= PAGE_LIMIT;
 
             if (isMounted.current && requestId === requestIdRef.current) {
+                searchCacheRef.current.set(cacheKey, {
+                    timestamp: Date.now(),
+                    results: relevant,
+                    totalPages: Number.isFinite(totalPagesRaw) ? totalPagesRaw : undefined,
+                });
+
                 const merged = append ? mergeUniqueComics(allComicsRef.current, relevant) : relevant;
                 allComicsRef.current = merged;
                 setAllComics(merged);

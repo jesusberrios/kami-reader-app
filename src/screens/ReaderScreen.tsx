@@ -26,7 +26,7 @@ const { width: screenWidth } = Dimensions.get('window');
 const { height: screenHeight } = Dimensions.get('window');
 const REQUEST_TIMEOUT_MS = 8000;
 const AUTO_HIDE_DELAY = 4500;
-const IMAGE_PREFETCH_WINDOW = 5;
+const IMAGE_PREFETCH_WINDOW = 2;
 
 const AD_UNIT_ID = __DEV__ ? TestIds.BANNER : 'ca-app-pub-6584977537844104/1888694522';
 MobileAds().initialize();
@@ -88,7 +88,7 @@ const ReaderImageItem = React.memo(({ item, index }: { item: ReaderImage; index:
                 style={{ width: screenWidth, height }}
                 contentFit="contain"
                 transition={0}
-                cachePolicy="memory-disk"
+                cachePolicy="disk"
                 recyclingKey={item.url}
                 priority={index < 4 ? 'high' : 'normal'}
                 onLoad={(event) => {
@@ -126,6 +126,8 @@ const ReaderScreen = () => {
     const autoHideTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const prefetchedUrlsRef = useRef<Set<string>>(new Set());
     const imagesRef = useRef<ReaderImage[]>([]);
+    const prefetchInFlightRef = useRef(false);
+    const lastPrefetchStartRef = useRef(-1);
 
     const parsed = useMemo(() => parseComposite(currentCompositeSlug), [currentCompositeSlug]);
 
@@ -151,6 +153,9 @@ const ReaderScreen = () => {
     }, []);
 
     const prefetchImages = useCallback(async (imageList: ReaderImage[], startIndex: number, count: number = IMAGE_PREFETCH_WINDOW) => {
+        if (prefetchInFlightRef.current) return;
+        if (startIndex <= lastPrefetchStartRef.current) return;
+
         const batch = imageList.slice(startIndex, startIndex + count);
         const pending = batch
             .map((img) => img.url)
@@ -160,7 +165,18 @@ const ReaderScreen = () => {
                 return true;
             });
 
-        await Promise.all(pending.map((url) => Image.prefetch(url)));
+        if (!pending.length) {
+            lastPrefetchStartRef.current = startIndex;
+            return;
+        }
+
+        prefetchInFlightRef.current = true;
+        try {
+            await Promise.all(pending.map((url) => Image.prefetch(url)));
+            lastPrefetchStartRef.current = startIndex;
+        } finally {
+            prefetchInFlightRef.current = false;
+        }
     }, []);
 
     const loadChapterData = useCallback(async () => {
@@ -266,6 +282,7 @@ const ReaderScreen = () => {
             setPrevCompositeSlug(prevChapter?.slug || null);
             setImages(imgs);
             prefetchedUrlsRef.current.clear();
+            lastPrefetchStartRef.current = -1;
             prefetchImages(imgs, 0);
             flashListRef.current?.scrollToOffset({ offset: 0, animated: false });
         } catch (error: any) {
@@ -362,13 +379,14 @@ const ReaderScreen = () => {
                 ref={flashListRef}
                 data={images}
                 estimatedItemSize={Math.max(520, screenHeight)}
+                initialNumToRender={3}
                 keyExtractor={(item) => item.id}
                 renderItem={renderImageItem}
                 removeClippedSubviews
                 showsVerticalScrollIndicator={false}
                 onScrollBeginDrag={showAndResetControls}
                 onMomentumScrollBegin={showAndResetControls}
-                drawDistance={screenHeight * 2}
+                drawDistance={screenHeight}
                 onViewableItemsChanged={handleViewableItemsChanged}
                 viewabilityConfig={{ itemVisiblePercentThreshold: 15 }}
                 scrollEventThrottle={16}
