@@ -1,14 +1,24 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { TouchableOpacity, StyleSheet, Animated, Easing } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
-import { DrawerNavigationProp } from '@react-navigation/drawer';
+import { DrawerNavigationProp, useDrawerStatus } from '@react-navigation/drawer';
 import { DrawerParamList } from '../navigation/types';
 
 const DrawerToggle = () => {
     const navigation = useNavigation<DrawerNavigationProp<DrawerParamList>>();
-    const [scaleValue] = useState(new Animated.Value(1));
-    const [rotationValue] = useState(new Animated.Value(0));
+    const scaleValue = useRef(new Animated.Value(1)).current;
+    const rotationValue = useRef(new Animated.Value(0)).current;
+    const drawerStatus = useDrawerStatus();
+
+    useEffect(() => {
+        Animated.timing(rotationValue, {
+            toValue: drawerStatus === 'open' ? 1 : 0,
+            duration: 220,
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: true,
+        }).start();
+    }, [drawerStatus, rotationValue]);
 
     const handlePress = () => {
         // Animation sequence
@@ -36,9 +46,6 @@ const DrawerToggle = () => {
                 }),
             ]),
         ]).start();
-
-        // Reset rotation for next press
-        rotationValue.setValue(0);
 
         // Toggle drawer
         navigation.toggleDrawer();

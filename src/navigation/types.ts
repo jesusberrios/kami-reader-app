@@ -5,6 +5,8 @@ export type RootStackParamList = {
     Main: undefined;
     Details: { slug: string };
     Reader: { hid: string };
+    News: undefined;
+    NewsDetail: { newsItem: { id: string; title: string; message: string; createdAt?: any } };
     Payment: undefined;
     Profile: { userId?: string }; // Añade userId como parámetro opcional
     AddFriends: undefined;

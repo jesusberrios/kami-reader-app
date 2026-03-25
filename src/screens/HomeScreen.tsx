@@ -42,8 +42,21 @@ const APP_IDS = {
     ios: '5cd6ecff-6004-4696-b780-172ff5ca8a22',
     android: 'com.yourusername.kamireader' // Asegúrate de cambiar esto por el ID de tu paquete Android
 };
+// URL del backend (10.0.2.2 para emulador Android, cambiar a IP real para dispositivo físico)
+const BACKEND_URL = 'https://backend-kami-api-production.up.railway.app';
 
 // Types
+type LatestManga = {
+    slug: string;
+    title: string;
+    cover: string;
+    source: string;
+    score: string;
+    totalChapters: number;
+    contentRating?: string;
+    language?: string;
+};
+
 type Chapter = {
     hid: string;
     title: string;
@@ -76,6 +89,8 @@ const HomeScreen = ({ navigation }: any) => {
     const [currentVersion, setCurrentVersion] = useState('');
     const [comicsLoading, setComicsLoading] = useState(true);
     const [continueReadingComics, setContinueReadingComics] = useState<Chapter[]>([]); // New state for continue reading
+    const [latestMangas, setLatestMangas] = useState<LatestManga[]>([]);
+    const [latestLoading, setLatestLoading] = useState(true);
 
     // Refs and hooks
     const insets = useSafeAreaInsets();
@@ -131,30 +146,46 @@ const HomeScreen = ({ navigation }: any) => {
                 return;
             }
 
-            const res = await axios.get('https://api.comick.fun/chapter/', {
-                params: {
-                    page: 1,
-                    order: 'new',
-                    tachiyomi: true,
-                    type: ['manga', 'manhwa', 'manhua'],
-                    accept_erotic_content: true,
-                },
-                timeout: 5000
-            });
+            const [topMixedRes, topEroticRes] = await Promise.all([
+                axios.get(`${BACKEND_URL}/latest`, {
+                    params: {
+                        page: 1,
+                        limit: 60,
+                        sort: 'score_desc',
+                    },
+                    timeout: 8000,
+                }),
+                axios.get(`${BACKEND_URL}/latest`, {
+                    params: {
+                        page: 1,
+                        limit: 20,
+                        sort: 'score_desc',
+                        contentRating: 'erotica',
+                    },
+                    timeout: 8000,
+                }),
+            ]);
 
             if (isMounted.current) {
-                const comicsData = res.data.map((item: any) => ({
-                    hid: item.hid,
-                    title: item.md_comics.title || 'Sin título',
-                    lang: item.lang,
-                    updated_at: item.updated_at,
-                    cover: item.md_comics.cover_url || 'https://via.placeholder.com/150x200?text=No+Cover',
-                    slug: item.md_comics.slug,
-                    content_rating: item.md_comics.content_rating,
-                }));
+                const mapBackendComic = (item: any) => ({
+                    hid: `${item.source || 'zonatmo'}:${item.slug || ''}`,
+                    title: item.title || 'Sin título',
+                    lang: item.language || 'es-419',
+                    updated_at: item.updatedAt || new Date().toISOString(),
+                    cover: item.cover || 'https://via.placeholder.com/150x200?text=No+Cover',
+                    slug: item.slug || '',
+                    content_rating: item.contentRating || 'safe',
+                });
 
-                const safeComics = comicsData.filter((comic: any) => comic.content_rating === 'safe').slice(0, 10);
-                const eroticComics = comicsData.filter((comic: any) => comic.content_rating === 'erotica').slice(0, 10);
+                const mixedComics = (topMixedRes.data?.results || []).map(mapBackendComic);
+                const eroticRaw = (topEroticRes.data?.results || []).map(mapBackendComic);
+
+                // Top seguros = no erotico (+18)
+                const safeComics = mixedComics
+                    .filter((comic: any) => comic.content_rating !== 'erotica')
+                    .slice(0, 10);
+
+                const eroticComics = eroticRaw.slice(0, 10);
 
                 setTopSafe(safeComics);
                 setTopErotic(eroticComics);
@@ -233,9 +264,9 @@ const HomeScreen = ({ navigation }: any) => {
 
             const readingProgressData: { slug: string; lastReadChapterNumber: number; coverUrl: string }[] = [];
             querySnapshot.forEach((doc) => {
-                const data = doc.data() as { lastReadChapterNumber?: number; coverUrl?: string };
+                const data = doc.data() as { lastReadChapterNumber?: number; coverUrl?: string; slug?: string };
 
-                const comicSlug = doc.id; // Use the document ID as the slug
+                const comicSlug = String(data.slug || doc.id || '').trim();
                 // console.log(data, 'Document data for slug:', comicSlug); // Removed log
 
                 if (comicSlug) {
@@ -264,23 +295,25 @@ const HomeScreen = ({ navigation }: any) => {
                 const lastReadChapterNumber = progressItem.lastReadChapterNumber;
                 const coverUrl = progressItem.coverUrl;
 
-                // console.log(`Fetching details for comic slug from Comick.fun: ${slug}`); // Removed log
-                const comicDetailsRes = await axios.get(`https://api.comick.fun/comic/${slug}`);
+                try {
+                    const comicDetailsRes = await axios.get(`${BACKEND_URL}/manga/${encodeURIComponent(slug)}`, { timeout: 8000 });
+                    const manga = comicDetailsRes.data?.manga;
+                    if (!manga) {
+                        continue;
+                    }
 
-                if (comicDetailsRes.data && comicDetailsRes.data.comic) {
-                    // console.log(`Details fetched for ${slug}. Title: ${comicDetailsRes.data.comic.title}`); // Removed log
                     comicsToDisplay.push({
-                        hid: comicDetailsRes.data.comic.hid,
-                        title: comicDetailsRes.data.comic.title,
-                        cover: coverUrl || comicDetailsRes.data.comic.cover_url || 'https://via.placeholder.com/150x200?text=No+Cover',
-                        slug: comicDetailsRes.data.comic.slug,
-                        content_rating: comicDetailsRes.data.comic.content_rating,
-                        lang: comicDetailsRes.data.comic.lang || 'en',
+                        hid: manga.slug,
+                        title: manga.title,
+                        cover: coverUrl || manga.cover || 'https://via.placeholder.com/150x200?text=No+Cover',
+                        slug: manga.slug,
+                        content_rating: manga.contentRating || 'safe',
+                        lang: manga.language || 'es-419',
                         updated_at: new Date().toISOString(),
                         lastReadChapter: `Cap. ${lastReadChapterNumber}`
                     });
-                } else {
-                    // console.warn(`Failed to fetch details for comic slug: ${slug}. Response data:`, comicDetailsRes.data); // Removed log
+                } catch {
+                    // Ignorar entradas antiguas incompatibles (ej: IDs legacy de Comick)
                 }
             }
             // console.log('Final comicsToDisplay array:', comicsToDisplay.map(c => c.title)); // Removed log
@@ -295,20 +328,39 @@ const HomeScreen = ({ navigation }: any) => {
         }
     }, []);
 
+    const fetchLatestMangas = useCallback(async () => {
+        setLatestLoading(true);
+        try {
+            const res = await axios.get(`${BACKEND_URL}/latest`, {
+                params: { page: 1, limit: 24, sort: 'new' },
+                timeout: 8000,
+            });
+            
+            if (isMounted.current && res.data?.results) {
+                setLatestMangas(res.data.results);
+            }
+        } catch (error) {
+            // silencioso si el backend no está disponible
+        } finally {
+            if (isMounted.current) setLatestLoading(false);
+        }
+    }, []);
+
     // Función para cargar los datos iniciales (noticias, plan, cómics)
     const loadInitialData = useCallback(async () => {
         setLoading(true);
         await Promise.all([
             fetchNews(),
             fetchUserPlan(),
-            fetchContinueReadingComics(), // Fetch continue reading data
+            fetchContinueReadingComics(),
+            fetchLatestMangas(),
         ]);
         await fetchTopComics();
 
         if (isMounted.current) {
             setLoading(false);
         }
-    }, [fetchNews, fetchUserPlan, fetchTopComics, fetchContinueReadingComics]);
+    }, [fetchNews, fetchUserPlan, fetchTopComics, fetchContinueReadingComics, fetchLatestMangas]);
 
 
     // Effects
@@ -350,7 +402,8 @@ const HomeScreen = ({ navigation }: any) => {
             fetchTopComics(),
             fetchNews(),
             fetchUserPlan(),
-            fetchContinueReadingComics(), // Refresh continue reading data too
+            fetchContinueReadingComics(),
+            fetchLatestMangas(),
         ]);
         if (isMounted.current) {
             setRefreshing(false);
@@ -360,7 +413,7 @@ const HomeScreen = ({ navigation }: any) => {
                 }
             });
         }
-    }, [fetchTopComics, fetchNews, fetchUserPlan, fetchContinueReadingComics]);
+    }, [fetchTopComics, fetchNews, fetchUserPlan, fetchContinueReadingComics, fetchLatestMangas]);
 
     const handleComicPress = useCallback((slug: string) => {
         navigation.navigate('Details', { slug });
@@ -436,10 +489,13 @@ const HomeScreen = ({ navigation }: any) => {
         </TouchableOpacity>
     ), [handleComicPress]);
 
-    const renderSectionHeader = useCallback((icon: string, title: string, color: string) => (
+    const renderSectionHeader = useCallback((icon: string, title: string, color: string, subtitle?: string) => (
         <View style={styles.sectionHeader}>
             <MaterialCommunityIcons name={icon as any} size={24} color={color} />
-            <Text style={[styles.sectionTitle, { color }]}>{title}</Text>
+            <View style={styles.sectionHeaderTextWrap}>
+                <Text style={[styles.sectionTitle, { color }]}>{title}</Text>
+                {!!subtitle && <Text style={styles.sectionSubtitle}>{subtitle}</Text>}
+            </View>
         </View>
     ), []);
 
@@ -481,10 +537,31 @@ const HomeScreen = ({ navigation }: any) => {
                         </View>
                     </View>
 
+                    <LinearGradient colors={['#FF6B6B22', '#6B8AFD18']} style={styles.heroCard}>
+                        <View style={styles.heroIconWrap}>
+                            <MaterialCommunityIcons name="compass-rose" size={24} color="#FFD4D4" />
+                        </View>
+                        <View style={styles.heroTextWrap}>
+                            <Text style={styles.heroTitle}>Explora nuevos mangas</Text>
+                            <Text style={styles.heroSubtitle}>Top por rating, recientes y tus lecturas en progreso en un solo lugar.</Text>
+                        </View>
+                    </LinearGradient>
+
                     {/* News Section */}
                     {news.length > 0 && (
                         <View style={styles.sectionContainer}>
-                            {renderSectionHeader('newspaper', 'Noticias', '#FF6B6B')}
+                            <View style={styles.newsHeaderRow}>
+                                <View style={styles.newsHeaderLeft}>
+                                    <MaterialCommunityIcons name="newspaper" size={24} color="#FF6B6B" />
+                                    <View style={styles.newsHeaderTextWrap}>
+                                        <Text style={[styles.sectionTitle, { color: '#FF6B6B' }]}>Noticias</Text>
+                                        <Text style={styles.sectionSubtitle}>Actualizaciones del equipo</Text>
+                                    </View>
+                                </View>
+                                <TouchableOpacity style={styles.viewAllButton} onPress={() => navigation.navigate('News')}>
+                                    <Text style={styles.viewAllText}>Ver todas</Text>
+                                </TouchableOpacity>
+                            </View>
                             <FlatList
                                 data={news}
                                 keyExtractor={(item) => item.id}
@@ -499,10 +576,60 @@ const HomeScreen = ({ navigation }: any) => {
                         </View>
                     )}
 
+                    {/* Latest Mangas Section */}
+                    <View style={styles.sectionContainer}>
+                        {renderSectionHeader('clock-outline', 'Recientes', '#FFB347', 'Ultimas publicaciones')}
+                        {latestLoading ? (
+                            <ActivityIndicator size="small" color="#FFB347" style={styles.sectionLoadingIndicator} />
+                        ) : (
+                            <FlatList
+                                data={latestMangas}
+                                keyExtractor={(item) => `${item.source || 'zonatmo'}:${item.slug}`}
+                                renderItem={({ item }) => (
+                                    <TouchableOpacity
+                                        style={styles.comicItem}
+                                        onPress={() => navigation.navigate('Details', { slug: item.slug })}
+                                        activeOpacity={0.7}
+                                        accessibilityLabel={`Ver detalles de ${item.title}`}
+                                    >
+                                        <Image
+                                            source={{ uri: item.cover }}
+                                            style={styles.cover}
+                                            resizeMode="cover"
+                                            defaultSource={require('../../assets/auth-bg.png')}
+                                        />
+                                        <LinearGradient
+                                            colors={['transparent', 'rgba(0,0,0,0.8)']}
+                                            style={styles.comicGradient}
+                                        />
+                                        <Text style={styles.comicTitle} numberOfLines={2}>{item.title}</Text>
+                                        {item.score && item.score !== '0.0' && (
+                                            <View style={styles.scoreBadge}>
+                                                <MaterialCommunityIcons name="star" size={10} color="#FFD700" />
+                                                <Text style={styles.scoreText}>{item.score}</Text>
+                                            </View>
+                                        )}
+                                        <View style={styles.sourceTag}>
+                                            <Text style={styles.sourceTagText}>{item.source || 'zonatmo'}</Text>
+                                        </View>
+                                    </TouchableOpacity>
+                                )}
+                                horizontal
+                                showsHorizontalScrollIndicator={false}
+                                contentContainerStyle={styles.comicsList}
+                                initialNumToRender={3}
+                                maxToRenderPerBatch={5}
+                                windowSize={7}
+                                getItemLayout={getItemLayout}
+                                removeClippedSubviews={true}
+                            />
+                        )}
+                    </View>
+
                     {/* Continue Reading Section */}
                     {continueReadingComics.length > 0 && (
                         <View style={styles.sectionContainer}>
-                            {renderSectionHeader('book-open-outline', 'En Curso', '#4CAF50')}
+                            {renderSectionHeader('book-open-outline', 'En Curso', '#4CAF50', 'Retoma donde te quedaste')}
                             {comicsLoading ? ( // You might want a separate loading state for this or reuse comicsLoading
                                 <ActivityIndicator size="small" color="#4CAF50" style={styles.sectionLoadingIndicator} />
                             ) : (
@@ -525,7 +652,7 @@ const HomeScreen = ({ navigation }: any) => {
 
                     {/* Top Safe Comics */}
                     <View style={styles.sectionContainer}>
-                        {renderSectionHeader('shield-check', 'Top Seguros', '#6B8AFD')}
+                        {renderSectionHeader('shield-check', 'Top Seguros', '#6B8AFD', 'Mangas -18 (sin contenido erotico)')}
                         {comicsLoading ? (
                             <ActivityIndicator size="small" color="#6B8AFD" style={styles.sectionLoadingIndicator} />
                         ) : (
@@ -548,7 +675,7 @@ const HomeScreen = ({ navigation }: any) => {
                     {/* Top Erotic Comics */}
                     {topErotic.length > 0 && (
                         <View style={styles.sectionContainer}>
-                            {renderSectionHeader('fire', 'Top Eróticos', '#FF6B6B')}
+                            {renderSectionHeader('fire', 'Top Eroticos', '#FF6B6B', 'Mangas +18')}
                             {comicsLoading ? (
                                 <ActivityIndicator size="small" color="#FF6B6B" style={styles.sectionLoadingIndicator} />
                             ) : (
@@ -644,19 +771,101 @@ const styles = StyleSheet.create({
         fontFamily: 'Roboto-Bold',
     },
     sectionContainer: {
-        marginBottom: 10,
+        marginBottom: 14,
     },
     sectionHeader: {
         flexDirection: 'row',
         alignItems: 'center',
         paddingHorizontal: 20,
-        marginBottom: 15,
+        marginBottom: 10,
+    },
+    sectionHeaderRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingRight: 20,
+    },
+    newsHeaderRow: {
+        paddingHorizontal: 20,
+        marginBottom: 10,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 10,
+    },
+    newsHeaderLeft: {
+        flex: 1,
+        minWidth: 0,
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    newsHeaderTextWrap: {
+        marginLeft: 10,
+        flex: 1,
+        minWidth: 0,
+    },
+    sectionHeaderTextWrap: {
+        marginLeft: 10,
+        flex: 1,
     },
     sectionTitle: {
         fontSize: 20,
         fontWeight: 'bold',
-        marginLeft: 10,
         fontFamily: 'Roboto-Bold',
+    },
+    sectionSubtitle: {
+        marginTop: 2,
+        color: '#B9B9CF',
+        fontSize: 12,
+        fontFamily: 'Roboto-Regular',
+    },
+    viewAllButton: {
+        backgroundColor: 'rgba(255,255,255,0.1)',
+        borderRadius: 999,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.2)',
+        paddingHorizontal: 10,
+        paddingVertical: 6,
+        flexShrink: 0,
+    },
+    viewAllText: {
+        color: '#FFE0E0',
+        fontSize: 12,
+        fontFamily: 'Roboto-Medium',
+    },
+    heroCard: {
+        marginHorizontal: 20,
+        marginBottom: 16,
+        borderRadius: 14,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.1)',
+        padding: 14,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+    },
+    heroIconWrap: {
+        width: 42,
+        height: 42,
+        borderRadius: 21,
+        backgroundColor: 'rgba(255,255,255,0.1)',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    heroTextWrap: {
+        flex: 1,
+    },
+    heroTitle: {
+        color: '#FFFFFF',
+        fontSize: 16,
+        fontFamily: 'Roboto-Bold',
+    },
+    heroSubtitle: {
+        color: '#D3D3E6',
+        fontSize: 12,
+        fontFamily: 'Roboto-Regular',
+        marginTop: 4,
+        lineHeight: 18,
     },
     sectionLoadingIndicator: {
         marginTop: 10,
@@ -696,10 +905,12 @@ const styles = StyleSheet.create({
     comicItem: {
         width: itemWidth,
         marginRight: 15,
-        borderRadius: 12,
+        borderRadius: 14,
         overflow: 'hidden',
         position: 'relative',
         backgroundColor: '#2A2A3B',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.08)',
     },
     cover: {
         width: '100%',
@@ -777,6 +988,39 @@ const styles = StyleSheet.create({
         fontSize: 10,
         color: 'white',
         fontFamily: 'Roboto-Medium',
+    },
+    scoreBadge: {
+        position: 'absolute',
+        top: 8,
+        right: 8,
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: 'rgba(0,0,0,0.65)',
+        borderRadius: 10,
+        paddingHorizontal: 5,
+        paddingVertical: 3,
+        zIndex: 1,
+    },
+    scoreText: {
+        fontSize: 10,
+        color: '#FFD700',
+        fontFamily: 'Roboto-Medium',
+        marginLeft: 2,
+    },
+    sourceTag: {
+        position: 'absolute',
+        top: 8,
+        left: 8,
+        backgroundColor: 'rgba(0,0,0,0.65)',
+        borderRadius: 8,
+        paddingHorizontal: 6,
+        paddingVertical: 3,
+    },
+    sourceTagText: {
+        color: '#EAEAFF',
+        fontSize: 9,
+        fontFamily: 'Roboto-Medium',
+        textTransform: 'uppercase',
     },
     adBannerContainer: {
         alignItems: 'center',

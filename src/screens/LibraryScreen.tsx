@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
     View,
     Text,
@@ -20,298 +20,408 @@ import { LinearGradient } from 'expo-linear-gradient';
 import DrawerToggle from '../components/drawerToggle';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
-import { useAlertContext } from '../contexts/AlertContext'; // Importar el contexto de alertas
+import { useAlertContext } from '../contexts/AlertContext';
+
+const BACKEND_URL = Platform.select({
+    android: 'https://backend-kami-api-production.up.railway.app',
+    ios: 'https://backend-kami-api-production.up.railway.app',
+    default: 'https://backend-kami-api-production.up.railway.app',
+}) || 'https://backend-kami-api-production.up.railway.app';
+const REQUEST_TIMEOUT_MS = 8000;
+const PAGE_LIMIT = 24;
 
 type Comic = {
-    hid: string;
     slug: string;
     title: string;
-    cover_url: string;
-    demographic?: number;
-    country?: string;
-    status?: number;
+    cover: string;
+    source: string;
+    score?: string;
+    totalChapters?: number;
+    description?: string;
+    status?: string;
+    contentRating?: string;
     genres?: string[];
+    badges?: string[];
 };
 
-type SelectedFilters = {
-    genres: string[];
-    demographic: string | null;
-    country: string | null;
-    status: string | null;
-    content_rating: string;
-    sort: string;
-    [key: string]: any;
-};
+type SortKey = 'default' | 'title_asc' | 'title_desc' | 'score_desc';
+type SourceKey = 'all' | 'zonatmo' | 'visormanga' | 'lectormangaa';
+type StatusKey = 'all' | 'ongoing' | 'completed' | 'hiatus' | 'cancelled' | 'unknown';
+type RatingKey = 'all' | 'safe' | 'suggestive' | 'erotica';
 
 type FilterOption = {
     label: string;
-    value: string | number;
+    value: string;
 };
 
-const PAGE_LIMIT = 20;
 const { width } = Dimensions.get('window');
 
+const SORT_OPTIONS: FilterOption[] = [
+    { label: 'Por defecto', value: 'default' },
+    { label: 'Título A-Z', value: 'title_asc' },
+    { label: 'Título Z-A', value: 'title_desc' },
+    { label: 'Mejor puntuados', value: 'score_desc' },
+];
+
+const SOURCE_OPTIONS: FilterOption[] = [
+    { label: 'Todas', value: 'all' },
+    { label: 'ZonaTMO', value: 'zonatmo' },
+    { label: 'VisorManga', value: 'visormanga' },
+    { label: 'LectorMangaa', value: 'lectormangaa' },
+];
+
+const STATUS_OPTIONS: FilterOption[] = [
+    { label: 'Todos', value: 'all' },
+    { label: 'En curso', value: 'ongoing' },
+    { label: 'Completado', value: 'completed' },
+    { label: 'En pausa', value: 'hiatus' },
+    { label: 'Cancelado', value: 'cancelled' },
+    { label: 'Desconocido', value: 'unknown' },
+];
+
+const RATING_OPTIONS: FilterOption[] = [
+    { label: 'Todos', value: 'all' },
+    { label: 'Seguro', value: 'safe' },
+    { label: 'Suggestivo', value: 'suggestive' },
+    { label: '18+', value: 'erotica' },
+];
+
+const STOP_WORDS = new Set(['the', 'of', 'a', 'an', 'la', 'el', 'los', 'las', 'de', 'del', 'y']);
+
+const normalizeText = (value: string) =>
+    String(value || '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .trim();
+
+const tokenize = (value: string) =>
+    normalizeText(value)
+        .split(/[^a-z0-9]+/)
+        .map((x) => x.trim())
+        .filter((x) => x.length > 1 && !STOP_WORDS.has(x));
+
+const applyRelevanceFilter = (list: Comic[], query: string): Comic[] => {
+    const q = normalizeText(query);
+    const qTokens = tokenize(query);
+
+    if (!q || qTokens.length === 0) return list;
+
+    const ranked = list.map((item) => {
+        const title = normalizeText(item.title || '');
+        const desc = normalizeText(item.description || '');
+
+        let score = 0;
+        let matched = 0;
+
+        if (title.includes(q)) score += 100;
+
+        for (const token of qTokens) {
+            if (title.includes(token)) {
+                score += 16;
+                matched += 1;
+            } else if (desc.includes(token)) {
+                score += 6;
+                matched += 1;
+            }
+        }
+
+        return { item, score, matched };
+    });
+
+    const minMatches = Math.max(1, Math.ceil(qTokens.length * 0.6));
+
+    return ranked
+        .filter((x) => x.score >= 100 || x.matched >= minMatches)
+        .sort((a, b) => b.score - a.score)
+        .map((x) => x.item);
+};
+
+const fetchJsonWithTimeout = async (url: string, timeoutMs = REQUEST_TIMEOUT_MS) => {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+        const res = await fetch(url, { signal: controller.signal });
+        if (!res.ok) throw new Error(`Error HTTP: ${res.status}`);
+        return await res.json();
+    } catch (error: any) {
+        if (error?.name === 'AbortError') {
+            throw new Error('Tiempo de espera agotado. No se pudo conectar al backend.');
+        }
+        throw error;
+    } finally {
+        clearTimeout(timeoutId);
+    }
+};
+
+const sortComics = (list: Comic[], sort: SortKey): Comic[] => {
+    const copy = [...list];
+    switch (sort) {
+        case 'title_asc': return copy.sort((a, b) => a.title.localeCompare(b.title));
+        case 'title_desc': return copy.sort((a, b) => b.title.localeCompare(a.title));
+        case 'score_desc': return copy.sort((a, b) => parseFloat(b.score || '0') - parseFloat(a.score || '0'));
+        default: return copy;
+    }
+};
+
+const filterAndSortComics = (
+    list: Comic[],
+    sort: SortKey,
+    source: SourceKey,
+    status: StatusKey,
+    rating: RatingKey,
+) => {
+    let result = [...list];
+    if (source !== 'all') result = result.filter((x) => x.source === source);
+    if (status !== 'all') result = result.filter((x) => (x.status || 'unknown') === status);
+    if (rating !== 'all') result = result.filter((x) => (x.contentRating || 'safe') === rating);
+    return sortComics(result, sort);
+};
+
+const mergeUniqueComics = (base: Comic[], incoming: Comic[]) => {
+    const map = new Map<string, Comic>();
+    for (const item of base) map.set(`${item.source}:${item.slug}`, item);
+    for (const item of incoming) map.set(`${item.source}:${item.slug}`, item);
+    return Array.from(map.values());
+};
+
 const LibraryScreen = ({ navigation }: any) => {
+    const [allComics, setAllComics] = useState<Comic[]>([]);
     const [comics, setComics] = useState<Comic[]>([]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [searchQuery, setSearchQuery] = useState('');
-    const [page, setPage] = useState(1);
+    const [showFilters, setShowFilters] = useState(false);
+    const [selectedSort, setSelectedSort] = useState<SortKey>('default');
+    const [pendingSort, setPendingSort] = useState<SortKey>('default');
+    const [selectedSource, setSelectedSource] = useState<SourceKey>('all');
+    const [pendingSource, setPendingSource] = useState<SourceKey>('all');
+    const [selectedStatus, setSelectedStatus] = useState<StatusKey>('all');
+    const [pendingStatus, setPendingStatus] = useState<StatusKey>('all');
+    const [selectedRating, setSelectedRating] = useState<RatingKey>('all');
+    const [pendingRating, setPendingRating] = useState<RatingKey>('all');
+    const [currentPage, setCurrentPage] = useState(1);
     const [hasMore, setHasMore] = useState(true);
     const [isFetchingMore, setIsFetchingMore] = useState(false);
-    const [showFilters, setShowFilters] = useState(false);
     const insets = useSafeAreaInsets();
+    const isMounted = useRef(true);
+    const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const requestIdRef = useRef(0);
 
-    // Obtener las funciones de alerta del contexto
     const { alertError } = useAlertContext();
 
-    const [selectedFilters, setSelectedFilters] = useState<SelectedFilters>({
-        genres: [],
-        demographic: null,
-        country: null,
-        status: null,
-        content_rating: 'safe',
-        sort: 'view',
-    });
-
-    const filterOptions = {
-        genres: [
-            { label: 'Acción', value: 'action' },
-            { label: 'Aventura', value: 'adventure' },
-            { label: 'Drama', value: 'drama' },
-            { label: 'Fantasía', value: 'fantasy' },
-            { label: 'Comedia', value: 'comedy' },
-            { label: 'Romance', value: 'romance' },
-            { label: 'Terror', value: 'horror' },
-            { label: 'Deportes', value: 'sports' },
-            { label: 'BL', value: 'yaoi' }
-        ],
-        demographic: [
-            { label: 'Shounen', value: 1 },
-            { label: 'Shoujo', value: 2 },
-            { label: 'Seinen', value: 3 },
-            { label: 'Josei', value: 4 },
-        ],
-        country: [
-            { label: 'Japón', value: 'jp' },
-            { label: 'Corea', value: 'kr' },
-            { label: 'China', value: 'cn' },
-            { label: 'Otros', value: 'other' },
-        ],
-        status: [
-            { label: 'En curso', value: 1 },
-            { label: 'Completado', value: 2 },
-            { label: 'Cancelado', value: 3 },
-            { label: 'En pausa', value: 4 },
-        ],
-        content_rating: [
-            { label: 'Seguro', value: 'safe' },
-            { label: 'Sugestivo', value: 'suggestive' },
-            { label: 'Erótico', value: 'erotica' },
-        ],
-        sort: [
-            { label: 'Más vistos', value: 'view' },
-            { label: 'Recientes', value: 'created_at' },
-            { label: 'Mejor valorados', value: 'rating' },
-            { label: 'Más seguidos', value: 'follow' },
-        ],
-    };
-
     useEffect(() => {
-        loadTrendingComics();
+        isMounted.current = true;
+        loadLatest();
+        return () => {
+            isMounted.current = false;
+            if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+        };
     }, []);
 
-    const loadTrendingComics = async () => {
-        setPage(1);
-        setHasMore(true);
-        setComics([]);
-        fetchComics({ q: '', page: 1, replace: true });
-    };
+    const applyFiltersAndSort = useCallback((
+        list: Comic[],
+        sort: SortKey,
+        source: SourceKey,
+        status: StatusKey,
+        rating: RatingKey,
+    ) => {
+        const filtered = filterAndSortComics(list, sort, source, status, rating);
+        if (isMounted.current) setComics(filtered);
+    }, []);
 
-    const fetchComics = async ({
-        q,
-        page,
-        replace = false,
-    }: {
-        q: string;
-        page: number;
-        replace?: boolean;
-    }) => {
+    const loadLatest = useCallback(async (options?: { page?: number; append?: boolean }) => {
+        const page = options?.page ?? 1;
+        const append = options?.append ?? false;
+
+        if (append) setIsFetchingMore(true);
+        else setLoading(true);
+
+        setError(null);
         try {
-            if (replace) {
-                setLoading(true);
-                setComics([]);
-            } else {
-                setIsFetchingMore(true);
-            }
-            setError(null);
+            const query = new URLSearchParams();
+            if (selectedSource !== 'all') query.append('source', selectedSource);
+            if (selectedStatus !== 'all') query.append('status', selectedStatus);
+            if (selectedRating !== 'all') query.append('contentRating', selectedRating);
+            if (selectedSort !== 'default') query.append('sort', selectedSort);
+            query.append('page', String(page));
+            query.append('limit', String(PAGE_LIMIT));
 
-            const params: any = {
-                tachiyomi: 'true',
-                limit: PAGE_LIMIT.toString(),
-                page: page.toString(),
-                sort: selectedFilters.sort,
-                content_rating: selectedFilters.content_rating,
-            };
-
-            if (q.trim() !== '') {
-                params.q = q.trim();
-            } else {
-                if (selectedFilters.demographic) {
-                    params.demographic = selectedFilters.demographic;
-                }
-                if (selectedFilters.country) {
-                    params.country = selectedFilters.country;
-                }
-                if (selectedFilters.status) {
-                    params.status = selectedFilters.status;
-                }
-                if (selectedFilters.genres.length > 0) {
-                    params.genres = selectedFilters.genres.join(',');
-                }
-            }
-
-            const query = new URLSearchParams(params);
-            const url = `https://api.comick.fun/v1.0/search?${query.toString()}`;
-
-            const response = await fetch(url);
-            if (!response.ok) throw new Error(`Error HTTP: ${response.status}`);
-
-            const data = await response.json();
-
-            const comicsList = data.map((comic: any) => ({
-                hid: comic.hid,
-                slug: comic.slug,
-                title: comic.title,
-                cover_url: comic.md_covers?.[0]?.b2key
-                    ? `https://meo.comick.pictures/${comic.md_covers[0].b2key}`
-                    : 'https://via.placeholder.com/150x200?text=No+Cover',
-                demographic: comic.demographic,
-                country: comic.country,
-                status: comic.status,
-                genres: comic.genres,
+            const data = await fetchJsonWithTimeout(`${BACKEND_URL}/latest${query.toString() ? `?${query.toString()}` : ''}`);
+            const list: Comic[] = (data.results || []).map((item: any) => ({
+                slug: item.slug,
+                title: item.title || 'Sin título',
+                cover: item.cover || '',
+                source: item.source || 'zonatmo',
+                score: item.score || '0.0',
+                totalChapters: item.totalChapters || 0,
+                description: item.description || '',
+                status: item.status || 'unknown',
+                contentRating: item.contentRating || 'safe',
+                genres: Array.isArray(item.genres) ? item.genres : [],
+                badges: Array.isArray(item.badges) ? item.badges : [],
             }));
 
-            setComics(prev => {
-                const existingHids = new Set(prev.map(comic => comic.hid));
-                const uniqueNewComics = comicsList.filter((comic: Comic) => !existingHids.has(comic.hid));
-                return replace ? uniqueNewComics : [...prev, ...uniqueNewComics];
-            });
+            const totalPagesRaw = Number(data?.pagination?.totalPages);
+            const nextHasMore = Number.isFinite(totalPagesRaw)
+                ? page < totalPagesRaw
+                : list.length >= PAGE_LIMIT;
 
-            setHasMore(comicsList.length === PAGE_LIMIT);
-            setPage(page);
+            if (isMounted.current) {
+                const merged = append ? mergeUniqueComics(allComics, list) : list;
+                setAllComics(merged);
+                applyFiltersAndSort(merged, selectedSort, selectedSource, selectedStatus, selectedRating);
+                setCurrentPage(page);
+                setHasMore(nextHasMore);
+            }
         } catch (e: any) {
             setError(e.message);
-            alertError("Error al cargar los cómics. Por favor, intenta nuevamente.");
+            alertError('No se pudo conectar al servidor. Verifica tu conexión.');
         } finally {
-            setLoading(false);
-            setIsFetchingMore(false);
+            if (isMounted.current) {
+                setLoading(false);
+                setIsFetchingMore(false);
+            }
         }
-    };
+    }, [selectedSort, selectedSource, selectedStatus, selectedRating, applyFiltersAndSort, allComics]);
 
-    const searchComics = () => {
-        setPage(1);
+    const searchComics = useCallback(async (options?: { page?: number; append?: boolean }) => {
+        const page = options?.page ?? 1;
+        const append = options?.append ?? false;
+        const q = searchQuery.trim();
+        const requestId = append ? requestIdRef.current : ++requestIdRef.current;
+        if (!q) {
+            loadLatest({ page: 1, append: false });
+            return;
+        }
+
+        if (q.length < 2) {
+            return;
+        }
+
+        if (append) setIsFetchingMore(true);
+        else setLoading(true);
+
+        setError(null);
+        try {
+            const query = new URLSearchParams({ title: q });
+            if (selectedSource !== 'all') query.append('source', selectedSource);
+            if (selectedStatus !== 'all') query.append('status', selectedStatus);
+            if (selectedRating !== 'all') query.append('contentRating', selectedRating);
+            if (selectedSort !== 'default') query.append('sort', selectedSort);
+            query.append('page', String(page));
+            query.append('limit', String(PAGE_LIMIT));
+
+            const data = await fetchJsonWithTimeout(`${BACKEND_URL}/search?${query.toString()}`);
+            const list: Comic[] = (data.results || []).map((item: any) => ({
+                slug: item.slug,
+                title: item.title || 'Sin título',
+                cover: item.cover || '',
+                source: item.source || 'zonatmo',
+                score: item.score || '0.0',
+                totalChapters: item.totalChapters || 0,
+                description: item.description || '',
+                status: item.status || 'unknown',
+                contentRating: item.contentRating || 'safe',
+                genres: Array.isArray(item.genres) ? item.genres : [],
+                badges: Array.isArray(item.badges) ? item.badges : [],
+            }));
+
+            const relevant = applyRelevanceFilter(list, q);
+            const totalPagesRaw = Number(data?.pagination?.totalPages);
+            const nextHasMore = Number.isFinite(totalPagesRaw)
+                ? page < totalPagesRaw
+                : relevant.length >= PAGE_LIMIT;
+
+            if (isMounted.current && requestId === requestIdRef.current) {
+                const merged = append ? mergeUniqueComics(allComics, relevant) : relevant;
+                setAllComics(merged);
+                applyFiltersAndSort(merged, selectedSort, selectedSource, selectedStatus, selectedRating);
+                setCurrentPage(page);
+                setHasMore(nextHasMore);
+            }
+        } catch (e: any) {
+            if (isMounted.current && requestId === requestIdRef.current) {
+                setError(e.message);
+            }
+        } finally {
+            if (isMounted.current && requestId === requestIdRef.current) {
+                setLoading(false);
+                setIsFetchingMore(false);
+            }
+        }
+    }, [searchQuery, selectedSort, selectedSource, selectedStatus, selectedRating, applyFiltersAndSort, loadLatest, allComics]);
+
+    useEffect(() => {
+        if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+
+        const q = searchQuery.trim();
+        setCurrentPage(1);
         setHasMore(true);
-        setComics([]);
-        fetchComics({ q: searchQuery, page: 1, replace: true });
-    };
 
-    const loadMore = useCallback(() => {
+        if (!q) {
+            loadLatest({ page: 1, append: false });
+            return;
+        }
+
+        searchDebounceRef.current = setTimeout(() => {
+            searchComics({ page: 1, append: false });
+        }, 380);
+
+        return () => {
+            if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+        };
+    }, [searchQuery, searchComics, loadLatest]);
+
+    const handleLoadMore = useCallback(() => {
         if (loading || isFetchingMore || !hasMore) return;
-        const nextPage = page + 1;
-        fetchComics({ q: searchQuery, page: nextPage });
-    }, [loading, isFetchingMore, hasMore, page, searchQuery, selectedFilters]);
 
-    const resetSearch = () => {
-        setSearchQuery('');
-        setSelectedFilters({
-            genres: [],
-            demographic: null,
-            country: null,
-            status: null,
-            content_rating: 'safe',
-            sort: 'view',
-        });
-        loadTrendingComics();
-    };
-
-    const toggleFilter = (type: string, value: any) => {
-        if (type === 'genres') {
-            const newGenres = selectedFilters.genres.includes(value)
-                ? selectedFilters.genres.filter((g: string) => g !== value)
-                : [...selectedFilters.genres, value];
-            setSelectedFilters({ ...selectedFilters, genres: newGenres });
+        const nextPage = currentPage + 1;
+        if (searchQuery.trim()) {
+            searchComics({ page: nextPage, append: true });
         } else {
-            setSelectedFilters({
-                ...selectedFilters,
-                [type]: selectedFilters[type] === value ? null : value,
-            });
+            loadLatest({ page: nextPage, append: true });
         }
-    };
+    }, [loading, isFetchingMore, hasMore, currentPage, searchQuery, searchComics, loadLatest]);
 
-    const applyFilters = () => {
+    const applyFilters = useCallback(() => {
+        setSelectedSort(pendingSort);
+        setSelectedSource(pendingSource);
+        setSelectedStatus(pendingStatus);
+        setSelectedRating(pendingRating);
         setShowFilters(false);
-        setPage(1);
-        setHasMore(true);
-        setComics([]);
-        fetchComics({ q: searchQuery, page: 1, replace: true });
-    };
+        applyFiltersAndSort(allComics, pendingSort, pendingSource, pendingStatus, pendingRating);
+    }, [pendingSort, pendingSource, pendingStatus, pendingRating, allComics, applyFiltersAndSort]);
 
-    const renderFilterButton = (type: string, options: FilterOption[]) => (
-        <View style={styles.filterGroup}>
-            <Text style={styles.filterGroupTitle}>{type.charAt(0).toUpperCase() + type.slice(1).replace('_', ' ')}</Text>
-            <View style={styles.filterOptions}>
-                {options.map((option) => (
-                    <TouchableOpacity
-                        key={String(option.value)}
-                        style={[
-                            styles.filterOption,
-                            (type === 'genres'
-                                ? selectedFilters.genres.includes(String(option.value))
-                                : selectedFilters[type] === option.value) && styles.selectedFilterOption,
-                        ]}
-                        onPress={() => toggleFilter(type, option.value)}
-                    >
-                        <Text style={[
-                            styles.filterOptionText,
-                            (type === 'genres'
-                                ? selectedFilters.genres.includes(String(option.value))
-                                : selectedFilters[type] === option.value) && styles.selectedFilterOptionText,
-                        ]}>
-                            {option.label}
-                        </Text>
-                    </TouchableOpacity>
-                ))}
-            </View>
-        </View>
-    );
+    const resetFilters = useCallback(() => {
+        setPendingSort('default');
+        setSelectedSort('default');
+        setPendingSource('all');
+        setSelectedSource('all');
+        setPendingStatus('all');
+        setSelectedStatus('all');
+        setPendingRating('all');
+        setSelectedRating('all');
+        setShowFilters(false);
+        applyFiltersAndSort(allComics, 'default', 'all', 'all', 'all');
+    }, [allComics, applyFiltersAndSort]);
 
-    const getGenreDisplayName = (genreSlug: string) => {
-        const found = filterOptions.genres.find(g => g.value.toLowerCase() === genreSlug.toLowerCase());
-        return found ? found.label : genreSlug;
-    };
-
-    const getStatusText = (statusCode: number) => {
-        const found = filterOptions.status.find(s => s.value === statusCode);
-        return found ? found.label : 'Desconocido';
-    };
-
-    if (loading && page === 1) {
+    if (loading && comics.length === 0) {
         return (
             <LinearGradient colors={['#0F0F15', '#20202A']} style={styles.loadingContainer}>
                 <ActivityIndicator size="large" color="#FF5252" />
-                <Text style={styles.loadingText}>Cargando cómics...</Text>
+                <Text style={styles.loadingText}>Cargando mangas...</Text>
             </LinearGradient>
         );
     }
 
-    if (error && page === 1) {
+    if (error && comics.length === 0) {
         return (
             <LinearGradient colors={['#0F0F15', '#20202A']} style={styles.errorContainer}>
                 <MaterialCommunityIcons name="alert-circle" size={40} color="#FF5252" />
-                <Text style={styles.errorText}>Error al cargar los cómics</Text>
+                <Text style={styles.errorText}>No se pudo conectar</Text>
                 <Text style={styles.errorSubText}>{error}</Text>
-                <TouchableOpacity style={styles.retryButton} onPress={loadTrendingComics}>
+                <TouchableOpacity style={styles.retryButton} onPress={() => loadLatest({ page: 1, append: false })}>
                     <Text style={styles.retryButtonText}>Reintentar</Text>
                 </TouchableOpacity>
             </LinearGradient>
@@ -320,7 +430,6 @@ const LibraryScreen = ({ navigation }: any) => {
 
     return (
         <LinearGradient colors={['#0F0F15', '#20202A']} style={styles.container}>
-            <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
             <SafeAreaView style={[styles.safeArea, { paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 0) : insets.top }]}>
                 {/* Header */}
                 <View style={styles.header}>
@@ -332,10 +441,23 @@ const LibraryScreen = ({ navigation }: any) => {
                     </TouchableOpacity>
                     <Text style={styles.title}>Biblioteca</Text>
                     <TouchableOpacity
-                        onPress={() => setShowFilters(true)}
-                        style={styles.filterButton}
+                        onPress={() => {
+                            setPendingSort(selectedSort);
+                            setPendingSource(selectedSource);
+                            setPendingStatus(selectedStatus);
+                            setPendingRating(selectedRating);
+                            setShowFilters(true);
+                        }}
+                        style={[
+                            styles.filterButton,
+                            (selectedSort !== 'default' || selectedSource !== 'all' || selectedStatus !== 'all' || selectedRating !== 'all') && styles.filterButtonActive,
+                        ]}
                     >
-                        <MaterialCommunityIcons name="filter" size={24} color="#FF5252" />
+                        <MaterialCommunityIcons
+                            name="filter"
+                            size={24}
+                            color={(selectedSort !== 'default' || selectedSource !== 'all' || selectedStatus !== 'all' || selectedRating !== 'all') ? '#FFF' : '#FF5252'}
+                        />
                     </TouchableOpacity>
                 </View>
 
@@ -349,64 +471,47 @@ const LibraryScreen = ({ navigation }: any) => {
                             placeholderTextColor="#888"
                             value={searchQuery}
                             onChangeText={setSearchQuery}
-                            onSubmitEditing={searchComics}
+                            onSubmitEditing={() => searchComics({ page: 1, append: false })}
                             returnKeyType="search"
                         />
                         {searchQuery !== '' && (
-                            <TouchableOpacity onPress={() => setSearchQuery('')} style={styles.clearSearchButton}>
+                            <TouchableOpacity onPress={() => { setSearchQuery(''); loadLatest({ page: 1, append: false }); }} style={styles.clearSearchButton}>
                                 <MaterialCommunityIcons name="close-circle" size={20} color="#888" />
                             </TouchableOpacity>
                         )}
                     </View>
-                    <TouchableOpacity style={styles.searchButton} onPress={searchComics}>
+                    <TouchableOpacity style={styles.searchButton} onPress={() => searchComics({ page: 1, append: false })}>
                         <Text style={styles.searchButtonText}>Buscar</Text>
                     </TouchableOpacity>
                 </View>
 
                 {/* Active Filters */}
-                {(selectedFilters.demographic || selectedFilters.country || selectedFilters.status || selectedFilters.genres.length > 0) && (
+                {/* Sort indicator */}
+                {(selectedSort !== 'default' || selectedSource !== 'all' || selectedStatus !== 'all' || selectedRating !== 'all') && (
                     <View style={styles.activeFiltersContainer}>
                         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.activeFiltersScrollContent}>
-                            {selectedFilters.demographic && (
+                            {selectedSort !== 'default' && (
                                 <View style={styles.activeFilter}>
-                                    <Text style={styles.activeFilterText}>
-                                        {filterOptions.demographic.find(f => String(f.value) === selectedFilters.demographic)?.label}
-                                    </Text>
-                                    <TouchableOpacity onPress={() => toggleFilter('demographic', selectedFilters.demographic)}>
-                                        <MaterialCommunityIcons name="close-circle" size={16} color="#FF5252" style={styles.removeFilterIcon} />
-                                    </TouchableOpacity>
+                                    <Text style={styles.activeFilterText}>{SORT_OPTIONS.find(o => o.value === selectedSort)?.label}</Text>
                                 </View>
                             )}
-                            {selectedFilters.country && (
+                            {selectedSource !== 'all' && (
                                 <View style={styles.activeFilter}>
-                                    <Text style={styles.activeFilterText}>
-                                        {filterOptions.country.find(f => f.value === selectedFilters.country)?.label}
-                                    </Text>
-                                    <TouchableOpacity onPress={() => toggleFilter('country', selectedFilters.country)}>
-                                        <MaterialCommunityIcons name="close-circle" size={16} color="#FF5252" style={styles.removeFilterIcon} />
-                                    </TouchableOpacity>
+                                    <Text style={styles.activeFilterText}>{SOURCE_OPTIONS.find(o => o.value === selectedSource)?.label}</Text>
                                 </View>
                             )}
-                            {selectedFilters.status && (
+                            {selectedStatus !== 'all' && (
                                 <View style={styles.activeFilter}>
-                                    <Text style={styles.activeFilterText}>
-                                        {filterOptions.status.find(f => String(f.value) === selectedFilters.status)?.label}
-                                    </Text>
-                                    <TouchableOpacity onPress={() => toggleFilter('status', selectedFilters.status)}>
-                                        <MaterialCommunityIcons name="close-circle" size={16} color="#FF5252" style={styles.removeFilterIcon} />
-                                    </TouchableOpacity>
+                                    <Text style={styles.activeFilterText}>{STATUS_OPTIONS.find(o => o.value === selectedStatus)?.label}</Text>
                                 </View>
                             )}
-                            {selectedFilters.genres.map((genre: string) => (
-                                <View key={genre} style={styles.activeFilter}>
-                                    <Text style={styles.activeFilterText}>{getGenreDisplayName(genre)}</Text>
-                                    <TouchableOpacity onPress={() => toggleFilter('genres', genre)}>
-                                        <MaterialCommunityIcons name="close-circle" size={16} color="#FF5252" style={styles.removeFilterIcon} />
-                                    </TouchableOpacity>
+                            {selectedRating !== 'all' && (
+                                <View style={styles.activeFilter}>
+                                    <Text style={styles.activeFilterText}>{RATING_OPTIONS.find(o => o.value === selectedRating)?.label}</Text>
                                 </View>
-                            ))}
-                            <TouchableOpacity onPress={resetSearch} style={styles.clearAllFiltersButton}>
-                                <Text style={styles.clearAllFiltersText}>Limpiar Todos</Text>
+                            )}
+                            <TouchableOpacity onPress={resetFilters} style={styles.clearAllFiltersButton}>
+                                <Text style={styles.clearAllFiltersText}>Limpiar</Text>
                             </TouchableOpacity>
                         </ScrollView>
                     </View>
@@ -415,12 +520,12 @@ const LibraryScreen = ({ navigation }: any) => {
                 {/* Comics List */}
                 <FlatList
                     data={comics}
-                    keyExtractor={(item) => item.hid}
+                    keyExtractor={(item) => `${item.source}:${item.slug}`}
                     contentContainerStyle={styles.comicsList}
-                    onEndReached={loadMore}
-                    onEndReachedThreshold={0.5}
                     numColumns={2}
                     columnWrapperStyle={styles.row}
+                    onEndReached={handleLoadMore}
+                    onEndReachedThreshold={0.4}
                     ListFooterComponent={
                         isFetchingMore ? (
                             <ActivityIndicator style={{ marginVertical: 20 }} size="large" color="#FF5252" />
@@ -430,47 +535,44 @@ const LibraryScreen = ({ navigation }: any) => {
                         !loading ? (
                             <View style={styles.emptyContainer}>
                                 <MaterialCommunityIcons name="book-alert" size={50} color="#666" />
-                                <Text style={styles.emptyText}>No se encontraron cómics</Text>
-                                <TouchableOpacity style={styles.resetButton} onPress={resetSearch}>
-                                    <Text style={styles.resetButtonText}>Mostrar todos</Text>
+                                <Text style={styles.emptyText}>No se encontraron mangas</Text>
+                                <TouchableOpacity style={styles.resetButton} onPress={() => loadLatest({ page: 1, append: false })}>
+                                    <Text style={styles.resetButtonText}>Mostrar recientes</Text>
                                 </TouchableOpacity>
                             </View>
                         ) : null
                     }
                     renderItem={({ item }) => (
-                        <TouchableOpacity style={styles.comicGridItem} onPress={() => navigation.navigate('Details', { slug: item.slug })}>
+                        <TouchableOpacity
+                            style={styles.comicGridItem}
+                            onPress={() => navigation.navigate('Details', { slug: item.slug })}
+                        >
                             <Image
-                                source={{ uri: item.cover_url }}
+                                source={{ uri: item.cover }}
                                 style={styles.comicCover}
                                 contentFit="cover"
-                                placeholder={{ uri: 'https://via.placeholder.com/150x200?text=No+Cover' }}
+                                placeholder={require('../../assets/auth-bg.png')}
                             />
                             <LinearGradient
-                                colors={['transparent', 'rgba(0,0,0,0.8)']}
+                                colors={['transparent', 'rgba(0,0,0,0.85)']}
                                 style={styles.comicTitleGradient}
                             >
                                 <Text style={styles.comicGridTitle} numberOfLines={2}>{item.title}</Text>
                             </LinearGradient>
-                            <View style={styles.comicBadgesGrid}>
-                                {item.status && (
-                                    <View style={[
-                                        styles.comicGridBadge,
-                                        item.status === 1 && styles.statusOngoing,
-                                        item.status === 2 && styles.statusCompleted,
-                                        item.status === 3 && styles.statusCancelled,
-                                        item.status === 4 && styles.statusHiatus,
-                                    ]}>
-                                        <Text style={styles.comicGridBadgeText}>
-                                            {getStatusText(item.status)}
-                                        </Text>
-                                    </View>
-                                )}
+                            {item.score && item.score !== '0.0' && (
+                                <View style={styles.scoreBadge}>
+                                    <MaterialCommunityIcons name="star" size={10} color="#FFD700" />
+                                    <Text style={styles.scoreText}>{item.score}</Text>
+                                </View>
+                            )}
+                            <View style={styles.sourceBadge}>
+                                <Text style={styles.sourceBadgeText}>{item.source}</Text>
                             </View>
                         </TouchableOpacity>
                     )}
                 />
 
-                {/* Filters Modal */}
+                {/* Sort Modal */}
                 <Modal
                     visible={showFilters}
                     animationType="slide"
@@ -481,27 +583,112 @@ const LibraryScreen = ({ navigation }: any) => {
                         <LinearGradient colors={['#181820', '#2A2A36']} style={styles.modalContainer}>
                             <SafeAreaView style={styles.modalSafeArea}>
                                 <View style={styles.modalHeader}>
-                                    <Text style={styles.modalTitle}>Filtros</Text>
+                                    <Text style={styles.modalTitle}>Ordenar</Text>
                                     <TouchableOpacity onPress={() => setShowFilters(false)} style={styles.closeModalButton}>
                                         <MaterialCommunityIcons name="close" size={26} color="#FF5252" />
                                     </TouchableOpacity>
                                 </View>
 
                                 <ScrollView style={styles.filtersContainer} contentContainerStyle={styles.filtersScrollContent}>
-                                    {renderFilterButton('sort', filterOptions.sort)}
-                                    {renderFilterButton('content_rating', filterOptions.content_rating)}
-                                    {renderFilterButton('demographic', filterOptions.demographic)}
-                                    {renderFilterButton('country', filterOptions.country)}
-                                    {renderFilterButton('status', filterOptions.status)}
-                                    {renderFilterButton('genres', filterOptions.genres)}
+                                    <View style={styles.filterGroup}>
+                                        <Text style={styles.filterGroupTitle}>Orden</Text>
+                                        <View style={styles.filterOptions}>
+                                            {SORT_OPTIONS.map((option) => (
+                                                <TouchableOpacity
+                                                    key={option.value}
+                                                    style={[
+                                                        styles.filterOption,
+                                                        pendingSort === option.value && styles.selectedFilterOption,
+                                                    ]}
+                                                    onPress={() => setPendingSort(option.value as SortKey)}
+                                                >
+                                                    <Text style={[
+                                                        styles.filterOptionText,
+                                                        pendingSort === option.value && styles.selectedFilterOptionText,
+                                                    ]}>
+                                                        {option.label}
+                                                    </Text>
+                                                </TouchableOpacity>
+                                            ))}
+                                        </View>
+                                    </View>
+
+                                    <View style={styles.filterGroup}>
+                                        <Text style={styles.filterGroupTitle}>Fuente</Text>
+                                        <View style={styles.filterOptions}>
+                                            {SOURCE_OPTIONS.map((option) => (
+                                                <TouchableOpacity
+                                                    key={option.value}
+                                                    style={[
+                                                        styles.filterOption,
+                                                        pendingSource === option.value && styles.selectedFilterOption,
+                                                    ]}
+                                                    onPress={() => setPendingSource(option.value as SourceKey)}
+                                                >
+                                                    <Text style={[
+                                                        styles.filterOptionText,
+                                                        pendingSource === option.value && styles.selectedFilterOptionText,
+                                                    ]}>
+                                                        {option.label}
+                                                    </Text>
+                                                </TouchableOpacity>
+                                            ))}
+                                        </View>
+                                    </View>
+
+                                    <View style={styles.filterGroup}>
+                                        <Text style={styles.filterGroupTitle}>Estado</Text>
+                                        <View style={styles.filterOptions}>
+                                            {STATUS_OPTIONS.map((option) => (
+                                                <TouchableOpacity
+                                                    key={option.value}
+                                                    style={[
+                                                        styles.filterOption,
+                                                        pendingStatus === option.value && styles.selectedFilterOption,
+                                                    ]}
+                                                    onPress={() => setPendingStatus(option.value as StatusKey)}
+                                                >
+                                                    <Text style={[
+                                                        styles.filterOptionText,
+                                                        pendingStatus === option.value && styles.selectedFilterOptionText,
+                                                    ]}>
+                                                        {option.label}
+                                                    </Text>
+                                                </TouchableOpacity>
+                                            ))}
+                                        </View>
+                                    </View>
+
+                                    <View style={styles.filterGroup}>
+                                        <Text style={styles.filterGroupTitle}>Clasificacion</Text>
+                                        <View style={styles.filterOptions}>
+                                            {RATING_OPTIONS.map((option) => (
+                                                <TouchableOpacity
+                                                    key={option.value}
+                                                    style={[
+                                                        styles.filterOption,
+                                                        pendingRating === option.value && styles.selectedFilterOption,
+                                                    ]}
+                                                    onPress={() => setPendingRating(option.value as RatingKey)}
+                                                >
+                                                    <Text style={[
+                                                        styles.filterOptionText,
+                                                        pendingRating === option.value && styles.selectedFilterOptionText,
+                                                    ]}>
+                                                        {option.label}
+                                                    </Text>
+                                                </TouchableOpacity>
+                                            ))}
+                                        </View>
+                                    </View>
                                 </ScrollView>
 
                                 <View style={styles.modalFooter}>
-                                    <TouchableOpacity style={styles.resetFiltersButton} onPress={resetSearch}>
+                                    <TouchableOpacity style={styles.resetFiltersButton} onPress={resetFilters}>
                                         <Text style={styles.resetFiltersText}>Restablecer</Text>
                                     </TouchableOpacity>
                                     <TouchableOpacity style={styles.applyFiltersButton} onPress={applyFilters}>
-                                        <Text style={styles.applyFiltersText}>Aplicar Filtros</Text>
+                                        <Text style={styles.applyFiltersText}>Aplicar</Text>
                                     </TouchableOpacity>
                                 </View>
                             </SafeAreaView>
@@ -599,6 +786,9 @@ const styles = StyleSheet.create({
         backgroundColor: 'rgba(255, 82, 82, 0.1)',
         borderWidth: 1,
         borderColor: '#FF5252',
+    },
+    filterButtonActive: {
+        backgroundColor: '#FF5252',
     },
     searchContainer: {
         flexDirection: 'row',
@@ -734,37 +924,36 @@ const styles = StyleSheet.create({
         textAlign: 'center',
         marginBottom: 4,
     },
-    comicBadgesGrid: {
+    scoreBadge: {
+        position: 'absolute',
+        top: 8,
+        right: 8,
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: 'rgba(0,0,0,0.65)',
+        borderRadius: 10,
+        paddingHorizontal: 5,
+        paddingVertical: 3,
+    },
+    scoreText: {
+        fontSize: 10,
+        color: '#FFD700',
+        fontFamily: 'Roboto-Medium',
+        marginLeft: 2,
+    },
+    sourceBadge: {
         position: 'absolute',
         top: 8,
         left: 8,
-        flexDirection: 'row',
-        flexWrap: 'wrap',
-    },
-    comicGridBadge: {
-        backgroundColor: 'rgba(255, 82, 82, 0.7)',
-        paddingHorizontal: 7,
-        paddingVertical: 3,
+        backgroundColor: 'rgba(255, 82, 82, 0.85)',
         borderRadius: 5,
-        marginRight: 5,
-        marginBottom: 5,
+        paddingHorizontal: 6,
+        paddingVertical: 3,
     },
-    comicGridBadgeText: {
+    sourceBadgeText: {
         color: '#FFFFFF',
         fontFamily: 'Roboto-Medium',
         fontSize: 10,
-    },
-    statusOngoing: {
-        backgroundColor: '#4CAF50',
-    },
-    statusCompleted: {
-        backgroundColor: '#2196F3',
-    },
-    statusCancelled: {
-        backgroundColor: '#F44336',
-    },
-    statusHiatus: {
-        backgroundColor: '#FFC107',
     },
     emptyContainer: {
         flex: 1,

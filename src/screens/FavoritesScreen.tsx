@@ -10,14 +10,13 @@ import {
     SafeAreaView,
     StatusBar,
     Platform,
-    Dimensions,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { auth, db } from '../firebase/config';
-import { collection, onSnapshot } from 'firebase/firestore';
+import { collection, deleteDoc, doc, onSnapshot, orderBy, query } from 'firebase/firestore';
 import { useAlertContext } from '../contexts/AlertContext';
 
 type FavoriteItem = {
@@ -26,18 +25,17 @@ type FavoriteItem = {
     coverUrl: string;
     slug: string;
     content_rating?: string;
+    source?: string;
 };
-
-const { width: windowWidth } = Dimensions.get('window');
-const ITEM_WIDTH = windowWidth * 0.9;
 
 export default function FavoritesScreen() {
     const navigation = useNavigation<any>();
     const [favorites, setFavorites] = useState<FavoriteItem[]>([]);
     const [loading, setLoading] = useState(true);
+    const [removingId, setRemovingId] = useState<string | null>(null);
     const [currentUserUid, setCurrentUserUid] = useState<string | null>(null);
     const insets = useSafeAreaInsets();
-    const { alertError } = useAlertContext();
+    const { alertConfirm, alertError, alertSuccess } = useAlertContext();
 
     // Efecto para autenticación
     useEffect(() => {
@@ -57,8 +55,9 @@ export default function FavoritesScreen() {
         }
 
         const favoritesCollectionRef = collection(db, 'users', currentUserUid, 'favorites');
+        const favoritesQuery = query(favoritesCollectionRef, orderBy('favoritedAt', 'desc'));
         const unsubscribe = onSnapshot(
-            favoritesCollectionRef,
+            favoritesQuery,
             (querySnapshot) => {
                 const favs: FavoriteItem[] = [];
                 querySnapshot.forEach((document) => {
@@ -69,13 +68,13 @@ export default function FavoritesScreen() {
                         coverUrl: data.coverUrl,
                         slug: data.slug,
                         content_rating: data.content_rating,
+                        source: data.source,
                     });
                 });
                 setFavorites(favs);
                 setLoading(false);
             },
             (error) => {
-                console.error("Error fetching favorites: ", error);
                 alertError("No se pudieron cargar los favoritos.");
                 setLoading(false);
             }
@@ -88,6 +87,31 @@ export default function FavoritesScreen() {
     const handleFavoritePress = useCallback((slug: string) => {
         navigation.navigate('Details', { slug });
     }, [navigation]);
+
+    const handleRemoveFavorite = useCallback((item: FavoriteItem) => {
+        if (!currentUserUid) {
+            alertError('No se pudo eliminar el favorito.');
+            return;
+        }
+
+        alertConfirm(
+            `¿Quieres quitar "${item.comicTitle}" de tus favoritos?`,
+            async () => {
+                try {
+                    setRemovingId(item.id);
+                    await deleteDoc(doc(db, 'users', currentUserUid, 'favorites', item.id));
+                    alertSuccess('Manga eliminado de favoritos.');
+                } catch {
+                    alertError('No se pudo eliminar el favorito.');
+                } finally {
+                    setRemovingId(null);
+                }
+            },
+            'Eliminar favorito',
+            'Eliminar',
+            'Cancelar'
+        );
+    }, [alertConfirm, alertError, alertSuccess, currentUserUid]);
 
     const handleGoBack = useCallback(() => {
         navigation.goBack();
@@ -103,31 +127,73 @@ export default function FavoritesScreen() {
 
     // Componentes memoizados
     const renderFavoriteItem = useCallback(({ item }: { item: FavoriteItem }) => (
-        <TouchableOpacity
-            style={styles.item}
-            onPress={() => handleFavoritePress(item.slug)}
-            activeOpacity={0.7}
-        >
-            <Image
-                source={{ uri: item.coverUrl }}
-                style={styles.coverImage}
-                resizeMode="cover"
-            />
-            <LinearGradient
-                colors={['transparent', 'rgba(0,0,0,0.8)']}
-                style={styles.imageGradient}
-            />
-            <View style={styles.itemContent}>
-                <Text style={styles.title} numberOfLines={2}>{item.comicTitle}</Text>
-                {item.content_rating === 'erotica' && (
-                    <View style={styles.eroticBadge}>
-                        <Text style={styles.eroticBadgeText}>18+</Text>
+        <View style={styles.item}>
+            <TouchableOpacity
+                style={styles.itemPressable}
+                onPress={() => handleFavoritePress(item.slug)}
+                activeOpacity={0.82}
+            >
+                <Image
+                    source={{ uri: item.coverUrl }}
+                    style={styles.coverImage}
+                    resizeMode="cover"
+                />
+                <LinearGradient
+                    colors={['transparent', 'rgba(0,0,0,0.8)']}
+                    style={styles.imageGradient}
+                />
+                <View style={styles.itemContent}>
+                    <View style={styles.itemMetaRow}>
+                        <View style={styles.sourcePill}>
+                            <Text style={styles.sourcePillText}>{item.source || 'zonatmo'}</Text>
+                        </View>
+                        {item.content_rating === 'erotica' && (
+                            <View style={styles.eroticBadge}>
+                                <Text style={styles.eroticBadgeText}>18+</Text>
+                            </View>
+                        )}
                     </View>
+                    <Text style={styles.title} numberOfLines={2}>{item.comicTitle}</Text>
+                    <Text style={styles.itemHint}>Toca para abrir detalles</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={22} color="#FF6B6B" />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+                style={[styles.removeButton, removingId === item.id && styles.removeButtonDisabled]}
+                onPress={() => handleRemoveFavorite(item)}
+                disabled={removingId === item.id}
+                accessibilityLabel={`Quitar ${item.comicTitle} de favoritos`}
+            >
+                {removingId === item.id ? (
+                    <ActivityIndicator size="small" color="#FFF" />
+                ) : (
+                    <>
+                        <Ionicons name="trash-outline" size={18} color="#FFF" />
+                        <Text style={styles.removeButtonText}>Eliminar</Text>
+                    </>
                 )}
-            </View>
-            <Ionicons name="chevron-forward" size={24} color="#FF6B6B" />
-        </TouchableOpacity>
-    ), [handleFavoritePress]);
+            </TouchableOpacity>
+        </View>
+    ), [handleFavoritePress, handleRemoveFavorite, removingId]);
+
+    const renderListHeader = useMemo(() => {
+        if (favorites.length === 0) return null;
+
+        return (
+            <LinearGradient colors={['rgba(255,107,107,0.18)', 'rgba(107,138,253,0.12)']} style={styles.summaryCard}>
+                <View style={styles.summaryIconWrap}>
+                    <Ionicons name="heart" size={22} color="#FFB3B3" />
+                </View>
+                <View style={styles.summaryTextWrap}>
+                    <Text style={styles.summaryTitle}>Tu colección guardada</Text>
+                    <Text style={styles.summarySubtitle}>
+                        {favorites.length} {favorites.length === 1 ? 'favorito listo para releer.' : 'favoritos listos para releer.'}
+                    </Text>
+                </View>
+            </LinearGradient>
+        );
+    }, [favorites.length]);
 
     const renderEmptyState = useMemo(() => (
         <View style={styles.emptyContent}>
@@ -209,6 +275,7 @@ export default function FavoritesScreen() {
                         data={favorites}
                         keyExtractor={(item) => item.id}
                         renderItem={renderFavoriteItem}
+                        ListHeaderComponent={renderListHeader}
                         contentContainerStyle={styles.flatListContent}
                         showsVerticalScrollIndicator={false}
                         initialNumToRender={10}
@@ -327,13 +394,50 @@ const styles = StyleSheet.create({
         paddingTop: 10,
         paddingBottom: 20,
     },
-    item: {
+    summaryCard: {
         flexDirection: 'row',
         alignItems: 'center',
+        borderRadius: 18,
+        paddingHorizontal: 16,
+        paddingVertical: 16,
+        marginBottom: 18,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.08)',
+    },
+    summaryIconWrap: {
+        width: 42,
+        height: 42,
+        borderRadius: 21,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: 'rgba(255,107,107,0.22)',
+        marginRight: 12,
+    },
+    summaryTextWrap: {
+        flex: 1,
+    },
+    summaryTitle: {
+        color: '#FFFFFF',
+        fontSize: 17,
+        fontFamily: 'Roboto-Bold',
+    },
+    summarySubtitle: {
+        marginTop: 4,
+        color: '#C7CAD7',
+        fontSize: 13,
+        fontFamily: 'Roboto-Regular',
+    },
+    item: {
         backgroundColor: 'rgba(255, 255, 255, 0.08)',
         borderRadius: 14,
         marginBottom: 15,
         overflow: 'hidden',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.06)',
+    },
+    itemPressable: {
+        flexDirection: 'row',
+        alignItems: 'center',
         height: 120,
         position: 'relative',
     },
@@ -354,11 +458,36 @@ const styles = StyleSheet.create({
         paddingHorizontal: 15,
         justifyContent: 'center',
     },
+    itemMetaRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginBottom: 8,
+    },
+    sourcePill: {
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+        borderRadius: 999,
+        backgroundColor: 'rgba(107, 138, 253, 0.22)',
+        borderWidth: 1,
+        borderColor: 'rgba(107, 138, 253, 0.35)',
+    },
+    sourcePillText: {
+        color: '#C9D4FF',
+        fontSize: 11,
+        fontFamily: 'Roboto-Bold',
+        textTransform: 'uppercase',
+    },
     title: {
         color: '#FFFFFF',
         fontSize: 18,
         fontFamily: 'Roboto-Bold',
         marginBottom: 5,
+    },
+    itemHint: {
+        color: '#A9B0C5',
+        fontSize: 13,
+        fontFamily: 'Roboto-Regular',
     },
     eroticBadge: {
         backgroundColor: 'rgba(255, 107, 107, 0.9)',
@@ -370,6 +499,22 @@ const styles = StyleSheet.create({
     eroticBadgeText: {
         color: '#FFFFFF',
         fontSize: 12,
+        fontFamily: 'Roboto-Bold',
+    },
+    removeButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+        backgroundColor: '#FF6B6B',
+        paddingVertical: 12,
+    },
+    removeButtonDisabled: {
+        opacity: 0.7,
+    },
+    removeButtonText: {
+        color: '#FFFFFF',
+        fontSize: 14,
         fontFamily: 'Roboto-Bold',
     },
 });

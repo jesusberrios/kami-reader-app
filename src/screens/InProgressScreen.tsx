@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
     View,
     Text,
@@ -10,15 +10,14 @@ import {
     SafeAreaView,
     StatusBar,
     Platform,
-    Dimensions,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { auth, db } from '../firebase/config';
-import { collection, onSnapshot, query, orderBy, deleteDoc, doc } from 'firebase/firestore';
-import { useAlertContext } from '../contexts/AlertContext'; // Importar el contexto de alertas
+import { collection, onSnapshot, deleteDoc, doc } from 'firebase/firestore';
+import { useAlertContext } from '../contexts/AlertContext';
 
 // Define the type for an in-progress item
 type InProgressItem = {
@@ -26,25 +25,40 @@ type InProgressItem = {
     mangaTitle: string;
     coverUrl: string;
     slug: string;
+    source?: string;
     lastReadChapterHid?: string;
     lastReadChapterNumber?: string;
     startedAt?: string;
+    activityText?: string;
+    sortTimestamp?: number;
 };
 
-const windowWidth = Dimensions.get('window').width;
-const itemWidth = windowWidth * 0.9;
+const formatRelativeDate = (date?: Date | null) => {
+    if (!date) return 'Actualizado recientemente';
+    const diffMs = Date.now() - date.getTime();
+    const diffMinutes = Math.max(1, Math.floor(diffMs / 60000));
+
+    if (diffMinutes < 60) return `Hace ${diffMinutes} min`;
+
+    const diffHours = Math.floor(diffMinutes / 60);
+    if (diffHours < 24) return `Hace ${diffHours} h`;
+
+    const diffDays = Math.floor(diffHours / 24);
+    if (diffDays < 7) return `Hace ${diffDays} d`;
+
+    return date.toLocaleDateString();
+};
 
 export default function InProgressScreen() {
     const navigation = useNavigation<any>();
     const [inProgressComics, setInProgressComics] = useState<InProgressItem[]>([]);
     const [loading, setLoading] = useState(true);
+    const [removingId, setRemovingId] = useState<string | null>(null);
     const [currentUserUid, setCurrentUserUid] = useState<string | null>(null);
     const insets = useSafeAreaInsets();
 
-    // Obtener las funciones de alerta del contexto
     const { alertError, alertSuccess, alertConfirm } = useAlertContext();
 
-    // Effect to listen for authentication state changes
     useEffect(() => {
         const unsubscribe = auth.onAuthStateChanged(user => {
             setCurrentUserUid(user ? user.uid : null);
@@ -53,7 +67,6 @@ export default function InProgressScreen() {
         return unsubscribe;
     }, []);
 
-    // Effect to fetch in-progress comics when currentUserUid changes
     useEffect(() => {
         if (!currentUserUid) {
             setInProgressComics([]);
@@ -62,29 +75,33 @@ export default function InProgressScreen() {
         }
 
         const inProgressCollectionRef = collection(db, 'users', currentUserUid, 'inProgressManga');
-        const q = query(inProgressCollectionRef, orderBy('startedAt', 'desc'));
 
         const unsubscribe = onSnapshot(
-            q,
+            inProgressCollectionRef,
             (querySnapshot) => {
                 const inProgress: InProgressItem[] = [];
                 querySnapshot.forEach((document) => {
                     const data = document.data();
+                    const lastUpdatedDate = data.lastUpdated?.toDate?.() || data.startedAt?.toDate?.() || null;
+                    const startedAtDate = data.startedAt?.toDate?.() || null;
                     inProgress.push({
                         id: document.id,
                         mangaTitle: data.mangaTitle,
                         coverUrl: data.coverUrl,
                         slug: data.slug,
+                        source: data.source || 'zonatmo',
                         lastReadChapterHid: data.lastReadChapterHid,
                         lastReadChapterNumber: data.lastReadChapterNumber,
-                        startedAt: data.startedAt?.toDate().toLocaleString(),
+                        startedAt: startedAtDate ? startedAtDate.toLocaleDateString() : undefined,
+                        activityText: formatRelativeDate(lastUpdatedDate),
+                        sortTimestamp: lastUpdatedDate ? lastUpdatedDate.getTime() : 0,
                     });
                 });
+                inProgress.sort((a, b) => (b.sortTimestamp || 0) - (a.sortTimestamp || 0));
                 setInProgressComics(inProgress);
                 setLoading(false);
             },
-            (error) => {
-                console.error("Error fetching in-progress comics: ", error);
+            () => {
                 alertError("No se pudieron cargar los cómics en curso.");
                 setLoading(false);
             }
@@ -93,13 +110,11 @@ export default function InProgressScreen() {
         return () => unsubscribe();
     }, [currentUserUid, alertError]);
 
-    // Handle press on an in-progress comic item
-    const handleInProgressPress = (slug: string) => {
+    const handleInProgressPress = useCallback((slug: string) => {
         navigation.navigate('Details', { slug });
-    };
+    }, [navigation]);
 
-    // Handle deletion using alertConfirm from context
-    const handleDeleteComic = (mangaId: string, mangaTitle: string) => {
+    const handleDeleteComic = useCallback((mangaId: string, mangaTitle: string) => {
         if (!currentUserUid) {
             alertError("No se pudo eliminar el cómic. No hay usuario autenticado.");
             return;
@@ -109,21 +124,119 @@ export default function InProgressScreen() {
             `¿Estás seguro de que quieres eliminar "${mangaTitle}" de tus cómics en curso?`,
             async () => {
                 try {
+                    setRemovingId(mangaId);
                     const comicRef = doc(db, 'users', currentUserUid, 'inProgressManga', mangaId);
                     await deleteDoc(comicRef);
                     alertSuccess(`'${mangaTitle}' ha sido eliminado.`);
-                } catch (error) {
-                    console.error("Error deleting comic: ", error);
+                } catch {
                     alertError(`No se pudo eliminar '${mangaTitle}'.`);
+                } finally {
+                    setRemovingId(null);
                 }
             },
             "Confirmar Eliminación",
             "Sí, eliminar",
             "Cancelar"
         );
-    };
+    }, [alertConfirm, alertError, alertSuccess, currentUserUid]);
 
-    // --- Loading State ---
+    const renderTopBar = useMemo(() => (
+        <View style={styles.topBar}>
+            <TouchableOpacity
+                onPress={() => navigation.goBack()}
+                style={styles.backButton}
+                accessible
+                accessibilityLabel="Volver atrás"
+            >
+                <Ionicons name="arrow-back" size={28} color="#6B8AFD" />
+            </TouchableOpacity>
+            <Text style={styles.topBarTitle}>En Curso</Text>
+        </View>
+    ), [navigation]);
+
+    const renderSummaryHeader = useMemo(() => {
+        if (inProgressComics.length === 0) return null;
+
+        return (
+            <LinearGradient colors={['rgba(107,138,253,0.2)', 'rgba(255,107,107,0.1)']} style={styles.summaryCard}>
+                <View style={styles.summaryIconWrap}>
+                    <Ionicons name="time-outline" size={22} color="#D9E2FF" />
+                </View>
+                <View style={styles.summaryTextWrap}>
+                    <Text style={styles.summaryTitle}>Sigue donde te quedaste</Text>
+                    <Text style={styles.summarySubtitle}>
+                        {inProgressComics.length} {inProgressComics.length === 1 ? 'serie activa' : 'series activas'} en tu historial reciente.
+                    </Text>
+                </View>
+            </LinearGradient>
+        );
+    }, [inProgressComics.length]);
+
+    const renderInProgressItem = useCallback(({ item }: { item: InProgressItem }) => (
+        <View style={styles.item}>
+            <TouchableOpacity
+                style={styles.itemMainPressable}
+                onPress={() => handleInProgressPress(item.slug)}
+                activeOpacity={0.82}
+                accessible
+                accessibilityLabel={`Continuar leyendo ${item.mangaTitle}`}
+            >
+                <Image
+                    source={{ uri: item.coverUrl }}
+                    style={styles.coverImage}
+                    resizeMode="cover"
+                />
+                <LinearGradient
+                    colors={['transparent', 'rgba(0,0,0,0.8)']}
+                    style={styles.imageGradient}
+                />
+                <View style={styles.itemContent}>
+                    <View style={styles.itemMetaRow}>
+                        <View style={styles.sourcePill}>
+                            <Text style={styles.sourcePillText}>{item.source || 'zonatmo'}</Text>
+                        </View>
+                        <Text style={styles.activityText}>{item.activityText}</Text>
+                    </View>
+                    <Text style={styles.title} numberOfLines={2}>{item.mangaTitle}</Text>
+                    {item.lastReadChapterNumber ? (
+                        <Text style={styles.lastReadText}>Capítulo actual: {item.lastReadChapterNumber}</Text>
+                    ) : (
+                        <Text style={styles.lastReadText}>Progreso guardado sin número de capítulo</Text>
+                    )}
+                    {item.startedAt && (
+                        <Text style={styles.startedAtText}>Agregado el {item.startedAt}</Text>
+                    )}
+                </View>
+            </TouchableOpacity>
+
+            <View style={styles.itemActionsRow}>
+                <TouchableOpacity
+                    style={styles.continueButton}
+                    onPress={() => handleInProgressPress(item.slug)}
+                    accessibilityLabel={`Abrir ${item.mangaTitle}`}
+                >
+                    <Ionicons name="play" size={16} color="#FFFFFF" />
+                    <Text style={styles.continueButtonText}>Continuar</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                    style={[styles.deleteButton, removingId === item.id && styles.deleteButtonDisabled]}
+                    onPress={() => handleDeleteComic(item.id, item.mangaTitle)}
+                    disabled={removingId === item.id}
+                    accessibilityLabel={`Eliminar ${item.mangaTitle} de cómics en curso`}
+                >
+                    {removingId === item.id ? (
+                        <ActivityIndicator size="small" color="#FFFFFF" />
+                    ) : (
+                        <>
+                            <Ionicons name="trash-outline" size={18} color="#FFFFFF" />
+                            <Text style={styles.deleteButtonText}>Quitar</Text>
+                        </>
+                    )}
+                </TouchableOpacity>
+            </View>
+        </View>
+    ), [handleDeleteComic, handleInProgressPress, removingId]);
+
     if (loading) {
         return (
             <LinearGradient colors={['#0F0F1A', '#252536']} style={styles.loadingContainer}>
@@ -133,7 +246,6 @@ export default function InProgressScreen() {
         );
     }
 
-    // --- Not Logged In State ---
     if (!currentUserUid) {
         return (
             <LinearGradient colors={['#0F0F1A', '#252536']} style={styles.emptyStateContainer}>
@@ -151,23 +263,12 @@ export default function InProgressScreen() {
         );
     }
 
-    // --- No In-Progress Comics State ---
     if (inProgressComics.length === 0) {
         return (
             <LinearGradient colors={['#0F0F1A', '#252536']} style={styles.container}>
                 <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
                 <SafeAreaView style={[styles.safeArea, { paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : insets.top }]}>
-                    <View style={styles.topBar}>
-                        <TouchableOpacity
-                            onPress={() => navigation.goBack()}
-                            style={styles.backButton}
-                            accessible
-                            accessibilityLabel="Volver atrás"
-                        >
-                            <Ionicons name="arrow-back" size={28} color="#6B8AFD" />
-                        </TouchableOpacity>
-                        <Text style={styles.topBarTitle}>En Curso</Text>
-                    </View>
+                    {renderTopBar}
                     <View style={styles.emptyContent}>
                         <Ionicons name="book-outline" size={80} color="#B0BEC5" />
                         <Text style={styles.emptyStateText}>No tienes cómics en curso</Text>
@@ -186,67 +287,17 @@ export default function InProgressScreen() {
         );
     }
 
-    // --- Display In-Progress Comics ---
     return (
         <LinearGradient colors={['#0F0F1A', '#252536']} style={styles.container}>
             <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
             <SafeAreaView style={[styles.safeArea, { paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : insets.top }]}>
-                <View style={styles.topBar}>
-                    <TouchableOpacity
-                        onPress={() => navigation.goBack()}
-                        style={styles.backButton}
-                        accessible
-                        accessibilityLabel="Volver atrás"
-                    >
-                        <Ionicons name="arrow-back" size={28} color="#6B8AFD" />
-                    </TouchableOpacity>
-                    <Text style={styles.topBarTitle}>En Curso</Text>
-                </View>
+                {renderTopBar}
 
                 <FlatList
                     data={inProgressComics}
                     keyExtractor={(item) => item.id}
-                    renderItem={({ item }) => (
-                        <TouchableOpacity
-                            style={styles.item}
-                            onPress={() => handleInProgressPress(item.slug)}
-                            activeOpacity={0.7}
-                            accessible
-                            accessibilityLabel={`Continuar leyendo ${item.mangaTitle}`}
-                        >
-                            <Image
-                                source={{ uri: item.coverUrl }}
-                                style={styles.coverImage}
-                                resizeMode="cover"
-                            />
-                            <LinearGradient
-                                colors={['transparent', 'rgba(0,0,0,0.8)']}
-                                style={styles.imageGradient}
-                            />
-                            <View style={styles.itemContent}>
-                                <Text style={styles.title} numberOfLines={2}>{item.mangaTitle}</Text>
-                                {item.lastReadChapterNumber && (
-                                    <Text style={styles.lastReadText}>
-                                        Último leído: Capítulo {item.lastReadChapterNumber}
-                                    </Text>
-                                )}
-                                {item.startedAt && (
-                                    <Text style={styles.startedAtText}>
-                                        Iniciado el: {item.startedAt}
-                                    </Text>
-                                )}
-                            </View>
-                            <TouchableOpacity
-                                style={styles.deleteButton}
-                                onPress={() => handleDeleteComic(item.id, item.mangaTitle)}
-                                accessible
-                                accessibilityLabel={`Eliminar ${item.mangaTitle} de cómics en curso`}
-                            >
-                                <Ionicons name="trash-outline" size={24} color="#FF6B6B" />
-                            </TouchableOpacity>
-                            <Ionicons name="chevron-forward" size={24} color="#6B8AFD" style={styles.forwardIcon} />
-                        </TouchableOpacity>
-                    )}
+                    renderItem={renderInProgressItem}
+                    ListHeaderComponent={renderSummaryHeader}
                     contentContainerStyle={styles.flatListContent}
                     showsVerticalScrollIndicator={false}
                 />
@@ -255,7 +306,6 @@ export default function InProgressScreen() {
     );
 }
 
-// Los estilos se mantienen igual que en tu código original
 const styles = StyleSheet.create({
     container: {
         flex: 1,
@@ -361,13 +411,50 @@ const styles = StyleSheet.create({
         paddingTop: 10,
         paddingBottom: 20,
     },
-    item: {
+    summaryCard: {
         flexDirection: 'row',
         alignItems: 'center',
+        borderRadius: 18,
+        paddingHorizontal: 16,
+        paddingVertical: 16,
+        marginBottom: 18,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.06)',
+    },
+    summaryIconWrap: {
+        width: 42,
+        height: 42,
+        borderRadius: 21,
+        backgroundColor: 'rgba(107,138,253,0.22)',
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginRight: 12,
+    },
+    summaryTextWrap: {
+        flex: 1,
+    },
+    summaryTitle: {
+        color: '#FFFFFF',
+        fontSize: 17,
+        fontFamily: 'Roboto-Bold',
+    },
+    summarySubtitle: {
+        marginTop: 4,
+        color: '#C7CAD7',
+        fontSize: 13,
+        fontFamily: 'Roboto-Regular',
+    },
+    item: {
         backgroundColor: 'rgba(255, 255, 255, 0.08)',
         borderRadius: 14,
         marginBottom: 15,
         overflow: 'hidden',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.06)',
+    },
+    itemMainPressable: {
+        flexDirection: 'row',
+        alignItems: 'center',
         height: 120,
         position: 'relative',
     },
@@ -388,6 +475,31 @@ const styles = StyleSheet.create({
         paddingHorizontal: 15,
         justifyContent: 'center',
     },
+    itemMetaRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginBottom: 8,
+    },
+    sourcePill: {
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+        borderRadius: 999,
+        backgroundColor: 'rgba(107,138,253,0.22)',
+        borderWidth: 1,
+        borderColor: 'rgba(107,138,253,0.35)',
+    },
+    sourcePillText: {
+        color: '#C9D4FF',
+        fontSize: 11,
+        fontFamily: 'Roboto-Bold',
+        textTransform: 'uppercase',
+    },
+    activityText: {
+        color: '#A9B0C5',
+        fontSize: 12,
+        fontFamily: 'Roboto-Medium',
+    },
     title: {
         color: '#FFFFFF',
         fontSize: 18,
@@ -395,9 +507,9 @@ const styles = StyleSheet.create({
         marginBottom: 5,
     },
     lastReadText: {
-        color: '#B0B0B0',
+        color: '#D7DAE5',
         fontSize: 14,
-        fontFamily: 'Roboto-Regular',
+        fontFamily: 'Roboto-Medium',
         marginTop: 2,
     },
     startedAtText: {
@@ -406,11 +518,44 @@ const styles = StyleSheet.create({
         fontFamily: 'Roboto-Regular',
         marginTop: 4,
     },
-    deleteButton: {
-        padding: 10,
-        marginRight: 5,
+    itemActionsRow: {
+        flexDirection: 'row',
+        gap: 10,
+        paddingHorizontal: 12,
+        paddingBottom: 12,
     },
-    forwardIcon: {
-        paddingRight: 15,
-    }
+    continueButton: {
+        flex: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+        backgroundColor: '#6B8AFD',
+        paddingVertical: 11,
+        borderRadius: 12,
+    },
+    continueButtonText: {
+        color: '#FFFFFF',
+        fontSize: 14,
+        fontFamily: 'Roboto-Bold',
+    },
+    deleteButton: {
+        minWidth: 110,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+        backgroundColor: '#FF6B6B',
+        paddingVertical: 11,
+        paddingHorizontal: 14,
+        borderRadius: 12,
+    },
+    deleteButtonDisabled: {
+        opacity: 0.7,
+    },
+    deleteButtonText: {
+        color: '#FFFFFF',
+        fontSize: 14,
+        fontFamily: 'Roboto-Bold',
+    },
 });

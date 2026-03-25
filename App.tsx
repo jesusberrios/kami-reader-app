@@ -26,6 +26,8 @@ import CommentsScreen from './src/screens/ComentsScreen';
 import InProgressScreen from './src/screens/InProgressScreen';
 import AddFriendsScreen from './src/screens/AddFriendsScreen';
 import ChatScreen from './src/screens/ChatScreen';
+import NewsScreen from './src/screens/NewsScreen';
+import NewsDetailScreen from './src/screens/NewsDetailScreen';
 import { AlertProvider } from './src/contexts/AlertContext';
 // Navigation Types - Actualizado para v6+
 export type RootStackParamList = {
@@ -38,6 +40,8 @@ export type RootStackParamList = {
   Chat: { recipientId?: string; recipientName?: string };
   Profile: { userId?: string };
   Comments: undefined;
+  News: undefined;
+  NewsDetail: { newsItem: { id: string; title: string; message: string; createdAt?: any } };
 };
 
 export type DrawerParamList = {
@@ -356,6 +360,8 @@ export default function App() {
           <Stack.Screen name="Payment" component={PaymentScreen} />
           <Stack.Screen name="Profile" component={ProfileScreen} />
           <Stack.Screen name="Comments" component={CommentsScreen} />
+          <Stack.Screen name="News" component={NewsScreen} />
+          <Stack.Screen name="NewsDetail" component={NewsDetailScreen} />
           <Stack.Screen name="Chat" component={ChatScreen} />
           <Stack.Screen name="AddFriends" component={AddFriendsScreen} />
           <Stack.Screen
