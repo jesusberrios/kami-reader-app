@@ -343,6 +343,8 @@ const AuthScreen = () => {
                     email,
                     emailVerified: false,
                     avatar: 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7',
+                    totalReadingTime: 0,
+                    achievementsUnlocked: [],
                     createdAt: new Date(),
                     lastLogin: new Date(),
                     preferences: {

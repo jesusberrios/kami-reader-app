@@ -1,5 +1,11 @@
-import { collection, deleteDoc, doc, getDoc, getDocs, query, updateDoc, where } from 'firebase/firestore';
+import { collection, deleteDoc, doc, getDoc, getDocs, increment, query, setDoc, updateDoc, where } from 'firebase/firestore';
 import { db } from '../firebase/config';
+
+type ReadComicMetadata = {
+    comicTitle: string;
+    coverUrl: string;
+    slug: string;
+};
 
 export type ReaderAchievement = {
     id: string;
@@ -20,9 +26,9 @@ export type ReadingStats = {
 export const READER_ACHIEVEMENTS: ReaderAchievement[] = [
     {
         id: 'first-read',
-        name: 'Primer Capitulo',
+        name: 'Primer Manga',
         icon: 'book-outline',
-        description: 'Completa tu primera lectura.',
+        description: 'Marca tu primer manga como leido.',
         target: 1,
         valueType: 'totalRead',
     },
@@ -122,6 +128,47 @@ export const syncUserAchievements = async (userId: string, unlockedIds: string[]
     await updateDoc(userDocRef, {
         achievementsUnlocked: unlockedIds,
     });
+};
+
+export const recordReadingTime = async (userId: string, durationMs: number) => {
+    const normalizedDuration = Math.max(0, Math.floor(durationMs));
+    if (!normalizedDuration) return;
+
+    const userDocRef = doc(db, 'users', userId);
+    await updateDoc(userDocRef, {
+        totalReadingTime: increment(normalizedDuration),
+    });
+};
+
+export const recordReadingTimeAndSyncAchievements = async (userId: string, durationMs: number) => {
+    await recordReadingTime(userId, durationMs);
+    const stats = await getUserReadingStats(userId);
+    const unlockedIds = getUnlockedAchievementIds(stats);
+    await syncUserAchievements(userId, unlockedIds);
+};
+
+export const syncFullMangaReadState = async (
+    userId: string,
+    mangaSlug: string,
+    chapterIds: string[],
+    metadata: ReadComicMetadata,
+) => {
+    const normalizedChapterIds = chapterIds.map((chapterId) => String(chapterId || '').trim()).filter(Boolean);
+    const comicReadDocRef = doc(db, 'users', userId, 'readComics', mangaSlug);
+    const chaptersReadSnap = await getDocs(collection(comicReadDocRef, 'chaptersRead'));
+    const readChapterIds = new Set(chaptersReadSnap.docs.map((chapterDoc) => String(chapterDoc.id || '').trim()).filter(Boolean));
+    const isFullMangaRead = normalizedChapterIds.length > 0 && normalizedChapterIds.every((chapterId) => readChapterIds.has(chapterId));
+
+    await setDoc(comicReadDocRef, {
+        ...metadata,
+        isFullMangaRead,
+    }, { merge: true });
+
+    const stats = await getUserReadingStats(userId);
+    const unlockedIds = getUnlockedAchievementIds(stats);
+    await syncUserAchievements(userId, unlockedIds);
+
+    return isFullMangaRead;
 };
 
 export const resetUserReadingStats = async (userId: string) => {

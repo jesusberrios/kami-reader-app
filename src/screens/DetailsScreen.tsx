@@ -22,6 +22,7 @@ import { doc, setDoc, deleteDoc, onSnapshot, collection, getDoc, serverTimestamp
 import { RootStackParamList } from '../navigation/types';
 import { useAlertContext } from '../contexts/AlertContext';
 import { backendUrl } from '../config/backend';
+import { syncFullMangaReadState } from '../services/readingStatsService';
 
 const REQUEST_TIMEOUT_MS = 8000;
 const SCREEN_WIDTH = Dimensions.get('window').width;
@@ -353,6 +354,16 @@ const DetailsScreen: React.FC = () => {
 
         if (currentlyRead) {
             await deleteDoc(chapterReadDocRef);
+            await syncFullMangaReadState(
+                currentUserUid,
+                manga.slug,
+                (manga.chapters || []).map((mangaChapter) => mangaChapter.chapterSlug || mangaChapter.slug),
+                {
+                    comicTitle: manga.title,
+                    coverUrl: manga.cover,
+                    slug: manga.slug,
+                },
+            );
             return;
         }
 
@@ -375,6 +386,17 @@ const DetailsScreen: React.FC = () => {
                 readAt: serverTimestamp(),
             },
         }, { merge: true });
+
+        await syncFullMangaReadState(
+            currentUserUid,
+            manga.slug,
+            (manga.chapters || []).map((mangaChapter) => mangaChapter.chapterSlug || mangaChapter.slug),
+            {
+                comicTitle: manga.title,
+                coverUrl: manga.cover,
+                slug: manga.slug,
+            },
+        );
 
         await updateInProgress(chapter);
     }, [currentUserUid, manga, isPremium, updateInProgress]);

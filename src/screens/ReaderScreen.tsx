@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+    AppState,
+    AppStateStatus,
     View,
     Text,
     ActivityIndicator,
@@ -24,12 +26,20 @@ import { auth, db } from '../firebase/config';
 import { collection, doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore';
 import { useAlertContext } from '../contexts/AlertContext';
 import { backendUrl } from '../config/backend';
+import {
+    recordReadingTime,
+    recordReadingTimeAndSyncAchievements,
+    syncFullMangaReadState,
+} from '../services/readingStatsService';
 
 const { width: screenWidth } = Dimensions.get('window');
 const { height: screenHeight } = Dimensions.get('window');
 const REQUEST_TIMEOUT_MS = 8000;
 const AUTO_HIDE_DELAY = 4500;
 const IMAGE_PREFETCH_WINDOW = 2;
+const INITIAL_IMAGE_WARM_COUNT = 3;
+const READING_SYNC_INTERVAL_MS = 60000;
+const MIN_READING_SYNC_MS = 10000;
 
 const AD_UNIT_ID = __DEV__ ? TestIds.BANNER : 'ca-app-pub-6584977537844104/1888694522';
 MobileAds().initialize();
@@ -78,13 +88,26 @@ const parseComposite = (compositeSlug: string) => {
 };
 
 const ReaderImageItem = React.memo(({ item, index }: { item: ReaderImage; index: number }) => {
-    const initialRatio = item.w > 0 ? (item.h / item.w) : (1200 / 800);
+    const initialRatio = useMemo(() => {
+        return item.w > 0 ? (item.h / item.w) : (1200 / 800);
+    }, [item.w, item.h]);
     const [ratio, setRatio] = useState(initialRatio);
-    const height = screenWidth * ratio;
+    const height = useMemo(() => screenWidth * ratio, [ratio]);
 
     useEffect(() => {
         setRatio(initialRatio);
-    }, [initialRatio, item.url]);
+    }, [item.url, initialRatio]);
+
+    const handleImageLoad = useCallback((event: any) => {
+        const loadedWidth = Number(event?.source?.width || 0);
+        const loadedHeight = Number(event?.source?.height || 0);
+        if (loadedWidth <= 0 || loadedHeight <= 0) return;
+
+        const loadedRatio = loadedHeight / loadedWidth;
+        if (Math.abs(loadedRatio - ratio) > 0.015) {
+            setRatio(loadedRatio);
+        }
+    }, [ratio]);
 
     return (
         <View style={styles.imageContainer}>
@@ -93,16 +116,10 @@ const ReaderImageItem = React.memo(({ item, index }: { item: ReaderImage; index:
                 style={{ width: screenWidth, height }}
                 contentFit="contain"
                 transition={0}
-                cachePolicy="disk"
+                cachePolicy="memory-disk"
                 recyclingKey={item.url}
                 priority={index < 4 ? 'high' : 'normal'}
-                onLoad={(event) => {
-                    const width = Number(event?.source?.width || 0);
-                    const imageHeight = Number(event?.source?.height || 0);
-                    if (width > 0 && imageHeight > 0) {
-                        setRatio(imageHeight / width);
-                    }
-                }}
+                onLoad={handleImageLoad}
             />
         </View>
     );
@@ -139,6 +156,10 @@ const ReaderScreen = () => {
     const prefetchInFlightRef = useRef(false);
     const lastPrefetchStartRef = useRef(-1);
     const chapterSwitchInProgressRef = useRef(false);
+    const readingSessionStartedAtRef = useRef<number | null>(null);
+    const readingSyncIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    const isReaderFocusedRef = useRef(false);
+    const appStateRef = useRef<AppStateStatus>(AppState.currentState);
 
     const parsed = useMemo(() => parseComposite(currentCompositeSlug), [currentCompositeSlug]);
 
@@ -146,14 +167,94 @@ const ReaderScreen = () => {
         imagesRef.current = images;
     }, [images]);
 
+    const warmImageUrls = useCallback(async (urls: string[]) => {
+        const pending = urls.filter(Boolean).filter((url) => {
+            if (prefetchedUrlsRef.current.has(url)) return false;
+            prefetchedUrlsRef.current.add(url);
+            return true;
+        });
+
+        if (!pending.length) return;
+        await Promise.all(pending.map((url) => Image.prefetch(url)));
+    }, []);
+
+    const flushReadingTime = useCallback(async () => {
+        const startedAt = readingSessionStartedAtRef.current;
+        const user = auth.currentUser;
+        if (!startedAt || !user) {
+            readingSessionStartedAtRef.current = user ? Date.now() : null;
+            return;
+        }
+
+        const elapsedMs = Date.now() - startedAt;
+        readingSessionStartedAtRef.current = Date.now();
+
+        if (elapsedMs < MIN_READING_SYNC_MS) return;
+
+        try {
+            await recordReadingTime(user.uid, elapsedMs);
+        } catch {
+            // silently ignored to avoid interrupting reading
+        }
+    }, []);
+
+    const resumeReadingSession = useCallback(() => {
+        if (!auth.currentUser) return;
+        readingSessionStartedAtRef.current = Date.now();
+    }, []);
+
     useFocusEffect(
         useCallback(() => {
+            isReaderFocusedRef.current = true;
             NativeModules.ImmersiveModule?.hideNavigationBar?.();
+            StatusBar.setHidden(true, 'slide');
+
+            resumeReadingSession();
+            readingSyncIntervalRef.current = setInterval(() => {
+                flushReadingTime();
+            }, READING_SYNC_INTERVAL_MS);
+
             return () => {
+                isReaderFocusedRef.current = false;
+                if (readingSyncIntervalRef.current) {
+                    clearInterval(readingSyncIntervalRef.current);
+                    readingSyncIntervalRef.current = null;
+                }
+                const user = auth.currentUser;
+                const remainingMs = Math.max(Date.now() - (readingSessionStartedAtRef.current || Date.now()), 0);
+                if (user && remainingMs >= MIN_READING_SYNC_MS) {
+                    recordReadingTimeAndSyncAchievements(user.uid, remainingMs).catch(() => {
+                        // silently ignored to avoid interrupting reading
+                    });
+                }
+                readingSessionStartedAtRef.current = null;
                 NativeModules.ImmersiveModule?.showNavigationBar?.();
+                StatusBar.setHidden(false, 'slide');
             };
-        }, [])
+        }, [flushReadingTime, resumeReadingSession])
     );
+
+    useEffect(() => {
+        const subscription = AppState.addEventListener('change', (nextAppState) => {
+            const previousAppState = appStateRef.current;
+            appStateRef.current = nextAppState;
+
+            if (!isReaderFocusedRef.current) return;
+
+            if (previousAppState === 'active' && nextAppState.match(/inactive|background/)) {
+                flushReadingTime();
+                readingSessionStartedAtRef.current = null;
+            }
+
+            if (nextAppState === 'active' && !readingSessionStartedAtRef.current) {
+                resumeReadingSession();
+            }
+        });
+
+        return () => {
+            subscription.remove();
+        };
+    }, [flushReadingTime, resumeReadingSession]);
 
     useEffect(() => {
         const fetchUserReaderSettings = async () => {
@@ -250,6 +351,10 @@ const ReaderScreen = () => {
                 throw new Error('No se encontraron imagenes para este capitulo.');
             }
 
+            prefetchedUrlsRef.current.clear();
+            lastPrefetchStartRef.current = -1;
+            await warmImageUrls(imgs.slice(0, INITIAL_IMAGE_WARM_COUNT).map((img) => img.url));
+
             const chapters: ChapterMeta[] = (mangaData.manga?.chapters || []).map((ch: any) => ({
                 slug: ch.slug,
                 chapterSlug: ch.chapterSlug,
@@ -304,6 +409,17 @@ const ReaderScreen = () => {
                             startedAt: serverTimestamp(),
                         }, { merge: true }),
                     ]);
+
+                    await syncFullMangaReadState(
+                        user.uid,
+                        parsed.mangaSlug,
+                        chapters.map((chapter) => chapter.chapterSlug || chapter.slug),
+                        {
+                            comicTitle: mangaInfo.title || parsed.mangaSlug,
+                            coverUrl: mangaInfo.cover || '',
+                            slug: parsed.mangaSlug,
+                        },
+                    );
                 }
             }
 
@@ -313,16 +429,14 @@ const ReaderScreen = () => {
             setNextCompositeSlug(nextChapter?.slug || null);
             setPrevCompositeSlug(prevChapter?.slug || null);
             setImages(imgs);
-            prefetchedUrlsRef.current.clear();
-            lastPrefetchStartRef.current = -1;
-            prefetchImages(imgs, 0);
+            prefetchImages(imgs, INITIAL_IMAGE_WARM_COUNT);
             flashListRef.current?.scrollToOffset({ offset: 0, animated: false });
         } catch (error: any) {
             alertError(error.message || 'No se pudo cargar el capitulo.');
         } finally {
             setLoadingChapter(false);
         }
-    }, [parsed.mangaSlug, parsed.chapterSlug, alertError, prefetchImages, plan]);
+    }, [parsed.mangaSlug, parsed.chapterSlug, alertError, prefetchImages, plan, warmImageUrls]);
 
     useEffect(() => {
         loadChapterData();
@@ -412,7 +526,9 @@ const ReaderScreen = () => {
         setPrevChapterRefreshing(false);
     }, [currentCompositeSlug]);
 
-    const renderImageItem = useCallback(({ item, index }: { item: ReaderImage; index: number }) => <ReaderImageItem item={item} index={index} />, []);
+    const renderImageItem = useCallback(({ item, index }: { item: ReaderImage; index: number }) => {
+        return <ReaderImageItem item={item} index={index} />;
+    }, []);
 
     const handleViewableItemsChanged = useRef(({ viewableItems }: { viewableItems: Array<{ index: number | null }> }) => {
         const maxVisibleIndex = viewableItems.reduce((acc, it) => {
@@ -427,7 +543,7 @@ const ReaderScreen = () => {
 
     return (
         <View style={styles.container}>
-            <StatusBar translucent backgroundColor="transparent" barStyle="light-content" animated />
+            <StatusBar hidden={true} translucent backgroundColor="transparent" barStyle="light-content" />
 
             {showControls && (
                 <Animated.View style={[styles.topBar, { opacity: controlsOpacity, paddingTop: insets.top }]}>
@@ -459,14 +575,16 @@ const ReaderScreen = () => {
                                 estimatedItemSize={Math.max(520, screenHeight)}
                                 keyExtractor={(item) => item.id}
                                 renderItem={renderImageItem}
-                                removeClippedSubviews
                                 showsVerticalScrollIndicator={false}
+                                removeClippedSubviews={false}
                                 onScrollBeginDrag={hudLocked ? undefined : showAndResetControls}
                                 onMomentumScrollBegin={hudLocked ? undefined : showAndResetControls}
-                                drawDistance={screenHeight}
+                                drawDistance={screenHeight * 1.25}
                                 onViewableItemsChanged={handleViewableItemsChanged}
-                                viewabilityConfig={{ itemVisiblePercentThreshold: 15 }}
+                                viewabilityConfig={{ itemVisiblePercentThreshold: 10 }}
                                 scrollEventThrottle={16}
+                                maxToRenderPerBatch={4}
+                                updateCellsBatchingPeriod={40}
                             />
                         </View>
                     </FlingGestureHandler>
@@ -480,14 +598,16 @@ const ReaderScreen = () => {
                         estimatedItemSize={Math.max(520, screenHeight)}
                         keyExtractor={(item) => item.id}
                         renderItem={renderImageItem}
-                        removeClippedSubviews
                         showsVerticalScrollIndicator={false}
+                        removeClippedSubviews={false}
                         onScrollBeginDrag={hudLocked ? undefined : showAndResetControls}
                         onMomentumScrollBegin={hudLocked ? undefined : showAndResetControls}
-                        drawDistance={screenHeight}
+                        drawDistance={screenHeight * 1.25}
                         onViewableItemsChanged={handleViewableItemsChanged}
-                        viewabilityConfig={{ itemVisiblePercentThreshold: 15 }}
+                        viewabilityConfig={{ itemVisiblePercentThreshold: 10 }}
                         scrollEventThrottle={16}
+                        maxToRenderPerBatch={4}
+                        updateCellsBatchingPeriod={40}
                         onEndReached={handleVerticalEndReached}
                         onEndReachedThreshold={0.2}
                         refreshControl={
