@@ -243,20 +243,6 @@ const ProfileScreen = () => {
         });
     };
 
-    const handleChangeChapterMode = async (mode: 'horizontal' | 'vertical') => {
-        if (!currentUser || !isOwnProfile) return;
-        if (userProfile?.chapterChangeMode === mode) return;
-
-        try {
-            await updateDoc(doc(db, 'users', currentUser.uid), { chapterChangeMode: mode });
-            setUserProfile((prev) => prev ? { ...prev, chapterChangeMode: mode } : null);
-            alertSuccess('Preferencia de lectura actualizada');
-        } catch (error) {
-            alertError('No se pudo actualizar la preferencia de lectura');
-        }
-    };
-
-
     const handleResetStats = async () => {
         if (!currentUser || !isOwnProfile) return;
 
@@ -294,26 +280,30 @@ const ProfileScreen = () => {
                     <ScrollView contentContainerStyle={styles.scrollContainer}>
                         {/* Header */}
                         <View style={styles.header}>
-                            <Animated.View style={{ transform: [{ scale: scaleValue }] }}>
-                                <TouchableOpacity
-                                    onPress={() => {
-                                        animateButtonPress();
-                                        isOwnProfile ? navigation.toggleDrawer() : navigation.goBack();
-                                    }}
-                                    style={styles.menuButton}
-                                    activeOpacity={0.8}
-                                >
-                                    <Ionicons
-                                        name={isOwnProfile ? "menu" : "arrow-back"}
-                                        size={28}
-                                        color="#FF6E6E"
-                                    />
-                                </TouchableOpacity>
-                            </Animated.View>
+                            {isOwnProfile ? (
+                                <View style={styles.headerSideSpacer} />
+                            ) : (
+                                <Animated.View style={{ transform: [{ scale: scaleValue }] }}>
+                                    <TouchableOpacity
+                                        onPress={() => {
+                                            animateButtonPress();
+                                            navigation.goBack();
+                                        }}
+                                        style={styles.menuButton}
+                                        activeOpacity={0.8}
+                                    >
+                                        <Ionicons
+                                            name="arrow-back"
+                                            size={28}
+                                            color="#FF6E6E"
+                                        />
+                                    </TouchableOpacity>
+                                </Animated.View>
+                            )}
                             <Text style={styles.title}>
                                 {isOwnProfile ? 'Mi Perfil' : 'Perfil'}
                             </Text>
-                            <View style={{ width: 28 }} />
+                            <View style={styles.headerSideSpacer} />
                         </View>
 
                         {/* Profile Card */}
@@ -474,65 +464,6 @@ const ProfileScreen = () => {
                         </View>
 
                         {/* Achievements Section */}
-                        {isOwnProfile && (
-                            <View style={styles.section}>
-                                <Text style={styles.sectionTitle}>Lectura</Text>
-                                <View style={styles.settingCard}>
-                                    <Text style={styles.settingLabel}>Cambio de capitulo</Text>
-                                    <View style={styles.modeOptionsRow}>
-                                        <TouchableOpacity
-                                            style={[
-                                                styles.modeOption,
-                                                (userProfile.chapterChangeMode || 'horizontal') === 'horizontal' && styles.modeOptionActive,
-                                            ]}
-                                            onPress={() => handleChangeChapterMode('horizontal')}
-                                            activeOpacity={0.85}
-                                        >
-                                            <Ionicons
-                                                name="swap-horizontal"
-                                                size={16}
-                                                color={(userProfile.chapterChangeMode || 'horizontal') === 'horizontal' ? '#FFF' : '#AAA'}
-                                            />
-                                            <Text
-                                                style={[
-                                                    styles.modeOptionText,
-                                                    (userProfile.chapterChangeMode || 'horizontal') === 'horizontal' && styles.modeOptionTextActive,
-                                                ]}
-                                            >
-                                                Horizontal
-                                            </Text>
-                                        </TouchableOpacity>
-
-                                        <TouchableOpacity
-                                            style={[
-                                                styles.modeOption,
-                                                (userProfile.chapterChangeMode || 'horizontal') === 'vertical' && styles.modeOptionActive,
-                                            ]}
-                                            onPress={() => handleChangeChapterMode('vertical')}
-                                            activeOpacity={0.85}
-                                        >
-                                            <Ionicons
-                                                name="swap-vertical"
-                                                size={16}
-                                                color={(userProfile.chapterChangeMode || 'horizontal') === 'vertical' ? '#FFF' : '#AAA'}
-                                            />
-                                            <Text
-                                                style={[
-                                                    styles.modeOptionText,
-                                                    (userProfile.chapterChangeMode || 'horizontal') === 'vertical' && styles.modeOptionTextActive,
-                                                ]}
-                                            >
-                                                Vertical
-                                            </Text>
-                                        </TouchableOpacity>
-                                    </View>
-                                    <Text style={styles.settingHint}>
-                                        Horizontal: desliza a los lados. Vertical: al final del capitulo pasa al siguiente automaticamente.
-                                    </Text>
-                                </View>
-                            </View>
-                        )}
-
                         <View style={styles.section}>
                             <Text style={styles.sectionTitle}>Logros</Text>
                             {userProfile.accountType === 'premium' || isOwnProfile ? (
@@ -667,6 +598,10 @@ const styles = StyleSheet.create({
         padding: 8,
         borderRadius: 20,
         backgroundColor: 'rgba(255, 110, 110, 0.1)',
+    },
+    headerSideSpacer: {
+        width: 44,
+        height: 44,
     },
     title: {
         fontSize: 24,

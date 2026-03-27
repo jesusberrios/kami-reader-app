@@ -8,7 +8,6 @@ import {
     StyleSheet,
     ActivityIndicator,
     Image,
-    SafeAreaView,
     StatusBar,
     RefreshControl,
     Modal,
@@ -20,8 +19,10 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
 import { collection, query, where, getDocs, doc, getDoc, updateDoc, arrayUnion, arrayRemove, onSnapshot, deleteField, writeBatch } from 'firebase/firestore';
 import { db, auth } from '../firebase/config';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAlertContext } from '../contexts/AlertContext';
+
+const SUPPORT_EMAIL = 'sukisoft.soporte@gmail.com';
 
 type User = {
     uid: string;
@@ -146,6 +147,72 @@ const FriendsScreen = () => {
 
     const currentUser = auth.currentUser;
 
+    const ensureSupportFriend = useCallback(async (): Promise<User | null> => {
+        if (!currentUser) return null;
+
+        let supportDocRef: any = null;
+        let supportData: any = null;
+
+        try {
+            const usersRef = collection(db, 'users');
+            const supportSnap = await getDocs(query(usersRef, where('email', '==', SUPPORT_EMAIL)));
+            if (!supportSnap.empty) {
+                supportDocRef = supportSnap.docs[0];
+                supportData = supportDocRef.data();
+            } else {
+                // Fallback for case-sensitive/missing-index email queries.
+                const allUsers = await getDocs(usersRef);
+                const found = allUsers.docs.find((d) => String(d.data()?.email || '').toLowerCase() === SUPPORT_EMAIL.toLowerCase());
+                if (!found) return null;
+                supportDocRef = found;
+                supportData = found.data();
+            }
+
+            if (!supportDocRef || supportDocRef.id === currentUser.uid) return null;
+
+            const [currentUserSnap, supportUserSnap] = await Promise.all([
+                getDoc(doc(db, 'users', currentUser.uid)),
+                getDoc(doc(db, 'users', supportDocRef.id)),
+            ]);
+
+            const currentFriends = Array.isArray(currentUserSnap.data()?.friends) ? currentUserSnap.data()?.friends : [];
+            const supportFriends = Array.isArray(supportUserSnap.data()?.friends) ? supportUserSnap.data()?.friends : [];
+            const needsCurrentUpdate = !currentFriends.includes(supportDocRef.id);
+            const needsSupportUpdate = !supportFriends.includes(currentUser.uid);
+
+            // Keep friendship guaranteed for chat support without requiring manual request flow.
+            const writeOps: Promise<any>[] = [];
+            if (needsCurrentUpdate) {
+                writeOps.push(updateDoc(doc(db, 'users', currentUser.uid), {
+                    friends: arrayUnion(supportDocRef.id),
+                    pendingSentRequests: arrayRemove(supportDocRef.id),
+                    pendingReceivedRequests: arrayRemove(supportDocRef.id),
+                }));
+            }
+            if (needsSupportUpdate) {
+                writeOps.push(updateDoc(doc(db, 'users', supportDocRef.id), {
+                    friends: arrayUnion(currentUser.uid),
+                    pendingSentRequests: arrayRemove(currentUser.uid),
+                    pendingReceivedRequests: arrayRemove(currentUser.uid),
+                }));
+            }
+            if (writeOps.length > 0) {
+                await Promise.all(writeOps);
+            }
+
+            return {
+                uid: supportDocRef.id,
+                email: String(supportData.email || SUPPORT_EMAIL),
+                username: String(supportData.username || 'Soporte'),
+                avatar: String(supportData.avatar || 'https://via.placeholder.com/150'),
+                status: 'friend',
+                unreadCount: 0,
+            };
+        } catch {
+            return null;
+        }
+    }, [currentUser]);
+
     // Memoizar datos actuales
     const currentData = useMemo(() => {
         if (searchQuery.trim()) return searchResults;
@@ -159,6 +226,7 @@ const FriendsScreen = () => {
         if (!currentUser) return;
 
         try {
+            const supportFriend = await ensureSupportFriend();
             const [userDoc, userChatsDoc] = await Promise.all([
                 getDoc(doc(db, 'users', currentUser.uid)),
                 getDoc(doc(db, 'userChats', currentUser.uid))
@@ -185,6 +253,13 @@ const FriendsScreen = () => {
                 loadUsersWithStatus(userData.pendingReceivedRequests || [], 'requestReceived')
             ]);
 
+            if (supportFriend && !friendsData.some((x) => x.uid === supportFriend.uid)) {
+                friendsData.unshift({
+                    ...supportFriend,
+                    unreadCount: unreadCounts[supportFriend.uid] || 0,
+                });
+            }
+
             setFriends(friendsData);
             setSentRequests(sentData);
             setReceivedRequests(receivedData);
@@ -194,7 +269,7 @@ const FriendsScreen = () => {
         } finally {
             setLoading(false);
         }
-    }, [currentUser, alertError]);
+    }, [currentUser, alertError, ensureSupportFriend]);
 
     // Función auxiliar para cargar usuarios con estado
     const loadUsersWithStatus = async (userIds: string[], status: User['status'], unreadCounts?: { [key: string]: number }) => {
@@ -483,7 +558,7 @@ const FriendsScreen = () => {
         return (
             <LinearGradient colors={['#1A1A24', '#2C2C38']} style={styles.container}>
                 <StatusBar barStyle="light-content" />
-                <SafeAreaView style={[styles.safeArea, { paddingTop: insets.top }]}>
+                <SafeAreaView style={styles.safeArea} edges={['top', 'bottom', 'left', 'right']}>
                     <View style={styles.loadingContainer}>
                         <ActivityIndicator size="large" color="#FF5252" />
                     </View>
@@ -495,7 +570,7 @@ const FriendsScreen = () => {
     return (
         <LinearGradient colors={['#1A1A24', '#2C2C38']} style={styles.container}>
             <StatusBar barStyle="light-content" />
-            <SafeAreaView style={[styles.safeArea, { paddingTop: insets.top }]}>
+            <SafeAreaView style={styles.safeArea} edges={['top', 'bottom', 'left', 'right']}>
 
                 {/* Header */}
                 <View style={styles.header}>

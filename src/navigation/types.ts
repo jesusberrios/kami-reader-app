@@ -4,8 +4,9 @@ export type RootStackParamList = {
     Auth: undefined;
     Main: undefined;
     Tutorial: { manual?: boolean } | undefined;
+    Personalization: undefined;
     Details: { slug: string };
-    Reader: { hid: string };
+    Reader: { hid: string; resumeFromProgress?: boolean };
     News: undefined;
     NewsDetail: { newsItem: { id: string; title: string; message: string; createdAt?: any } };
     Payment: undefined;
@@ -38,7 +39,7 @@ export type AppStackParamList = {
 export type HomeStackParamList = {
     Home: undefined;
     Details: { slug: string };
-    Reader: { hid: string };
+    Reader: { hid: string; resumeFromProgress?: boolean };
 };
 
 export type ProfileStackParamList = {

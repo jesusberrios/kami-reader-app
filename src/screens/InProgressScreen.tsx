@@ -17,6 +17,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { auth, db } from '../firebase/config';
 import { collection, onSnapshot, deleteDoc, doc } from 'firebase/firestore';
 import { useAlertContext } from '../contexts/AlertContext';
+import { getProviderAliasLabel } from '../utils/providerBranding';
 
 // Define the type for an in-progress item
 type InProgressItem = {
@@ -27,6 +28,7 @@ type InProgressItem = {
     source?: string;
     lastReadChapterHid?: string;
     lastReadChapterNumber?: string;
+    lastReadImagePage?: number;
     startedAt?: string;
     activityText?: string;
     sortTimestamp?: number;
@@ -91,6 +93,7 @@ export default function InProgressScreen() {
                         source: data.source || 'zonatmo',
                         lastReadChapterHid: data.lastReadChapterHid,
                         lastReadChapterNumber: data.lastReadChapterNumber,
+                        lastReadImagePage: Number.isFinite(Number(data.lastReadImagePage)) ? Number(data.lastReadImagePage) : undefined,
                         startedAt: startedAtDate ? startedAtDate.toLocaleDateString() : undefined,
                         activityText: formatRelativeDate(lastUpdatedDate),
                         sortTimestamp: lastUpdatedDate ? lastUpdatedDate.getTime() : 0,
@@ -109,8 +112,12 @@ export default function InProgressScreen() {
         return () => unsubscribe();
     }, [currentUserUid, alertError]);
 
-    const handleInProgressPress = useCallback((slug: string) => {
-        navigation.navigate('Details', { slug });
+    const handleInProgressPress = useCallback((item: InProgressItem) => {
+        if (item.lastReadChapterHid) {
+            navigation.navigate('Reader', { hid: item.lastReadChapterHid, resumeFromProgress: true });
+            return;
+        }
+        navigation.navigate('Details', { slug: item.slug });
     }, [navigation]);
 
     const handleDeleteComic = useCallback((mangaId: string, mangaTitle: string) => {
@@ -175,16 +182,18 @@ export default function InProgressScreen() {
         <View style={styles.item}>
             <TouchableOpacity
                 style={styles.itemMainPressable}
-                onPress={() => handleInProgressPress(item.slug)}
+                onPress={() => handleInProgressPress(item)}
                 activeOpacity={0.82}
                 accessible
                 accessibilityLabel={`Continuar leyendo ${item.mangaTitle}`}
             >
-                <Image
-                    source={{ uri: item.coverUrl }}
-                    style={styles.coverImage}
-                    resizeMode="cover"
-                />
+                {item.coverUrl && (
+                    <Image
+                        source={{ uri: item.coverUrl }}
+                        style={styles.coverImage}
+                        resizeMode="cover"
+                    />
+                )}
                 <LinearGradient
                     colors={['transparent', 'rgba(0,0,0,0.8)']}
                     style={styles.imageGradient}
@@ -192,13 +201,15 @@ export default function InProgressScreen() {
                 <View style={styles.itemContent}>
                     <View style={styles.itemMetaRow}>
                         <View style={styles.sourcePill}>
-                            <Text style={styles.sourcePillText}>{item.source || 'zonatmo'}</Text>
+                            <Text style={styles.sourcePillText}>{getProviderAliasLabel(item.source)}</Text>
                         </View>
                         <Text style={styles.activityText}>{item.activityText}</Text>
                     </View>
                     <Text style={styles.title} numberOfLines={2}>{item.mangaTitle}</Text>
                     {item.lastReadChapterNumber ? (
-                        <Text style={styles.lastReadText}>Capítulo actual: {item.lastReadChapterNumber}</Text>
+                        <Text style={styles.lastReadText}>
+                            {`Capítulo actual: ${item.lastReadChapterNumber}${item.lastReadImagePage ? ` · Img. ${item.lastReadImagePage}` : ''}`}
+                        </Text>
                     ) : (
                         <Text style={styles.lastReadText}>Progreso guardado sin número de capítulo</Text>
                     )}
@@ -211,7 +222,7 @@ export default function InProgressScreen() {
             <View style={styles.itemActionsRow}>
                 <TouchableOpacity
                     style={styles.continueButton}
-                    onPress={() => handleInProgressPress(item.slug)}
+                    onPress={() => handleInProgressPress(item)}
                     accessibilityLabel={`Abrir ${item.mangaTitle}`}
                 >
                     <Ionicons name="play" size={16} color="#FFFFFF" />
@@ -453,14 +464,19 @@ const styles = StyleSheet.create({
     },
     itemMainPressable: {
         flexDirection: 'row',
-        alignItems: 'center',
-        height: 120,
+        alignItems: 'flex-start',
+        minHeight: 120,
+        paddingLeft: 12,
+        paddingRight: 12,
+        paddingVertical: 10,
         position: 'relative',
     },
     coverImage: {
         width: 80,
-        height: '100%',
+        height: 104,
         backgroundColor: '#333',
+        borderRadius: 12,
+        marginRight: 10,
     },
     imageGradient: {
         position: 'absolute',
@@ -471,8 +487,9 @@ const styles = StyleSheet.create({
     },
     itemContent: {
         flex: 1,
-        paddingHorizontal: 15,
-        justifyContent: 'center',
+        paddingRight: 4,
+        paddingTop: 8,
+        justifyContent: 'flex-start',
     },
     itemMetaRow: {
         flexDirection: 'row',
@@ -501,9 +518,10 @@ const styles = StyleSheet.create({
     },
     title: {
         color: '#FFFFFF',
-        fontSize: 18,
+        fontSize: 16,
         fontFamily: 'Roboto-Bold',
-        marginBottom: 5,
+        marginBottom: 4,
+        lineHeight: 22,
     },
     lastReadText: {
         color: '#D7DAE5',
@@ -521,6 +539,7 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         gap: 10,
         paddingHorizontal: 12,
+        paddingTop: 12,
         paddingBottom: 12,
     },
     continueButton: {
@@ -539,7 +558,7 @@ const styles = StyleSheet.create({
         fontFamily: 'Roboto-Bold',
     },
     deleteButton: {
-        minWidth: 110,
+        flex: 1,
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',

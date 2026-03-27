@@ -16,6 +16,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { auth, db } from '../firebase/config';
 import { collection, deleteDoc, doc, onSnapshot, orderBy, query } from 'firebase/firestore';
 import { useAlertContext } from '../contexts/AlertContext';
+import { getProviderAliasLabel } from '../utils/providerBranding';
 
 type FavoriteItem = {
     id: string;
@@ -148,7 +149,7 @@ export default function FavoritesScreen() {
                 <View style={styles.itemContent}>
                     <View style={styles.itemMetaRow}>
                         <View style={styles.sourcePill}>
-                            <Text style={styles.sourcePillText}>{item.source || 'zonatmo'}</Text>
+                            <Text style={styles.sourcePillText}>{getProviderAliasLabel(item.source)}</Text>
                         </View>
                         {item.content_rating === 'erotica' && (
                             <View style={styles.eroticBadge}>

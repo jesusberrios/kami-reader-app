@@ -7,9 +7,10 @@ import {
     TouchableOpacity,
     Dimensions,
     Animated,
-    ActivityIndicator
+    ActivityIndicator,
+    ScrollView
 } from 'react-native';
-import { DrawerContentScrollView, DrawerItemList } from '@react-navigation/drawer';
+import { DrawerItemList } from '@react-navigation/drawer';
 import { doc, onSnapshot, collection, query, where, updateDoc } from 'firebase/firestore';
 import { db, auth } from '../firebase/config';
 import { signOut } from 'firebase/auth';
@@ -20,6 +21,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { BannerAd, BannerAdSize, TestIds } from 'react-native-google-mobile-ads';
 import { useAlertContext } from '../contexts/AlertContext'; // Importar el contexto de alertas
 import { formatReadingTime } from '../services/readingStatsService';
+import { usePersonalization } from '../contexts/PersonalizationContext';
 
 type UserData = {
     username?: string;
@@ -71,6 +73,7 @@ const CustomDrawerContent = (props: CustomDrawerContentProps) => {
     const [totalPending, setTotalPending] = useState(0);
     const navigation = useNavigation();
     const adUnitId = __DEV__ ? TestIds.BANNER : 'ca-app-pub-6584977537844104/1888694522';
+    const { theme } = usePersonalization();
 
     // Obtener las funciones de alerta del contexto
     const { alertError, alertConfirm } = useAlertContext();
@@ -202,6 +205,20 @@ const CustomDrawerContent = (props: CustomDrawerContentProps) => {
         navigation.navigate('Tutorial' as never, { manual: true } as never);
     };
 
+    const handleOpenProfile = () => {
+        props.navigation.closeDrawer();
+        props.navigation.navigate('Profile');
+    };
+
+    const handleOpenPersonalization = () => {
+        props.navigation.closeDrawer();
+        navigation.navigate('Personalization' as never);
+    };
+
+    const handleCloseSettings = () => {
+        props.navigation.closeDrawer();
+    };
+
     const isPremiumUser = userData?.accountType === 'premium';
     const drawerWidth = Dimensions.get('window').width * 0.65;
 
@@ -259,130 +276,151 @@ const CustomDrawerContent = (props: CustomDrawerContentProps) => {
     if (drawerLoading) {
         return (
             <LinearGradient
-                colors={['#0F0F1A', '#1E1E2D']}
+                colors={[theme.background, theme.backgroundSecondary]}
                 style={styles.loadingContainer}
                 start={{ x: 0, y: 0 }}
                 end={{ x: 1, y: 1 }}
             >
-                <ActivityIndicator size="large" color="#FF6E6E" />
-                <Text style={styles.loadingText}>Cargando menú...</Text>
+                <ActivityIndicator size="large" color={theme.accent} />
+                <Text style={[styles.loadingText, { color: theme.text }]}>Cargando menú...</Text>
             </LinearGradient>
         );
     }
 
     return (
         <LinearGradient
-            colors={['#0F0F1A', '#1E1E2D']}
+            colors={[theme.background, theme.backgroundSecondary]}
             style={styles.container}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 1 }}
         >
-            <DrawerContentScrollView
-                {...props}
-                contentContainerStyle={[
-                    styles.drawerContainer,
-                    { paddingTop: insets.top + 8 },
-                ]}
-                showsVerticalScrollIndicator={false}
-            >
-                {/* User Profile Section */}
-                <View style={styles.userHeader}>
-                    <LinearGradient
-                        colors={['rgba(255,110,110,0.18)', 'rgba(107,138,253,0.08)']}
-                        style={styles.userHeaderGlow}
-                        start={{ x: 0, y: 0 }}
-                        end={{ x: 1, y: 1 }}
-                    />
-                    <View style={styles.avatarContainer}>
-                        <Image
-                            source={userData?.avatar ? { uri: userData.avatar } : require('../../assets/icon.png')}
-                            style={styles.avatar}
-                        />
-                        <View style={[
-                            styles.onlineStatus,
-                            { backgroundColor: isPremiumUser ? '#4CD964' : '#A0A0B0' }
-                        ]} />
-                    </View>
-
-                    <View style={styles.userInfo}>
-                        <View style={styles.userNameContainer}>
-                            <Text style={styles.userName} numberOfLines={1}>
-                                {userData?.username || 'Invitado'}
-                            </Text>
-                            {userData?.accountType && <UserPlanBadge accountType={userData.accountType} />}
+            <View style={[styles.drawerContainer, { paddingTop: insets.top + 8 }]}> 
+                <View>
+                    <View style={styles.settingsHeader}>
+                        <View>
+                            <Text style={[styles.settingsTitle, { color: theme.text }]}>Configuración</Text>
+                            <Text style={[styles.settingsSubtitle, { color: theme.textMuted }]}>Administra tu cuenta y accesos</Text>
                         </View>
-                        <Text style={styles.userEmail} numberOfLines={1}>
-                            {userData?.email || 'usuario@example.com'}
-                        </Text>
+                        <TouchableOpacity style={[styles.settingsCloseButton, { backgroundColor: theme.surface, borderColor: theme.border }]} onPress={handleCloseSettings} activeOpacity={0.8}>
+                            <Ionicons name="close" size={22} color={theme.text} />
+                        </TouchableOpacity>
                     </View>
-                </View>
 
-                {/* Stats Section */}
-                <View style={styles.statsContainer}>
-                    <LinearGradient
-                        colors={['rgba(30, 30, 45, 0.8)', 'rgba(20, 20, 35, 0.9)']}
-                        style={styles.statsBackground}
-                        start={{ x: 0, y: 0 }}
-                        end={{ x: 1, y: 1 }}
-                    >
-                        {isPremiumUser ? (
-                            <>
-                                <View style={styles.statItem}>
-                                    <Ionicons name="book" size={22} color="#FF6E6E" />
-                                    <Text style={styles.statValue}>{mangasReadCount}</Text>
-                                    <Text style={styles.statLabel}>Leídos</Text>
-                                </View>
-                                <View style={styles.statDivider} />
-                                <View style={styles.statItem}>
-                                    <Ionicons name="time" size={22} color="#FF6E6E" />
-                                    <Text style={styles.statValue}>{formatReadingTime(totalReadingTimeMs)}</Text>
-                                    <Text style={styles.statLabel}>Tiempo</Text>
-                                </View>
-                                <View style={styles.statDivider} />
-                                <View style={styles.statItem}>
-                                    <Ionicons name="heart" size={22} color="#FF6E6E" />
-                                    <Text style={styles.statValue}>{favoritesCount}</Text>
-                                    <Text style={styles.statLabel}>Favoritos</Text>
-                                </View>
-                            </>
-                        ) : (
-                            <TouchableOpacity
-                                style={styles.lockedStatsOverlay}
-                                onPress={() => navigation.navigate('Payment' as never)}
-                                activeOpacity={0.8}
-                            >
-                                <MaterialCommunityIcons
-                                    name="crown"
-                                    size={32}
-                                    color="#FFD700"
-                                    style={styles.crownIcon}
-                                />
-                                <Text style={styles.lockedStatsText}>Desbloquea estadísticas completas</Text>
-                                <Text style={styles.lockedStatsSubText}>Conviértete en Premium</Text>
-                            </TouchableOpacity>
-                        )}
-                    </LinearGradient>
-                </View>
+                    {/* User Profile Section */}
+                    <TouchableOpacity style={styles.userHeader} onPress={handleOpenProfile} activeOpacity={0.82}>
+                        <LinearGradient
+                            colors={['rgba(255,110,110,0.18)', 'rgba(107,138,253,0.08)']}
+                            style={styles.userHeaderGlow}
+                            start={{ x: 0, y: 0 }}
+                            end={{ x: 1, y: 1 }}
+                        />
+                        <View style={styles.avatarContainer}>
+                            <Image
+                                source={userData?.avatar ? { uri: userData.avatar } : require('../../assets/icon.png')}
+                                style={styles.avatar}
+                            />
+                            <View style={[
+                                styles.onlineStatus,
+                                { backgroundColor: isPremiumUser ? '#4CD964' : '#A0A0B0' }
+                            ]} />
+                        </View>
 
-                {/* Navigation Items */}
-                <View style={styles.navigationContainer}>
-                    <TouchableOpacity
-                        style={styles.tutorialButton}
-                        onPress={handleOpenTutorial}
-                        activeOpacity={0.8}
-                    >
-                        <View style={styles.tutorialButtonContent}>
-                            <MaterialCommunityIcons name="school-outline" size={22} color="#C5C5D6" />
-                            <Text style={styles.tutorialButtonText}>Tutorial</Text>
+                        <View style={styles.userInfo}>
+                            <View style={styles.userNameContainer}>
+                                <Text style={styles.userName} numberOfLines={1}>
+                                    {userData?.username || 'Invitado'}
+                                </Text>
+                                {userData?.accountType && <UserPlanBadge accountType={userData.accountType} />}
+                            </View>
+                            <Text style={styles.userEmail} numberOfLines={1}>
+                                {userData?.email || 'usuario@example.com'}
+                            </Text>
                         </View>
                     </TouchableOpacity>
-                    <DrawerItemList
-                        state={props.state}
-                        navigation={props.navigation}
-                        descriptors={props.descriptors}
-                    />
+
+                    {/* Stats Section */}
+                    <View style={styles.statsContainer}>
+                        <LinearGradient
+                            colors={['rgba(30, 30, 45, 0.8)', 'rgba(20, 20, 35, 0.9)']}
+                            style={styles.statsBackground}
+                            start={{ x: 0, y: 0 }}
+                            end={{ x: 1, y: 1 }}
+                        >
+                            {isPremiumUser ? (
+                                <>
+                                    <View style={styles.statItem}>
+                                        <Ionicons name="book" size={22} color="#FF6E6E" />
+                                        <Text style={styles.statValue}>{mangasReadCount}</Text>
+                                        <Text style={styles.statLabel}>Leídos</Text>
+                                    </View>
+                                    <View style={styles.statDivider} />
+                                    <View style={styles.statItem}>
+                                        <Ionicons name="time" size={22} color="#FF6E6E" />
+                                        <Text style={styles.statValue}>{formatReadingTime(totalReadingTimeMs)}</Text>
+                                        <Text style={styles.statLabel}>Tiempo</Text>
+                                    </View>
+                                    <View style={styles.statDivider} />
+                                    <View style={styles.statItem}>
+                                        <Ionicons name="heart" size={22} color="#FF6E6E" />
+                                        <Text style={styles.statValue}>{favoritesCount}</Text>
+                                        <Text style={styles.statLabel}>Favoritos</Text>
+                                    </View>
+                                </>
+                            ) : (
+                                <TouchableOpacity
+                                    style={styles.lockedStatsOverlay}
+                                    onPress={() => navigation.navigate('Payment' as never)}
+                                    activeOpacity={0.8}
+                                >
+                                    <MaterialCommunityIcons
+                                        name="crown"
+                                        size={32}
+                                        color="#FFD700"
+                                        style={styles.crownIcon}
+                                    />
+                                    <Text style={styles.lockedStatsText}>Desbloquea estadísticas completas</Text>
+                                    <Text style={styles.lockedStatsSubText}>Conviértete en Premium</Text>
+                                </TouchableOpacity>
+                            )}
+                        </LinearGradient>
+                    </View>
                 </View>
-            </DrawerContentScrollView>
+
+                <View style={styles.navigationContainer}>
+                    <ScrollView
+                        style={styles.navigationScroll}
+                        contentContainerStyle={styles.navigationScrollContent}
+                        showsVerticalScrollIndicator={false}
+                    >
+                        {/* Navigation Items */}
+                        <TouchableOpacity
+                            style={styles.tutorialButton}
+                            onPress={handleOpenTutorial}
+                            activeOpacity={0.8}
+                        >
+                            <View style={styles.tutorialButtonContent}>
+                                <MaterialCommunityIcons name="school-outline" size={22} color="#C5C5D6" />
+                                <Text style={styles.tutorialButtonText}>Tutorial</Text>
+                            </View>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                            style={[styles.tutorialButton, { backgroundColor: theme.surface, borderWidth: 1, borderColor: theme.border }]}
+                            onPress={handleOpenPersonalization}
+                            activeOpacity={0.8}
+                        >
+                            <View style={styles.tutorialButtonContent}>
+                                <MaterialCommunityIcons name="palette-outline" size={22} color={theme.accent} />
+                                <Text style={[styles.tutorialButtonText, { color: theme.text }]}>Personalización</Text>
+                            </View>
+                        </TouchableOpacity>
+                        <DrawerItemList
+                            state={props.state}
+                            navigation={props.navigation}
+                            descriptors={props.descriptors}
+                        />
+                    </ScrollView>
+                </View>
+            </View>
 
             {/* Footer */}
             <View style={[styles.footerContainer, { paddingBottom: insets.bottom + 12 }]}>
@@ -428,8 +466,45 @@ const styles = StyleSheet.create({
         flex: 1,
     },
     drawerContainer: {
+        flex: 1,
         paddingTop: 12,
-        paddingBottom: 20,
+        paddingBottom: 12,
+    },
+    settingsHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginHorizontal: 12,
+        marginBottom: 10,
+    },
+    settingsTitle: {
+        color: '#FFFFFF',
+        fontSize: 26,
+        fontFamily: 'Roboto-Bold',
+    },
+    settingsSubtitle: {
+        marginTop: 4,
+        color: '#9EA3B8',
+        fontSize: 13,
+        fontFamily: 'Roboto-Regular',
+    },
+    settingsCloseButton: {
+        width: 42,
+        height: 42,
+        borderRadius: 21,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: 'rgba(255,255,255,0.08)',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.08)',
+    },
+    navigationScroll: {
+        flex: 1,
+    },
+    navigationScrollContent: {
+        flexGrow: 1,
+        paddingTop: 0,
+        paddingBottom: 8,
     },
     userHeader: {
         position: 'relative',
@@ -575,13 +650,16 @@ const styles = StyleSheet.create({
         textAlign: 'center',
     },
     navigationContainer: {
+        flex: 1,
         marginTop: 8,
         marginHorizontal: 12,
         borderRadius: 14,
-        paddingVertical: 8,
+        paddingTop: 0,
+        paddingBottom: 8,
         backgroundColor: 'rgba(255,255,255,0.03)',
         borderWidth: 1,
         borderColor: 'rgba(255,255,255,0.08)',
+        overflow: 'hidden',
     },
     tutorialButton: {
         borderRadius: 12,

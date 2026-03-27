@@ -5,7 +5,6 @@ import {
     FlatList,
     StyleSheet,
     ActivityIndicator,
-    SafeAreaView,
     TextInput,
     TouchableOpacity,
     Modal,
@@ -14,14 +13,13 @@ import {
     StatusBar,
     Platform
 } from 'react-native';
-import { DrawerActions } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import DrawerToggle from '../components/drawerToggle';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
 import { useAlertContext } from '../contexts/AlertContext';
 import { backendUrl } from '../config/backend';
+import { getProviderAliasLabel, normalizeProviderSource } from '../utils/providerBranding';
 
 const REQUEST_TIMEOUT_MS = 8000;
 const PAGE_LIMIT = 24;
@@ -45,7 +43,7 @@ type Comic = {
 };
 
 type SortKey = 'default' | 'title_asc' | 'title_desc' | 'score_desc';
-type SourceKey = 'all' | 'zonatmo' | 'visormanga' | 'lectormangaa';
+type SourceKey = 'all' | 'zonatmo' | 'visormanga' | 'manhwaonline';
 type StatusKey = 'all' | 'ongoing' | 'completed' | 'hiatus' | 'cancelled' | 'unknown';
 type RatingKey = 'all' | 'safe' | 'suggestive' | 'erotica';
 
@@ -65,9 +63,9 @@ const SORT_OPTIONS: FilterOption[] = [
 
 const SOURCE_OPTIONS: FilterOption[] = [
     { label: 'Todas', value: 'all' },
-    { label: 'ZonaTMO', value: 'zonatmo' },
-    { label: 'VisorManga', value: 'visormanga' },
-    { label: 'LectorMangaa', value: 'lectormangaa' },
+    { label: 'Catalogo A', value: 'zonatmo' },
+    { label: 'Catalogo B', value: 'visormanga' },
+    { label: 'Catalogo C', value: 'manhwaonline' },
 ];
 
 const STATUS_OPTIONS: FilterOption[] = [
@@ -94,6 +92,14 @@ const getStatusLabel = (value?: string, fallbackLabel?: string) => {
     if (raw.includes('hiatus') || raw.includes('pausa')) return 'En pausa';
     if (raw.includes('cancel')) return 'Cancelado';
     return 'Desconocido';
+};
+
+const getStatusBadgeLabel = (item: Comic) => {
+    const label = getStatusLabel(item.status, item.statusLabel);
+    if (label !== 'Desconocido') return label;
+    if (Number(item.totalChapters || 0) > 0) return `Cap. ${item.totalChapters}`;
+    if (String(item.contentRating || '').toLowerCase() === 'erotica') return '18+';
+    return 'Actualizado';
 };
 
 const getStatusBadgeStyles = (value?: string) => {
@@ -132,7 +138,7 @@ const mapApiComic = (item: any): Comic => {
         slug: item.slug,
         title,
         cover: item.cover || '',
-        source: item.source || 'zonatmo',
+        source: normalizeProviderSource(item.source),
         score: item.score || '0.0',
         totalChapters: item.totalChapters || 0,
         description,
@@ -226,7 +232,7 @@ const filterAndSortComics = (
     rating: RatingKey,
 ) => {
     let result = [...list];
-    if (source !== 'all') result = result.filter((x) => x.source === source);
+    if (source !== 'all') result = result.filter((x) => normalizeProviderSource(x.source) === source);
     if (status !== 'all') result = result.filter((x) => (x.status || 'unknown') === status);
     if (rating !== 'all') result = result.filter((x) => (x.contentRating || 'safe') === rating);
     return sortComics(result, sort);
@@ -258,7 +264,6 @@ const LibraryScreen = ({ navigation }: any) => {
     const [currentPage, setCurrentPage] = useState(1);
     const [hasMore, setHasMore] = useState(true);
     const [isFetchingMore, setIsFetchingMore] = useState(false);
-    const insets = useSafeAreaInsets();
     const isMounted = useRef(true);
     const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const requestIdRef = useRef(0);
@@ -504,15 +509,10 @@ const LibraryScreen = ({ navigation }: any) => {
 
     return (
         <LinearGradient colors={['#0F0F15', '#20202A']} style={styles.container}>
-            <SafeAreaView style={[styles.safeArea, { paddingTop: insets.top }]}>
+            <SafeAreaView style={styles.safeArea} edges={['top', 'bottom', 'left', 'right']}>
                 {/* Header */}
                 <View style={styles.header}>
-                    <TouchableOpacity
-                        onPress={() => navigation.dispatch(DrawerActions.toggleDrawer())}
-                        style={styles.menuButton}
-                    >
-                        <DrawerToggle />
-                    </TouchableOpacity>
+                    <View style={styles.headerSideSpacer} />
                     <Text style={styles.title}>Biblioteca</Text>
                     <TouchableOpacity
                         onPress={() => {
@@ -633,6 +633,9 @@ const LibraryScreen = ({ navigation }: any) => {
                             >
                                 <Text style={styles.comicGridTitle} numberOfLines={2}>{item.title}</Text>
                             </LinearGradient>
+                            <View style={styles.providerBadge}>
+                                <Text style={styles.providerBadgeText}>{getProviderAliasLabel(item.source)}</Text>
+                            </View>
                             {item.score && item.score !== '0.0' && (
                                 <View style={styles.scoreBadge}>
                                     <MaterialCommunityIcons name="star" size={10} color="#FFD700" />
@@ -651,7 +654,7 @@ const LibraryScreen = ({ navigation }: any) => {
                                         { color: getStatusBadgeStyles(item.status).textColor },
                                     ]}
                                 >
-                                    {getStatusLabel(item.status, item.statusLabel)}
+                                    {getStatusBadgeLabel(item)}
                                 </Text>
                             </View>
                         </TouchableOpacity>
@@ -855,8 +858,8 @@ const styles = StyleSheet.create({
         shadowOpacity: 0.2,
         shadowRadius: 2,
     },
-    menuButton: {
-        padding: 5,
+    headerSideSpacer: {
+        width: 48,
     },
     title: {
         fontSize: 26,
@@ -1027,9 +1030,26 @@ const styles = StyleSheet.create({
         fontFamily: 'Roboto-Medium',
         marginLeft: 2,
     },
-    statusBadge: {
+    providerBadge: {
         position: 'absolute',
         top: 8,
+        left: 8,
+        backgroundColor: 'rgba(10,10,16,0.82)',
+        borderColor: 'rgba(255,255,255,0.24)',
+        borderWidth: 1,
+        borderRadius: 10,
+        paddingHorizontal: 7,
+        paddingVertical: 3,
+        maxWidth: '64%',
+    },
+    providerBadgeText: {
+        color: '#F4F6FF',
+        fontSize: 10,
+        fontFamily: 'Roboto-Bold',
+    },
+    statusBadge: {
+        position: 'absolute',
+        bottom: 45,
         left: 8,
         borderRadius: 5,
         paddingHorizontal: 6,

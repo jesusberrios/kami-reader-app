@@ -8,7 +8,6 @@ import {
     StyleSheet,
     ActivityIndicator,
     Image,
-    SafeAreaView,
     StatusBar,
     KeyboardAvoidingView,
     Platform,
@@ -43,7 +42,7 @@ import {
     deleteField
 } from 'firebase/firestore';
 import { db, auth } from '../firebase/config';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAlertContext } from '../contexts/AlertContext';
 
 type Message = {
@@ -115,6 +114,7 @@ const ASIAN_STICKERS = {
 };
 
 const STICKER_CATEGORIES = Object.keys(ASIAN_STICKERS);
+const SUPPORT_EMAIL = 'sukisoft.soporte@gmail.com';
 
 // Componente para stickers
 const StickerItem = ({ sticker }: { sticker: string }) => {
@@ -674,8 +674,8 @@ const ChatScreen = () => {
     if (loading) {
         return (
             <LinearGradient colors={['#1A1A24', '#2C2C38']} style={styles.container}>
-                <StatusBar barStyle="light-content" />
-                <SafeAreaView style={[styles.safeArea, { paddingTop: insets.top }]}>
+                <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
+                <SafeAreaView style={[styles.safeArea, { paddingTop: insets.top, paddingBottom: insets.bottom }]} edges={['left', 'right']}>
                     <View style={styles.loadingContainer}>
                         <ActivityIndicator size="large" color="#FF5252" />
                         <Text style={styles.loadingText}>Cargando mensajes...</Text>
@@ -687,8 +687,8 @@ const ChatScreen = () => {
 
     return (
         <LinearGradient colors={['#1A1A24', '#2C2C38']} style={styles.container}>
-            <StatusBar barStyle="light-content" />
-            <SafeAreaView style={[styles.safeArea, { paddingTop: insets.top }]}>
+            <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
+            <SafeAreaView style={[styles.safeArea, { paddingTop: insets.top, paddingBottom: insets.bottom }]} edges={['left', 'right']}>
 
                 {headerComponent}
 
@@ -730,7 +730,7 @@ const ChatScreen = () => {
                 <KeyboardAvoidingView
                     behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
                     keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
-                    style={styles.inputContainer}
+                    style={[styles.inputContainer, { paddingBottom: Math.max(insets.bottom, 12) }]}
                 >
                     <View style={styles.messageInputContainer}>
                         <TouchableOpacity

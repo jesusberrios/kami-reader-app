@@ -5,7 +5,6 @@ import {
     FlatList,
     Image,
     StyleSheet,
-    SafeAreaView,
     ActivityIndicator,
     Dimensions,
     TouchableOpacity,
@@ -15,15 +14,13 @@ import {
     ScrollView,
     Linking,
 } from 'react-native';
-import { DrawerActions } from '@react-navigation/native';
 import { collection, doc, getDoc, getDocs } from 'firebase/firestore'; // Removed query, where as they are not needed for this subcollection fetch
 import { db } from '../firebase/config';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { BannerAd, BannerAdSize, TestIds } from 'react-native-google-mobile-ads';
 import { getAuth } from 'firebase/auth';
-import DrawerToggle from '../components/drawerToggle';
 import { getAppVersion } from '../utils/versionUtils';
 import UpdateRequiredModal from '../components/updateRequiredModal';
 import FloatingChatBubble from '../components/floatingChatBubble';
@@ -33,11 +30,14 @@ import { getLatestManga } from '../services/backendApi';
 import { getFlagEmoji, formatTimeAgo } from '../utils/flagUtils';
 // Import the new cache utilities
 import { getCachedData, setCacheData } from '../utils/cacheUtils';
+import { getProviderAliasLabel, normalizeProviderSource } from '../utils/providerBranding';
 
 // Constants
 const windowWidth = Dimensions.get('window').width;
 const itemWidth = windowWidth * 0.32;
 const itemHeight = itemWidth * 1.5;
+const CAROUSEL_ITEM_SPACING = 15;
+const CAROUSEL_SNAP_INTERVAL = itemWidth + CAROUSEL_ITEM_SPACING;
 const adUnitId = __DEV__ ? TestIds.BANNER : 'ca-app-pub-6584977537844104/1888694522';
 const APP_IDS = {
     ios: '5cd6ecff-6004-4696-b780-172ff5ca8a22',
@@ -66,7 +66,15 @@ const getStatusBadgeStyles = (value?: string) => {
     if (raw.includes('cancel')) {
         return { backgroundColor: 'rgba(229, 57, 53, 0.9)', textColor: '#FFECEC' };
     }
-    return { backgroundColor: 'rgba(66, 165, 245, 0.9)', textColor: '#ECF6FF' };
+    return { backgroundColor: 'rgba(158, 158, 158, 0.82)', textColor: '#F2F2F2' };
+};
+
+const getStatusBadgeLabel = (item: LatestManga) => {
+    const label = getStatusLabel(item.status, item.statusLabel);
+    if (label !== 'Desconocido') return label;
+    if (Number(item.totalChapters || 0) > 0) return `Cap. ${item.totalChapters}`;
+    if (String(item.contentRating || '').toLowerCase() === 'erotica') return '18+';
+    return 'Actualizado';
 };
 
 // Types
@@ -88,10 +96,13 @@ type Chapter = {
     title: string;
     cover: string;
     slug: string;
+    source?: string;
     content_rating: string;
     lang: string;
     updated_at: any;
-    lastReadChapter?: string; // Add this for "Continue Reading"
+    lastReadChapter?: string;
+    lastReadChapterHid?: string;
+    lastReadImagePage?: number;
 };
 
 type NewsItem = {
@@ -119,7 +130,6 @@ const HomeScreen = ({ navigation }: any) => {
     const [latestLoading, setLatestLoading] = useState(true);
 
     // Refs and hooks
-    const insets = useSafeAreaInsets();
     const headerRef = useRef<View>(null);
     const isMounted = useRef(true);
 
@@ -185,6 +195,7 @@ const HomeScreen = ({ navigation }: any) => {
                 const mapBackendComic = (item: any) => ({
                     hid: `${item.source || 'zonatmo'}:${item.slug || ''}`,
                     title: item.title || 'Sin título',
+                    source: normalizeProviderSource(item.source),
                     lang: item.language || 'es-419',
                     updated_at: item.updatedAt || new Date().toISOString(),
                     cover: item.cover || 'https://via.placeholder.com/150x200?text=No+Cover',
@@ -273,12 +284,16 @@ const HomeScreen = ({ navigation }: any) => {
                 slug: string;
                 title: string;
                 source: string;
+                lastReadChapterHid?: string;
                 lastReadChapterNumber: number;
+                lastReadImagePage?: number;
                 coverUrl: string;
             }[] = [];
             querySnapshot.forEach((doc) => {
                 const data = doc.data() as {
+                    lastReadChapterHid?: string;
                     lastReadChapterNumber?: number;
+                    lastReadImagePage?: number;
                     coverUrl?: string;
                     slug?: string;
                     mangaTitle?: string;
@@ -293,8 +308,10 @@ const HomeScreen = ({ navigation }: any) => {
                         title: String(data.mangaTitle || data.comicTitle || comicSlug)
                             .replace(/-/g, ' ')
                             .replace(/\b\w/g, (s) => s.toUpperCase()),
-                        source: String(data.source || 'zonatmo'),
+                        source: normalizeProviderSource(data.source),
+                        lastReadChapterHid: String(data.lastReadChapterHid || '').trim() || undefined,
                         lastReadChapterNumber: data.lastReadChapterNumber || 0,
+                        lastReadImagePage: Number.isFinite(Number(data.lastReadImagePage)) ? Number(data.lastReadImagePage) : undefined,
                         coverUrl: data.coverUrl || ''
                     });
                 } else {
@@ -311,10 +328,13 @@ const HomeScreen = ({ navigation }: any) => {
                 title: progressItem.title || 'Manga',
                 cover: progressItem.coverUrl || 'https://via.placeholder.com/150x200?text=No+Cover',
                 slug: progressItem.slug,
+                source: normalizeProviderSource(progressItem.source),
                 content_rating: 'safe',
                 lang: 'es-419',
                 updated_at: new Date().toISOString(),
-                lastReadChapter: `Cap. ${progressItem.lastReadChapterNumber}`,
+                lastReadChapterHid: progressItem.lastReadChapterHid,
+                lastReadImagePage: progressItem.lastReadImagePage,
+                lastReadChapter: `Cap. ${progressItem.lastReadChapterNumber}${progressItem.lastReadImagePage ? ` · Img. ${progressItem.lastReadImagePage}` : ''}`,
             }));
             if (isMounted.current) {
                 setContinueReadingComics(comicsToDisplay);
@@ -413,8 +433,12 @@ const HomeScreen = ({ navigation }: any) => {
         }
     }, [fetchTopComics, fetchNews, fetchUserPlan, fetchContinueReadingComics, fetchLatestMangas]);
 
-    const handleComicPress = useCallback((slug: string) => {
-        navigation.navigate('Details', { slug });
+    const handleComicPress = useCallback((item: Chapter) => {
+        if (item.lastReadChapterHid) {
+            navigation.navigate('Reader', { hid: item.lastReadChapterHid, resumeFromProgress: true });
+            return;
+        }
+        navigation.navigate('Details', { slug: item.slug });
     }, [navigation]);
 
     const handleNewsPress = useCallback((newsItem: NewsItem) => {
@@ -458,9 +482,9 @@ const HomeScreen = ({ navigation }: any) => {
     const renderComicItem = useCallback(({ item }: { item: Chapter }) => (
         <TouchableOpacity
             style={styles.comicItem}
-            onPress={() => handleComicPress(item.slug)}
+            onPress={() => handleComicPress(item)}
             activeOpacity={0.7}
-            accessibilityLabel={`Ver detalles de ${item.title}`}
+            accessibilityLabel={item.lastReadChapterHid ? `Continuar leyendo ${item.title}` : `Ver detalles de ${item.title}`}
         >
             <Image
                 source={{ uri: item.cover }}
@@ -473,6 +497,12 @@ const HomeScreen = ({ navigation }: any) => {
                 style={styles.comicGradient}
             />
             <Text style={styles.comicTitle} numberOfLines={2}>{item.title}</Text>
+
+            <View style={styles.providerBadge}>
+                <Text style={styles.providerBadgeText}>
+                    {getProviderAliasLabel(item.source || item.hid?.split(':')?.[0])}
+                </Text>
+            </View>
 
             {/* Erotic Badge */}
             {item.content_rating === 'erotica' && (
@@ -521,7 +551,7 @@ const HomeScreen = ({ navigation }: any) => {
 
     return (
         <LinearGradient colors={['#0F0F1A', '#252536']} style={styles.container}>
-            <SafeAreaView style={[styles.safeArea, { paddingTop: insets.top }]}>
+            <SafeAreaView style={styles.safeArea} edges={['top', 'bottom', 'left', 'right']}>
                 <ScrollView
                     contentContainerStyle={styles.scrollViewContent}
                     refreshControl={
@@ -536,13 +566,6 @@ const HomeScreen = ({ navigation }: any) => {
                 >
                     {/* Header */}
                     <View style={styles.headerContainer} ref={headerRef}>
-                        <TouchableOpacity
-                            onPress={() => navigation.dispatch(DrawerActions.toggleDrawer())}
-                            style={styles.menuButton}
-                            accessibilityLabel="Abrir menú"
-                        >
-                            <DrawerToggle />
-                        </TouchableOpacity>
                         <View style={styles.headerContent}>
                             <Text style={styles.header}>Bienvenido</Text>
                         </View>
@@ -628,23 +651,33 @@ const HomeScreen = ({ navigation }: any) => {
                                             style={styles.comicGradient}
                                         />
                                         <Text style={styles.comicTitle} numberOfLines={2}>{item.title}</Text>
+                                        <View style={styles.latestTopBadgesRow}>
+                                            <View style={styles.latestProviderBadge}>
+                                                <Text style={styles.providerBadgeText} numberOfLines={1}>
+                                                    {getProviderAliasLabel(item.source)}
+                                                </Text>
+                                            </View>
+                                            <View style={[
+                                                styles.latestStatusTag,
+                                                { backgroundColor: getStatusBadgeStyles(item.status).backgroundColor },
+                                            ]}>
+                                                <Text
+                                                    style={[
+                                                        styles.statusTagText,
+                                                        { color: getStatusBadgeStyles(item.status).textColor },
+                                                    ]}
+                                                    numberOfLines={1}
+                                                >
+                                                    {getStatusBadgeLabel(item)}
+                                                </Text>
+                                            </View>
+                                        </View>
                                         {item.score && item.score !== '0.0' && (
                                             <View style={styles.scoreBadge}>
                                                 <MaterialCommunityIcons name="star" size={10} color="#FFD700" />
                                                 <Text style={styles.scoreText}>{item.score}</Text>
                                             </View>
                                         )}
-                                        <View style={[
-                                            styles.statusTag,
-                                            { backgroundColor: getStatusBadgeStyles(item.status).backgroundColor },
-                                        ]}>
-                                            <Text style={[
-                                                styles.statusTagText,
-                                                { color: getStatusBadgeStyles(item.status).textColor },
-                                            ]}>
-                                                {getStatusLabel(item.status, item.statusLabel)}
-                                            </Text>
-                                        </View>
                                     </TouchableOpacity>
                                 )}
                                 horizontal
@@ -654,7 +687,12 @@ const HomeScreen = ({ navigation }: any) => {
                                 maxToRenderPerBatch={5}
                                 windowSize={7}
                                 getItemLayout={getItemLayout}
-                                removeClippedSubviews={true}
+                                removeClippedSubviews={Platform.OS === 'ios'}
+                                nestedScrollEnabled
+                                decelerationRate="fast"
+                                snapToInterval={CAROUSEL_SNAP_INTERVAL}
+                                snapToAlignment="start"
+                                disableIntervalMomentum
                             />
                         )}
                     </View>
@@ -677,7 +715,12 @@ const HomeScreen = ({ navigation }: any) => {
                                     maxToRenderPerBatch={5}
                                     windowSize={7}
                                     getItemLayout={getItemLayout}
-                                    removeClippedSubviews={true}
+                                    removeClippedSubviews={Platform.OS === 'ios'}
+                                    nestedScrollEnabled
+                                    decelerationRate="fast"
+                                    snapToInterval={CAROUSEL_SNAP_INTERVAL}
+                                    snapToAlignment="start"
+                                    disableIntervalMomentum
                                 />
                             )}
                         </View>
@@ -700,7 +743,12 @@ const HomeScreen = ({ navigation }: any) => {
                                 maxToRenderPerBatch={5}
                                 windowSize={7}
                                 getItemLayout={getItemLayout}
-                                removeClippedSubviews={true}
+                                removeClippedSubviews={Platform.OS === 'ios'}
+                                nestedScrollEnabled
+                                decelerationRate="fast"
+                                snapToInterval={CAROUSEL_SNAP_INTERVAL}
+                                snapToAlignment="start"
+                                disableIntervalMomentum
                             />
                         )}
                     </View>
@@ -723,7 +771,12 @@ const HomeScreen = ({ navigation }: any) => {
                                     maxToRenderPerBatch={5}
                                     windowSize={7}
                                     getItemLayout={getItemLayout}
-                                    removeClippedSubviews={true}
+                                    removeClippedSubviews={Platform.OS === 'ios'}
+                                    nestedScrollEnabled
+                                    decelerationRate="fast"
+                                    snapToInterval={CAROUSEL_SNAP_INTERVAL}
+                                    snapToAlignment="start"
+                                    disableIntervalMomentum
                                 />
                             )}
                         </View>
@@ -792,10 +845,6 @@ const styles = StyleSheet.create({
     },
     headerContent: {
         flex: 1,
-    },
-    menuButton: {
-        marginRight: 15,
-        padding: 5,
     },
     header: {
         fontSize: 28,
@@ -978,7 +1027,7 @@ const styles = StyleSheet.create({
     },
     comicItem: {
         width: itemWidth,
-        marginRight: 15,
+        marginRight: CAROUSEL_ITEM_SPACING,
         borderRadius: 14,
         overflow: 'hidden',
         position: 'relative',
@@ -1021,8 +1070,8 @@ const styles = StyleSheet.create({
     },
     languageBadge: {
         position: 'absolute',
-        top: 8,
-        left: 8,
+        bottom: 8,
+        right: 8,
         backgroundColor: 'rgba(0, 0, 0, 0.6)',
         borderRadius: 10,
         paddingHorizontal: 6,
@@ -1065,7 +1114,7 @@ const styles = StyleSheet.create({
     },
     scoreBadge: {
         position: 'absolute',
-        top: 8,
+        top: 32,
         right: 8,
         flexDirection: 'row',
         alignItems: 'center',
@@ -1084,15 +1133,59 @@ const styles = StyleSheet.create({
     statusTag: {
         position: 'absolute',
         top: 8,
-        left: 8,
+        right: 8,
         borderRadius: 8,
         paddingHorizontal: 6,
         paddingVertical: 3,
+        zIndex: 1,
     },
     statusTagText: {
         fontSize: 9,
         fontFamily: 'Roboto-Bold',
         textTransform: 'uppercase',
+    },
+    providerBadge: {
+        position: 'absolute',
+        top: 8,
+        left: 8,
+        backgroundColor: 'rgba(10, 10, 16, 0.82)',
+        borderColor: 'rgba(255,255,255,0.24)',
+        borderWidth: 1,
+        borderRadius: 10,
+        paddingHorizontal: 7,
+        paddingVertical: 3,
+        maxWidth: '64%',
+    },
+    providerBadgeText: {
+        color: '#F4F6FF',
+        fontSize: 10,
+        fontWeight: '700',
+    },
+    latestTopBadgesRow: {
+        position: 'absolute',
+        top: 8,
+        left: 8,
+        right: 8,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        columnGap: 6,
+        zIndex: 2,
+    },
+    latestProviderBadge: {
+        backgroundColor: 'rgba(10, 10, 16, 0.82)',
+        borderColor: 'rgba(255,255,255,0.24)',
+        borderWidth: 1,
+        borderRadius: 10,
+        paddingHorizontal: 7,
+        paddingVertical: 3,
+        maxWidth: '52%',
+    },
+    latestStatusTag: {
+        borderRadius: 8,
+        paddingHorizontal: 6,
+        paddingVertical: 3,
+        maxWidth: '46%',
     },
     adBannerContainer: {
         alignItems: 'center',

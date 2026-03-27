@@ -23,6 +23,7 @@ import { RootStackParamList } from '../navigation/types';
 import { useAlertContext } from '../contexts/AlertContext';
 import { backendUrl } from '../config/backend';
 import { syncFullMangaReadState } from '../services/readingStatsService';
+import { getProviderAliasLabel } from '../utils/providerBranding';
 
 const REQUEST_TIMEOUT_MS = 8000;
 const SCREEN_WIDTH = Dimensions.get('window').width;
@@ -62,6 +63,8 @@ type Manga = {
 type LastReadChapterInfo = {
     slug: string;
     number?: string;
+    imageIndex?: number;
+    imagePage?: number;
 };
 
 const fetchJsonWithTimeout = async (url: string, timeoutMs = REQUEST_TIMEOUT_MS) => {
@@ -117,6 +120,14 @@ const DetailsScreen: React.FC = () => {
     const [chapterOrder, setChapterOrder] = useState<'desc' | 'asc'>('desc');
     const [descriptionExpanded, setDescriptionExpanded] = useState(false);
 
+    const continueReading = useCallback(() => {
+        if (!lastReadChapterInfo?.slug) return;
+        navigation.navigate('Reader', {
+            hid: lastReadChapterInfo.slug,
+            resumeFromProgress: true,
+        });
+    }, [lastReadChapterInfo?.slug, navigation]);
+
     useEffect(() => {
         const unsubscribe = auth.onAuthStateChanged((user) => {
             setCurrentUserUid(user ? user.uid : null);
@@ -160,6 +171,13 @@ const DetailsScreen: React.FC = () => {
                 groupName: ch.groupName || '',
             }));
 
+            const genres = Array.isArray(raw.genres)
+                ? Array.from(new Set(raw.genres.map((g: any) => String(g || '').trim()).filter(Boolean)))
+                : [];
+            const badges = Array.isArray(raw.badges)
+                ? Array.from(new Set(raw.badges.map((b: any) => String(b || '').trim()).filter(Boolean)))
+                : [];
+
             setManga({
                 slug: raw.slug,
                 title: raw.title || 'Sin titulo',
@@ -171,8 +189,8 @@ const DetailsScreen: React.FC = () => {
                 country: raw.country || 'unknown',
                 language: raw.language || 'es-419',
                 contentRating: raw.contentRating || 'safe',
-                genres: Array.isArray(raw.genres) ? raw.genres : [],
-                badges: Array.isArray(raw.badges) ? raw.badges : [],
+                genres,
+                badges,
                 score: raw.score || '0.0',
                 totalChapters: raw.totalChapters || mappedChapters.length,
                 authors: Array.isArray(raw.authors) ? raw.authors : [],
@@ -241,6 +259,8 @@ const DetailsScreen: React.FC = () => {
             const parsedLastRead = storedLastRead ? {
                 slug: String(storedLastRead.slug || '').trim(),
                 number: String(storedLastRead.number || '').trim(),
+                imageIndex: Number.isFinite(Number(storedLastRead.imageIndex)) ? Number(storedLastRead.imageIndex) : undefined,
+                imagePage: Number.isFinite(Number(storedLastRead.imagePage)) ? Number(storedLastRead.imagePage) : undefined,
             } : null;
             setLastReadChapterInfo(parsedLastRead?.slug ? parsedLastRead : null);
             setIsMangaRead(data?.isFullMangaRead === true);
@@ -337,6 +357,7 @@ const DetailsScreen: React.FC = () => {
             coverUrl: manga.cover,
             slug: manga.slug,
             source: manga.source,
+            lastReadChapterHid: chapter.slug,
             lastReadChapterSlug: chapter.slug,
             lastReadChapterNumber: chapter.number || '',
             lastUpdated: serverTimestamp(),
@@ -382,7 +403,9 @@ const DetailsScreen: React.FC = () => {
             isFullMangaRead: false,
             lastReadChapter: {
                 slug: chapter.slug,
+                chapterSlug: safeChapterId,
                 number: chapter.number || '',
+                title: chapter.title || '',
                 readAt: serverTimestamp(),
             },
         }, { merge: true });
@@ -437,18 +460,20 @@ const DetailsScreen: React.FC = () => {
     }, [manga, alertError]);
 
     const goToReader = useCallback(async (chapter: Chapter) => {
-        navigation.navigate('Reader', { hid: chapter.slug });
+        navigation.navigate('Reader', { hid: chapter.slug, resumeFromProgress: false });
         if (isPremium) {
             const chapterReadKey = String(chapter.chapterSlug || chapter.slug || '').trim();
             await toggleChapterRead(chapter, readChapterSlugs.has(chapterReadKey));
         }
     }, [navigation, isPremium, toggleChapterRead, readChapterSlugs]);
 
-    const renderChapterItem = useCallback((chapter: Chapter) => {
+    const renderChapterItem = useCallback((chapter: Chapter, index: number) => {
         const chapterReadKey = String(chapter.chapterSlug || chapter.slug || '').trim();
         const isRead = isPremium === true && readChapterSlugs.has(chapterReadKey);
+        const uniqueKey = `${chapter.chapterSlug || chapter.slug}__${chapter.groupName || 'default'}__${chapter.lang || 'default'}__${index}`;
+        
         return (
-            <TouchableOpacity key={chapter.slug} style={[styles.chapterItem, isRead && styles.chapterItemRead]} onPress={() => goToReader(chapter)}>
+            <TouchableOpacity key={uniqueKey} style={[styles.chapterItem, isRead && styles.chapterItemRead]} onPress={() => goToReader(chapter)}>
                 <View style={styles.chapterLeftBlock}>
                     <View style={[styles.chapterNumberPill, isRead && styles.chapterNumberPillRead]}>
                         <Text style={styles.chapterNumberPillText}>{chapter.number || '?'}</Text>
@@ -503,7 +528,8 @@ const DetailsScreen: React.FC = () => {
                                 <Text style={styles.title} numberOfLines={2}>{manga.title}</Text>
 
                                 <View style={styles.quickMetaRow}>
-                                    <Text style={styles.quickMetaChip}>{manga.statusLabel || normalizeStatus(manga.status)}</Text>
+                                    <Text style={styles.quickMetaChip}>{getProviderAliasLabel(manga.source)}</Text>
+                                    {manga.statusLabel && manga.statusLabel !== 'Desconocido' && <Text style={styles.quickMetaChip}>{manga.statusLabel}</Text>}
                                     <Text style={styles.quickMetaChip}>{manga.contentRating || 'safe'}</Text>
                                 </View>
 
@@ -511,32 +537,22 @@ const DetailsScreen: React.FC = () => {
                                     <View style={styles.infoPill}><Text style={styles.infoPillLabel}>Capitulos</Text><Text style={styles.infoPillValue}>{manga.totalChapters || manga.chapters.length}</Text></View>
                                     <View style={styles.infoPill}><Text style={styles.infoPillLabel}>Score</Text><Text style={styles.infoPillValue}>{manga.score || '0.0'}</Text></View>
                                     <View style={styles.infoPill}><Text style={styles.infoPillLabel}>Idioma</Text><Text style={styles.infoPillValue}>{(manga.language || 'es').toUpperCase()}</Text></View>
-                                    <View style={styles.infoPill}><Text style={styles.infoPillLabel}>Pais</Text><Text style={styles.infoPillValue}>{(manga.country || 'unknown').toUpperCase()}</Text></View>
                                 </View>
-
-                                {!!manga.description && (
-                                    <Text numberOfLines={3} style={styles.descriptionPreview}>
-                                        {manga.description.replace(/<[^>]*>/g, '')}
-                                    </Text>
-                                )}
                             </View>
                         </View>
                     </View>
 
-                    {isPremium && lastReadChapterInfo?.slug && (
-                        <View style={styles.lastReadRow}>
-                            <TouchableOpacity style={styles.lastReadButton} onPress={() => navigation.navigate('Reader', { hid: lastReadChapterInfo.slug })}>
-                                <Ionicons name="play-forward-outline" size={16} color="#FFD700" />
-                                <Text style={styles.lastReadButtonText}>Ir al ultimo capitulo leido</Text>
-                            </TouchableOpacity>
-                        </View>
-                    )}
-
                     {!!manga.badges?.length && (
-                        <View style={styles.badgesRow}>
-                            {manga.badges.map((badge) => (
-                                <View key={badge} style={styles.badge}><Text style={styles.badgeText}>{badge}</Text></View>
-                            ))}
+                        <View style={styles.section}>
+                            <Text style={styles.sectionTitle}>Etiquetas</Text>
+                            <View style={styles.badgesRow}>
+                                {manga.badges.map((badge, idx) => (
+                                    <View key={`${badge}-${idx}`} style={styles.badge}>
+                                        <Text style={styles.badgeEmoji}>✨</Text>
+                                        <Text style={styles.badgeText} numberOfLines={1}>{badge}</Text>
+                                    </View>
+                                ))}
+                            </View>
                         </View>
                     )}
 
@@ -544,8 +560,8 @@ const DetailsScreen: React.FC = () => {
                         <View style={styles.section}>
                             <Text style={styles.sectionTitle}>Generos</Text>
                             <View style={styles.genreContainer}>
-                                {manga.genres.map((g) => (
-                                    <View key={g} style={styles.genreTag}><Text style={styles.genreText}>{g}</Text></View>
+                                {manga.genres.map((g, idx) => (
+                                    <View key={`${g}-${idx}`} style={styles.genreTag}><Text style={styles.genreText}>{g}</Text></View>
                                 ))}
                             </View>
                         </View>
@@ -567,7 +583,7 @@ const DetailsScreen: React.FC = () => {
                     )}
 
                     <View style={styles.buttonRow}>
-                        <TouchableOpacity style={[styles.actionButton, styles.commentsButton]} onPress={() => navigation.navigate('Comments', { mangaTitle: manga.title })}>
+                        <TouchableOpacity style={[styles.actionButton, styles.commentsButton]} onPress={() => navigation.navigate('Comments' as never, { mangaTitle: manga.title })}>
                             <Ionicons name="chatbubble-ellipses-outline" size={20} color="#FFF" />
                             <Text style={styles.actionButtonText}>Comentarios</Text>
                         </TouchableOpacity>
@@ -578,7 +594,7 @@ const DetailsScreen: React.FC = () => {
                         </TouchableOpacity>
 
                         <TouchableOpacity
-                            style={[styles.actionButton, isFavorite && styles.actionButtonActive, isPremium === false && styles.actionButtonLocked]}
+                            style={[styles.actionButton, isPremium === false && styles.actionButtonLocked]}
                             onPress={toggleFavorite}
                             disabled={favoriteLoading || isPremium === false || !currentUserUid}
                         >
@@ -587,18 +603,18 @@ const DetailsScreen: React.FC = () => {
                             ) : (
                                 <>
                                     <Ionicons name={isFavorite ? 'bookmark' : 'bookmark-outline'} size={20} color="#FFF" />
-                                    <Text style={styles.actionButtonText}>{isFavorite ? 'Favorito' : 'Favoritos'}</Text>
+                                    <Text style={styles.actionButtonText}>{isFavorite ? 'Favorito' : 'Agregar Favorito'}</Text>
                                 </>
                             )}
                         </TouchableOpacity>
 
                         <TouchableOpacity
-                            style={[styles.actionButton, { backgroundColor: isMangaRead ? '#673AB7' : '#2196F3' }, isPremium === false && styles.actionButtonLocked]}
+                            style={[styles.actionButton, { backgroundColor: isMangaRead ? '#4CAF50' : '#2196F3' }, isPremium === false && styles.actionButtonLocked]}
                             onPress={toggleMangaReadStatus}
                             disabled={isPremium === false || !currentUserUid}
                         >
                             <Ionicons name={isMangaRead ? 'book' : 'book-outline'} size={20} color="#FFF" />
-                            <Text style={styles.actionButtonText}>{isMangaRead ? 'Leido' : 'Marcar Leido'}</Text>
+                            <Text style={styles.actionButtonText}>{isMangaRead ? 'Leído' : 'Marcar Leído'}</Text>
                         </TouchableOpacity>
                     </View>
 
@@ -629,10 +645,29 @@ const DetailsScreen: React.FC = () => {
                         {filteredChapters.length === 0 ? (
                             <Text style={styles.sectionText}>No hay capitulos para los filtros seleccionados.</Text>
                         ) : (
-                            filteredChapters.map(renderChapterItem)
+                            filteredChapters.map((ch, idx) => renderChapterItem(ch, idx))
                         )}
                     </View>
                 </ScrollView>
+
+                {isPremium && lastReadChapterInfo?.slug && (
+                    <TouchableOpacity
+                        style={[styles.floatingContinueButton, { bottom: insets.bottom + 18 }]}
+                        onPress={continueReading}
+                        activeOpacity={0.9}
+                        accessibilityLabel="Continuar lectura desde la última imagen guardada"
+                    >
+                        <LinearGradient colors={['#FFD54F', '#FFB300']} style={styles.floatingContinueGradient}>
+                            <Ionicons name="play" size={18} color="#201600" />
+                            <View style={styles.floatingContinueTextWrap}>
+                                <Text style={styles.floatingContinueTitle}>Continuar lectura</Text>
+                                <Text style={styles.floatingContinueSubtitle} numberOfLines={1}>
+                                    {`Cap. ${lastReadChapterInfo.number || '?'}${lastReadChapterInfo.imagePage ? ` · Img. ${lastReadChapterInfo.imagePage}` : ''}`}
+                                </Text>
+                            </View>
+                        </LinearGradient>
+                    </TouchableOpacity>
+                )}
             </SafeAreaView>
         </LinearGradient>
     );
@@ -641,7 +676,7 @@ const DetailsScreen: React.FC = () => {
 const styles = StyleSheet.create({
     container: { flex: 1 },
     safeArea: { flex: 1 },
-    scrollContent: { paddingBottom: 36 },
+    scrollContent: { paddingBottom: 120 },
     center: {
         flex: 1,
         justifyContent: 'center',
@@ -685,10 +720,6 @@ const styles = StyleSheet.create({
         minHeight: COVER_HEIGHT,
         padding: 2,
         justifyContent: 'flex-start',
-    },
-    lastReadRow: {
-        paddingHorizontal: 16,
-        marginTop: 10,
     },
     title: {
         color: '#FFF',
@@ -743,36 +774,62 @@ const styles = StyleSheet.create({
         fontSize: 13,
         lineHeight: 18,
     },
-    lastReadButton: {
-        marginTop: 4,
+    floatingContinueButton: {
+        position: 'absolute',
+        right: 16,
+        maxWidth: SCREEN_WIDTH - 32,
+        borderRadius: 999,
+        overflow: 'hidden',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.28,
+        shadowRadius: 12,
+        elevation: 10,
+    },
+    floatingContinueGradient: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 6,
-        justifyContent: 'center',
-        backgroundColor: '#FFD70022',
-        borderColor: '#FFD700',
-        borderWidth: 1,
-        borderRadius: 10,
-        paddingHorizontal: 14,
-        paddingVertical: 9,
+        paddingHorizontal: 16,
+        paddingVertical: 12,
+        gap: 10,
     },
-    lastReadButtonText: { color: '#FFD700', fontWeight: '700' },
+    floatingContinueTextWrap: {
+        flexShrink: 1,
+    },
+    floatingContinueTitle: {
+        color: '#201600',
+        fontWeight: '800',
+        fontSize: 13,
+    },
+    floatingContinueSubtitle: {
+        color: 'rgba(32,22,0,0.78)',
+        fontSize: 11,
+        marginTop: 1,
+        fontWeight: '600',
+    },
     badgesRow: {
         flexDirection: 'row',
         flexWrap: 'wrap',
-        gap: 8,
-        paddingHorizontal: 16,
+        gap: 10,
         marginTop: 12,
     },
     badge: {
-        backgroundColor: 'rgba(255, 82, 82, 0.22)',
-        borderRadius: 16,
-        paddingHorizontal: 10,
-        paddingVertical: 6,
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: 'rgba(255, 215, 0, 0.12)',
+        borderRadius: 20,
+        paddingHorizontal: 12,
+        paddingVertical: 8,
         borderWidth: 1,
-        borderColor: '#FF5252',
+        borderColor: 'rgba(255, 215, 0, 0.3)',
+        gap: 8,
+        maxWidth: '45%',
     },
-    badgeText: { color: '#FFB3B3', fontSize: 12, fontWeight: '600' },
+    badgeEmoji: {
+        fontSize: 14,
+        marginRight: 2,
+    },
+    badgeText: { color: '#FFD54F', fontSize: 12, fontWeight: '600', flex: 1 },
     section: {
         marginTop: 14,
         paddingHorizontal: 16,
@@ -831,26 +888,22 @@ const styles = StyleSheet.create({
     buttonRow: {
         flexDirection: 'row',
         flexWrap: 'wrap',
+        justifyContent: 'space-between',
         paddingHorizontal: 16,
         marginTop: 16,
         gap: 8,
     },
     actionButton: {
-        minWidth: '48%',
-        flexGrow: 1,
+        width: '48%',
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
         backgroundColor: '#FF5252',
         borderRadius: 12,
         paddingVertical: 11,
+        paddingHorizontal: 10,
         gap: 6,
-    },
-    actionButtonActive: {
-        backgroundColor: '#C62828',
-    },
-    commentsButton: {
-        backgroundColor: '#7E57C2',
+        minHeight: 48,
     },
     actionButtonLocked: {
         opacity: 0.45,
@@ -859,6 +912,14 @@ const styles = StyleSheet.create({
         color: '#FFF',
         fontSize: 12,
         fontWeight: '700',
+        flexShrink: 1,
+        textAlign: 'center',
+    },
+    commentsButton: {
+        backgroundColor: '#7E57C2',
+    },
+    actionButtonActive: {
+        backgroundColor: '#C62828',
     },
     filtersRow: {
         marginTop: 14,

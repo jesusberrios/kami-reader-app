@@ -1,13 +1,15 @@
 import 'react-native-gesture-handler';
 import 'react-native-reanimated';
 import React, { useEffect, useState } from 'react';
-import { StatusBar, View, ActivityIndicator, Text } from 'react-native';
-import { NavigationContainer } from '@react-navigation/native';
+import { StatusBar, View, ActivityIndicator, Text, Platform } from 'react-native';
+import { DrawerActions, NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
 import { createDrawerNavigator } from '@react-navigation/drawer';
 import { createStackNavigator } from '@react-navigation/stack';
 import { CardStyleInterpolators, TransitionSpecs } from '@react-navigation/stack';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as NavigationBar from 'expo-navigation-bar';
 
 // Firebase imports
 import { auth, db } from './src/firebase/config';
@@ -31,12 +33,16 @@ import ChatScreen from './src/screens/ChatScreen';
 import NewsScreen from './src/screens/NewsScreen';
 import NewsDetailScreen from './src/screens/NewsDetailScreen';
 import TutorialScreen from './src/screens/TutorialScreen';
+import PersonalizationScreen from './src/screens/PersonalizationScreen';
 import { AlertProvider } from './src/contexts/AlertContext';
+import GlobalBottomBar from './src/components/GlobalBottomBar';
+import { PersonalizationProvider, usePersonalization } from './src/contexts/PersonalizationContext';
 // Navigation Types - Actualizado para v6+
 export type RootStackParamList = {
   Auth: undefined;
   Main: undefined;
   Tutorial: { manual?: boolean } | undefined;
+  Personalization: undefined;
   Details: { slug: string };
   Reader: { hid: string };
   AddFriends: undefined;
@@ -66,6 +72,129 @@ declare global {
 
 const Stack = createStackNavigator<RootStackParamList>();
 const Drawer = createDrawerNavigator<DrawerParamList>();
+const navigationRef = createNavigationContainerRef<RootStackParamList>();
+
+const getActiveRouteName = (state: any): string | undefined => {
+  if (!state?.routes?.length) return undefined;
+  const route = state.routes[state.index ?? 0];
+  if (route.state) return getActiveRouteName(route.state);
+  return route.name;
+};
+
+const isDrawerOpenInState = (state: any): boolean => {
+  if (!state?.routes?.length) return false;
+  const route = state.routes[state.index ?? 0];
+  const history = route?.state?.history;
+  if (Array.isArray(history) && history.some((entry: any) => entry?.type === 'drawer' && entry?.status === 'open')) {
+    return true;
+  }
+  if (route?.state) return isDrawerOpenInState(route.state);
+  return false;
+};
+
+function ThemedNavigationShell({
+  user,
+  needsTutorial,
+  currentRouteName,
+  settingsActive,
+  shouldShowBottomBar,
+  navigateToMainRoute,
+  openDrawerFromBottomBar,
+}: {
+  user: User | null;
+  needsTutorial: boolean;
+  currentRouteName?: string;
+  settingsActive: boolean;
+  shouldShowBottomBar: boolean;
+  navigateToMainRoute: (routeName: 'Library' | 'AddFriends' | 'Home' | 'Profile') => void;
+  openDrawerFromBottomBar: () => void;
+}) {
+  const { theme } = usePersonalization();
+
+  return (
+    <>
+      <StatusBar
+        translucent={false}
+        backgroundColor={theme.background}
+        barStyle="light-content"
+      />
+      <View style={{ flex: 1, paddingBottom: shouldShowBottomBar ? 92 : 0, backgroundColor: theme.background }}>
+        <Stack.Navigator
+          key={!user ? 'guest' : needsTutorial ? 'user-tutorial' : 'user-main'}
+          initialRouteName={!user ? 'Auth' : needsTutorial ? 'Tutorial' : 'Main'}
+          screenOptions={{
+            headerShown: false,
+            cardStyle: {
+              backgroundColor: theme.background,
+            },
+            cardOverlayEnabled: true,
+            cardShadowEnabled: true,
+            gestureEnabled: true,
+            gestureDirection: 'horizontal',
+            gestureResponseDistance: 50,
+            animationEnabled: true,
+            cardStyleInterpolator: CardStyleInterpolators.forHorizontalIOS,
+            transitionSpec: {
+              open: TransitionSpecs.TransitionIOSSpec,
+              close: TransitionSpecs.TransitionIOSSpec,
+            },
+          }}
+        >
+          {user ? (
+            <Stack.Screen
+              name="Main"
+              component={MainDrawerNavigator}
+              options={{
+                gestureEnabled: false,
+              }}
+            />
+          ) : (
+            <Stack.Screen
+              name="Auth"
+              component={AuthScreen}
+              options={{
+                gestureEnabled: false,
+              }}
+            />
+          )}
+          {user && (
+            <Stack.Screen
+              name="Tutorial"
+              component={TutorialScreen}
+              options={{
+                gestureEnabled: false,
+              }}
+            />
+          )}
+          <Stack.Screen name="Personalization" component={PersonalizationScreen} />
+          <Stack.Screen name="Details" component={DetailsScreen} />
+          <Stack.Screen name="Payment" component={PaymentScreen} />
+          <Stack.Screen name="Profile" component={ProfileScreen} />
+          <Stack.Screen name="Comments" component={CommentsScreen} />
+          <Stack.Screen name="News" component={NewsScreen} />
+          <Stack.Screen name="NewsDetail" component={NewsDetailScreen} />
+          <Stack.Screen name="Chat" component={ChatScreen} />
+          <Stack.Screen name="AddFriends" component={AddFriendsScreen} />
+          <Stack.Screen
+            name="Reader"
+            component={ReaderScreen}
+            options={{
+              gestureEnabled: false,
+            }}
+          />
+        </Stack.Navigator>
+
+        <GlobalBottomBar
+          currentRouteName={currentRouteName}
+          visible={shouldShowBottomBar}
+          settingsActive={settingsActive}
+          onNavigate={navigateToMainRoute}
+          onOpenDrawer={openDrawerFromBottomBar}
+        />
+      </View>
+    </>
+  );
+}
 
 function MainDrawerNavigator() {
   const [userPlan, setUserPlan] = useState<'free' | 'premium' | null>(null);
@@ -138,17 +267,15 @@ function MainDrawerNavigator() {
       )}
       screenOptions={{
         drawerStyle: {
-          width: 296,
-          backgroundColor: '#121218',
-          borderTopRightRadius: 18,
-          borderBottomRightRadius: 18,
-          overflow: 'hidden',
+          width: '100%',
+          backgroundColor: 'transparent',
         },
-        drawerType: 'slide',
-        overlayColor: 'rgba(0, 0, 0, 0.5)',
+        drawerType: 'front',
+        overlayColor: 'transparent',
         headerShown: false,
-        swipeEdgeWidth: 30,
-        swipeMinDistance: 50,
+        swipeEnabled: false,
+        swipeEdgeWidth: 0,
+        swipeMinDistance: 999,
         drawerActiveTintColor: '#FF6E6E',
         drawerInactiveTintColor: '#C5C5D6',
         drawerActiveBackgroundColor: 'rgba(255, 110, 110, 0.18)',
@@ -170,6 +297,7 @@ function MainDrawerNavigator() {
         component={HomeScreen}
         options={{
           drawerLabel: 'Inicio',
+          drawerItemStyle: { display: 'none' },
           drawerIcon: ({ color, size }) => (
             <MaterialCommunityIcons name="home" size={size} color={color} />
           ),
@@ -180,6 +308,7 @@ function MainDrawerNavigator() {
         component={LibraryScreen}
         options={{
           drawerLabel: 'Biblioteca',
+          drawerItemStyle: { display: 'none' },
           drawerIcon: ({ color, size }) => (
             <MaterialCommunityIcons name="bookshelf" size={size} color={color} />
           ),
@@ -202,6 +331,7 @@ function MainDrawerNavigator() {
         component={AddFriendsScreen}
         options={{
           drawerLabel: 'Social',
+          drawerItemStyle: { display: 'none' },
           drawerIcon: ({ color, size }) => (
             <View style={{ position: 'relative' }}>
               <MaterialCommunityIcons name="account-group-outline" size={size} color={color} />
@@ -247,6 +377,7 @@ function MainDrawerNavigator() {
         component={ProfileScreen}
         options={{
           drawerLabel: 'Perfil',
+          drawerItemStyle: { display: 'none' },
           drawerIcon: ({ color, size }) => (
             <MaterialCommunityIcons name="head" size={size} color={color} />
           ),
@@ -273,6 +404,24 @@ export default function App() {
   const [loadingAuth, setLoadingAuth] = useState(true);
   const [loadingTutorial, setLoadingTutorial] = useState(true);
   const [needsTutorial, setNeedsTutorial] = useState(false);
+  const [currentRouteName, setCurrentRouteName] = useState<string | undefined>();
+
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+
+    const configureSystemNavigation = async () => {
+      try {
+        await NavigationBar.setPositionAsync('absolute');
+        await NavigationBar.setBackgroundColorAsync('#00000000');
+        await NavigationBar.setBehaviorAsync('overlay-swipe');
+        await NavigationBar.setVisibilityAsync('hidden');
+      } catch {
+        // silently ignored
+      }
+    };
+
+    configureSystemNavigation();
+  }, []);
 
   useEffect(() => {
     const unsubscribe = auth.onAuthStateChanged(async (currentUser) => {
@@ -318,79 +467,53 @@ export default function App() {
     );
   }
 
+  const handleNavStateChange = () => {
+    if (!navigationRef.isReady()) return;
+    setCurrentRouteName(getActiveRouteName(navigationRef.getRootState()));
+  };
+
+  const navigateToMainRoute = (routeName: 'Library' | 'AddFriends' | 'Home' | 'Profile') => {
+    if (!navigationRef.isReady()) return;
+    navigationRef.navigate('Main' as never, { screen: routeName } as never);
+  };
+
+  const openDrawerFromBottomBar = () => {
+    if (!navigationRef.isReady()) return;
+    const rootState = navigationRef.getRootState();
+    const topRoute = rootState.routes[rootState.index ?? 0]?.name;
+    if (topRoute !== 'Main') {
+      navigationRef.navigate('Main' as never);
+      requestAnimationFrame(() => {
+        navigationRef.dispatch(DrawerActions.openDrawer());
+      });
+      return;
+    }
+    navigationRef.dispatch(DrawerActions.openDrawer());
+  };
+
+  const shouldShowBottomBar = !!user && currentRouteName !== 'Auth' && currentRouteName !== 'Reader' && currentRouteName !== 'Tutorial' && currentRouteName !== 'Personalization';
+  const settingsActive = navigationRef.isReady() ? isDrawerOpenInState(navigationRef.getRootState()) : false;
+
+  // Oculta el BottomBar si el drawer de ajustes está abierto
+  const shouldShowBottomBarFinal = shouldShowBottomBar && !settingsActive;
+
   return (
     <AlertProvider>
-      <NavigationContainer>
-        <StatusBar
-          translucent
-          backgroundColor="transparent"
-          barStyle="light-content"
-        />
-        <Stack.Navigator
-          key={!user ? 'guest' : needsTutorial ? 'user-tutorial' : 'user-main'}
-          initialRouteName={!user ? 'Auth' : needsTutorial ? 'Tutorial' : 'Main'}
-          screenOptions={{
-            headerShown: false,
-            cardStyle: {
-              backgroundColor: '#1E1E28',
-            },
-            cardOverlayEnabled: true,
-            cardShadowEnabled: true,
-            gestureEnabled: true,
-            gestureDirection: 'horizontal',
-            gestureResponseDistance: 50,
-            animationEnabled: true,
-            cardStyleInterpolator: CardStyleInterpolators.forHorizontalIOS,
-            transitionSpec: {
-              open: TransitionSpecs.TransitionIOSSpec,
-              close: TransitionSpecs.TransitionIOSSpec,
-            },
-          }}
-        >
-          {user ? (
-            <Stack.Screen
-              name="Main"
-              component={MainDrawerNavigator}
-              options={{
-                gestureEnabled: false,
-              }}
+      <SafeAreaProvider>
+        <NavigationContainer ref={navigationRef} onReady={handleNavStateChange} onStateChange={handleNavStateChange}>
+          <PersonalizationProvider>
+            <ThemedNavigationShell
+              user={user}
+              needsTutorial={needsTutorial}
+              currentRouteName={currentRouteName}
+              settingsActive={settingsActive}
+              shouldShowBottomBar={shouldShowBottomBarFinal}
+              navigateToMainRoute={navigateToMainRoute}
+              openDrawerFromBottomBar={openDrawerFromBottomBar}
             />
-          ) : (
-            <Stack.Screen
-              name="Auth"
-              component={AuthScreen}
-              options={{
-                gestureEnabled: false,
-              }}
-            />
-          )}
-          {user && (
-            <Stack.Screen
-              name="Tutorial"
-              component={TutorialScreen}
-              options={{
-                gestureEnabled: false,
-              }}
-            />
-          )}
-          {/* Screens accesibles desde Main */}
-          <Stack.Screen name="Details" component={DetailsScreen} />
-          <Stack.Screen name="Payment" component={PaymentScreen} />
-          <Stack.Screen name="Profile" component={ProfileScreen} />
-          <Stack.Screen name="Comments" component={CommentsScreen} />
-          <Stack.Screen name="News" component={NewsScreen} />
-          <Stack.Screen name="NewsDetail" component={NewsDetailScreen} />
-          <Stack.Screen name="Chat" component={ChatScreen} />
-          <Stack.Screen name="AddFriends" component={AddFriendsScreen} />
-          <Stack.Screen
-            name="Reader"
-            component={ReaderScreen}
-            options={{
-              gestureEnabled: false,
-            }}
-          />
-        </Stack.Navigator>
-      </NavigationContainer>
+          </PersonalizationProvider>
+        </NavigationContainer>
+      </SafeAreaProvider>
     </AlertProvider>
 
   );
