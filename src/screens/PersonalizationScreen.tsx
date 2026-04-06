@@ -162,7 +162,7 @@ export default function PersonalizationScreen() {
 
                     <View style={[styles.noteCard, { backgroundColor: theme.accentSoft, borderColor: theme.border }]}> 
                         <MaterialCommunityIcons name="palette-outline" size={20} color={theme.accent} />
-                        <Text style={[styles.noteText, { color: theme.textMuted }]}>La infraestructura de temas ya queda centralizada para seguir expandiendo más pantallas y componentes sin volver a duplicar lógica.</Text>
+                        <Text style={[styles.noteText, { color: theme.textMuted }]}>Los cambios de tema, reducción de movimiento y modo compacto ya se aplican en navegación y biblioteca para que la personalización sea visible en el uso diario.</Text>
                     </View>
                 </ScrollView>
             </SafeAreaView>

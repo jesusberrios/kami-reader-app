@@ -22,6 +22,7 @@ import {
 import { useNavigation, useRoute } from '@react-navigation/native';
 import type { RouteProp } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { usePersonalization } from '../contexts/PersonalizationContext';
 import { MaterialCommunityIcons, Ionicons, Feather } from '@expo/vector-icons';
 import {
     collection,
@@ -203,6 +204,7 @@ const ChatScreen = () => {
 
     const currentUser = auth.currentUser;
     const { alertError, alertConfirm } = useAlertContext();
+    const { theme } = usePersonalization();
 
     // Memoizar el ID del chat
     const chatId = useMemo(() => {
@@ -579,7 +581,7 @@ const ChatScreen = () => {
                 onPress={() => navigation.goBack()}
                 style={styles.backButton}
             >
-                <Ionicons name="arrow-back" size={24} color="#FFF" />
+                <Ionicons name="arrow-back" size={24} color={theme.text} />
             </TouchableOpacity>
 
             <View style={styles.headerUserInfo}>
@@ -606,20 +608,20 @@ const ChatScreen = () => {
                 onPress={() => setMenuVisible(true)}
                 style={styles.menuButton}
             >
-                <MaterialCommunityIcons name="dots-vertical" size={24} color="#FFF" />
+                <MaterialCommunityIcons name="dots-vertical" size={24} color={theme.text} />
             </TouchableOpacity>
         </View>
-    ), [navigation, recipientInfo, recipientName, isRecipientOnline]);
+    ), [navigation, recipientInfo, recipientName, isRecipientOnline, theme.text]);
 
     const emptyComponent = useMemo(() => (
         <View style={styles.emptyContainer}>
-            <MaterialCommunityIcons name="message-text-outline" size={64} color="#666" />
-            <Text style={styles.emptyText}>Inicia una conversación</Text>
-            <Text style={styles.emptySubtext}>
+            <MaterialCommunityIcons name="message-text-outline" size={64} color={theme.textMuted} />
+            <Text style={[styles.emptyText, { color: theme.text }]}>Inicia una conversación</Text>
+            <Text style={[styles.emptySubtext, { color: theme.textMuted }] }>
                 Envía un mensaje para comenzar a chatear con {recipientInfo?.username || recipientName}
             </Text>
         </View>
-    ), [recipientInfo, recipientName]);
+    ), [recipientInfo, recipientName, theme.text, theme.textMuted]);
 
     const stickerPickerComponent = useMemo(() => (
         <Modal transparent animationType="slide" visible={stickerPickerVisible} onRequestClose={() => setStickerPickerVisible(false)}>
@@ -673,11 +675,11 @@ const ChatScreen = () => {
 
     if (loading) {
         return (
-            <LinearGradient colors={['#1A1A24', '#2C2C38']} style={styles.container}>
+            <LinearGradient colors={[theme.background, theme.backgroundSecondary]} style={styles.container}>
                 <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
                 <SafeAreaView style={[styles.safeArea, { paddingTop: insets.top, paddingBottom: insets.bottom }]} edges={['left', 'right']}>
                     <View style={styles.loadingContainer}>
-                        <ActivityIndicator size="large" color="#FF5252" />
+                        <ActivityIndicator size="large" color={theme.accent} />
                         <Text style={styles.loadingText}>Cargando mensajes...</Text>
                     </View>
                 </SafeAreaView>
@@ -686,7 +688,7 @@ const ChatScreen = () => {
     }
 
     return (
-        <LinearGradient colors={['#1A1A24', '#2C2C38']} style={styles.container}>
+        <LinearGradient colors={[theme.background, theme.backgroundSecondary]} style={styles.container}>
             <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
             <SafeAreaView style={[styles.safeArea, { paddingTop: insets.top, paddingBottom: insets.bottom }]} edges={['left', 'right']}>
 
@@ -709,7 +711,7 @@ const ChatScreen = () => {
                         style={styles.scrollToBottomButton}
                     >
                         <Text style={styles.scrollToBottomText}>{unreadCount} nuevo(s)</Text>
-                        <Ionicons name="arrow-down" size={16} color="#FFF" />
+                        <Ionicons name="arrow-down" size={16} color={theme.text} />
                     </TouchableOpacity>
                 )}
 
@@ -737,14 +739,14 @@ const ChatScreen = () => {
                             onPress={() => setStickerPickerVisible(true)}
                             style={styles.mediaButton}
                         >
-                            <Ionicons name="happy-outline" size={24} color="#FFF" />
+                            <Ionicons name="happy-outline" size={24} color={theme.text} />
                         </TouchableOpacity>
 
                         <TextInput
                             ref={inputRef}
-                            style={styles.messageInput}
+                            style={[styles.messageInput, { color: theme.text, backgroundColor: theme.card }]}
                             placeholder="Escribe un mensaje..."
-                            placeholderTextColor="#666"
+                            placeholderTextColor={theme.textMuted}
                             value={newMessage}
                             onChangeText={(text) => {
                                 setNewMessage(text);
@@ -763,12 +765,12 @@ const ChatScreen = () => {
                             disabled={!newMessage.trim() || sending}
                         >
                             {sending ? (
-                                <ActivityIndicator size="small" color="#FFF" />
+                                <ActivityIndicator size="small" color={theme.text} />
                             ) : (
                                 <Feather
                                     name="send"
                                     size={20}
-                                    color={newMessage.trim() ? "#FFF" : "#666"}
+                                    color={newMessage.trim() ? theme.text : theme.textMuted}
                                 />
                             )}
                         </TouchableOpacity>
@@ -788,8 +790,8 @@ const ChatScreen = () => {
                                         navigation.navigate('Profile' as any, { userId: recipientId });
                                     }}
                                 >
-                                    <MaterialCommunityIcons name="account-eye" size={20} color="#333" />
-                                    <Text style={styles.menuItemText}>Ver perfil</Text>
+                                    <MaterialCommunityIcons name="account-eye" size={20} color={theme.text} />
+                                    <Text style={[styles.menuItemText, { color: theme.text }]}>Ver perfil</Text>
                                 </TouchableOpacity>
                                 {/*  <TouchableOpacity
                                     style={styles.menuItem}

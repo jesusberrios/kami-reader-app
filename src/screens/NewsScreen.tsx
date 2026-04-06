@@ -17,6 +17,7 @@ import { collection, getDocs } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
+import { usePersonalization } from '../contexts/PersonalizationContext';
 
 type NewsItem = {
     id: string;
@@ -41,6 +42,7 @@ const formatDate = (value: any) => {
 };
 
 const NewsScreen = () => {
+    const { theme } = usePersonalization();
     const navigation = useNavigation<any>();
     const insets = useSafeAreaInsets();
 
@@ -78,19 +80,19 @@ const NewsScreen = () => {
 
     if (loading) {
         return (
-            <LinearGradient colors={['#0F0F1A', '#252536']} style={styles.loadingContainer}>
-                <ActivityIndicator size="large" color="#FF6B6B" />
+            <LinearGradient colors={[theme.background, theme.backgroundSecondary]} style={styles.loadingContainer}>
+                <ActivityIndicator size="large" color={theme.accent} />
                 <Text style={styles.loadingText}>Cargando noticias...</Text>
             </LinearGradient>
         );
     }
 
     return (
-        <LinearGradient colors={['#0F0F1A', '#252536']} style={styles.container}>
+        <LinearGradient colors={[theme.background, theme.backgroundSecondary]} style={styles.container}>
             <SafeAreaView style={[styles.safeArea, { paddingTop: insets.top }]}> 
                 <View style={styles.headerRow}>
                     <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-                        <Ionicons name="arrow-back" size={24} color="#FFF" />
+                        <Ionicons name="arrow-back" size={24} color={theme.text} />
                     </TouchableOpacity>
                     <Text style={styles.headerTitle}>Noticias</Text>
                     <View style={{ width: 34 }} />
@@ -114,7 +116,7 @@ const NewsScreen = () => {
                 <FlatList
                     data={sortedNews}
                     keyExtractor={(item) => item.id}
-                    refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); loadNews(); }} tintColor="#FF6B6B" />}
+                    refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); loadNews(); }} tintColor={theme.accent} />}
                     contentContainerStyle={styles.listContent}
                     ListEmptyComponent={<Text style={styles.emptyText}>No hay noticias disponibles.</Text>}
                     renderItem={({ item }) => (

@@ -1,7 +1,7 @@
 import 'react-native-gesture-handler';
 import 'react-native-reanimated';
 import React, { useEffect, useState } from 'react';
-import { StatusBar, View, ActivityIndicator, Text, Platform } from 'react-native';
+import { StatusBar, View, ActivityIndicator, Text, Platform, AppState } from 'react-native';
 import { DrawerActions, NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
 import { createDrawerNavigator } from '@react-navigation/drawer';
 import { createStackNavigator } from '@react-navigation/stack';
@@ -109,7 +109,21 @@ function ThemedNavigationShell({
   navigateToMainRoute: (routeName: 'Library' | 'AddFriends' | 'Home' | 'Profile') => void;
   openDrawerFromBottomBar: () => void;
 }) {
-  const { theme } = usePersonalization();
+  const { theme, settings } = usePersonalization();
+
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+
+    const syncNavBarTheme = async () => {
+      try {
+        await NavigationBar.setBackgroundColorAsync(theme.backgroundSecondary);
+      } catch {
+        // silently ignored
+      }
+    };
+
+    syncNavBarTheme();
+  }, [theme.backgroundSecondary]);
 
   return (
     <>
@@ -132,7 +146,7 @@ function ThemedNavigationShell({
             gestureEnabled: true,
             gestureDirection: 'horizontal',
             gestureResponseDistance: 50,
-            animationEnabled: true,
+            animationEnabled: !settings.reduceMotion,
             cardStyleInterpolator: CardStyleInterpolators.forHorizontalIOS,
             transitionSpec: {
               open: TransitionSpecs.TransitionIOSSpec,
@@ -197,6 +211,7 @@ function ThemedNavigationShell({
 }
 
 function MainDrawerNavigator() {
+  const { theme } = usePersonalization();
   const [userPlan, setUserPlan] = useState<'free' | 'premium' | null>(null);
   const [pendingRequests, setPendingRequests] = useState(0);
   const [unreadMessages, setUnreadMessages] = useState(0);
@@ -270,15 +285,16 @@ function MainDrawerNavigator() {
           width: '100%',
           backgroundColor: 'transparent',
         },
+        lazy: true,
         drawerType: 'front',
         overlayColor: 'transparent',
         headerShown: false,
         swipeEnabled: false,
         swipeEdgeWidth: 0,
         swipeMinDistance: 999,
-        drawerActiveTintColor: '#FF6E6E',
-        drawerInactiveTintColor: '#C5C5D6',
-        drawerActiveBackgroundColor: 'rgba(255, 110, 110, 0.18)',
+        drawerActiveTintColor: theme.accent,
+        drawerInactiveTintColor: theme.textMuted,
+        drawerActiveBackgroundColor: theme.accentSoft,
         drawerItemStyle: {
           borderRadius: 12,
           marginHorizontal: 10,
@@ -340,14 +356,14 @@ function MainDrawerNavigator() {
                   position: 'absolute',
                   top: -5,
                   right: -5,
-                  backgroundColor: '#FF5252',
+                  backgroundColor: theme.danger,
                   borderRadius: 10,
                   minWidth: 18,
                   height: 18,
                   justifyContent: 'center',
                   alignItems: 'center',
                   borderWidth: 2,
-                  borderColor: '#121218',
+                  borderColor: theme.background,
                 }}>
                   <Text style={{
                     color: '#FFF',
@@ -421,7 +437,31 @@ export default function App() {
     };
 
     configureSystemNavigation();
+
+    const appStateSubscription = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') {
+        configureSystemNavigation();
+      }
+    });
+
+    return () => {
+      appStateSubscription.remove();
+    };
   }, []);
+
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+
+    const ensureNavigationBarHidden = async () => {
+      try {
+        await NavigationBar.setVisibilityAsync('hidden');
+      } catch {
+        // silently ignored
+      }
+    };
+
+    ensureNavigationBarHidden();
+  }, [currentRouteName]);
 
   useEffect(() => {
     const unsubscribe = auth.onAuthStateChanged(async (currentUser) => {
@@ -498,10 +538,10 @@ export default function App() {
   const shouldShowBottomBarFinal = shouldShowBottomBar && !settingsActive;
 
   return (
-    <AlertProvider>
-      <SafeAreaProvider>
-        <NavigationContainer ref={navigationRef} onReady={handleNavStateChange} onStateChange={handleNavStateChange}>
-          <PersonalizationProvider>
+    <PersonalizationProvider>
+      <AlertProvider>
+        <SafeAreaProvider>
+          <NavigationContainer ref={navigationRef} onReady={handleNavStateChange} onStateChange={handleNavStateChange}>
             <ThemedNavigationShell
               user={user}
               needsTutorial={needsTutorial}
@@ -511,10 +551,10 @@ export default function App() {
               navigateToMainRoute={navigateToMainRoute}
               openDrawerFromBottomBar={openDrawerFromBottomBar}
             />
-          </PersonalizationProvider>
-        </NavigationContainer>
-      </SafeAreaProvider>
-    </AlertProvider>
+          </NavigationContainer>
+        </SafeAreaProvider>
+      </AlertProvider>
+    </PersonalizationProvider>
 
   );
 }

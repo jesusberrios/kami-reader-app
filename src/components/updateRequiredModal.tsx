@@ -1,6 +1,7 @@
 import React from 'react';
 import { Modal, View, Text, TouchableOpacity, StyleSheet, Linking, Platform } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { usePersonalization } from '../contexts/PersonalizationContext';
 
 interface UpdateRequiredModalProps {
     visible: boolean;
@@ -17,6 +18,7 @@ const UpdateRequiredModal: React.FC<UpdateRequiredModalProps> = ({
     iosAppId,
     androidPackageName,
 }) => {
+    const { theme } = usePersonalization();
     const handleUpdateApp = () => {
         const storeUrl = Platform.OS === 'ios'
             ? `itms-apps://itunes.apple.com/app/id${iosAppId}`
@@ -40,26 +42,26 @@ const UpdateRequiredModal: React.FC<UpdateRequiredModalProps> = ({
             onRequestClose={() => { }} // No permitir cerrar el modal
         >
             <View style={styles.modalOverlay}>
-                <View style={styles.modalContainer}>
+                <View style={[styles.modalContainer, { backgroundColor: theme.card, borderColor: theme.border }]}> 
                     <MaterialCommunityIcons
                         name="alert-circle-outline"
                         size={50}
-                        color="#FF5252"
+                        color={theme.danger}
                         style={styles.modalIcon}
                     />
-                    <Text style={styles.modalTitle}>Actualización Requerida</Text>
-                    <Text style={styles.modalText}>
+                    <Text style={[styles.modalTitle, { color: theme.text }]}>Actualización Requerida</Text>
+                    <Text style={[styles.modalText, { color: theme.textMuted }]}>
                         La versión actual de la app ({currentVersion}) ya no es compatible.
                         Por favor, actualiza a la versión {minVersion} o superior para continuar.
                     </Text>
-                    <Text style={styles.modalSubtext}>
+                    <Text style={[styles.modalSubtext, { color: theme.textMuted }]}>
                         Esta actualización incluye mejoras de seguridad y nuevas funciones.
                     </Text>
                     <TouchableOpacity
-                        style={[styles.modalButton, styles.updateButton]}
+                        style={[styles.modalButton, styles.updateButton, { backgroundColor: theme.accent }]}
                         onPress={handleUpdateApp}
                     >
-                        <Text style={styles.modalButtonText}>Actualizar Ahora</Text>
+                        <Text style={[styles.modalButtonText, { color: theme.text }]}>Actualizar Ahora</Text>
                     </TouchableOpacity>
                 </View>
             </View>
@@ -77,6 +79,7 @@ const styles = StyleSheet.create({
     modalContainer: {
         backgroundColor: '#1E1E2A',
         borderRadius: 10,
+        borderWidth: 1,
         padding: 20,
         width: '90%',
         maxWidth: 500,

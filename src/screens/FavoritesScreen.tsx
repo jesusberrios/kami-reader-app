@@ -16,6 +16,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { auth, db } from '../firebase/config';
 import { collection, deleteDoc, doc, onSnapshot, orderBy, query } from 'firebase/firestore';
 import { useAlertContext } from '../contexts/AlertContext';
+import { usePersonalization } from '../contexts/PersonalizationContext';
 import { getProviderAliasLabel } from '../utils/providerBranding';
 
 type FavoriteItem = {
@@ -28,6 +29,7 @@ type FavoriteItem = {
 };
 
 export default function FavoritesScreen() {
+    const { theme } = usePersonalization();
     const navigation = useNavigation<any>();
     const [favorites, setFavorites] = useState<FavoriteItem[]>([]);
     const [loading, setLoading] = useState(true);
@@ -160,7 +162,7 @@ export default function FavoritesScreen() {
                     <Text style={styles.title} numberOfLines={2}>{item.comicTitle}</Text>
                     <Text style={styles.itemHint}>Toca para abrir detalles</Text>
                 </View>
-                <Ionicons name="chevron-forward" size={22} color="#FF6B6B" />
+                    <Ionicons name="chevron-forward" size={22} color={theme.accent} />
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -185,9 +187,9 @@ export default function FavoritesScreen() {
         if (favorites.length === 0) return null;
 
         return (
-            <LinearGradient colors={['rgba(255,107,107,0.18)', 'rgba(107,138,253,0.12)']} style={styles.summaryCard}>
+            <LinearGradient colors={[theme.accentSoft, 'rgba(107,138,253,0.12)']} style={styles.summaryCard}>
                 <View style={styles.summaryIconWrap}>
-                    <Ionicons name="heart" size={22} color="#FFB3B3" />
+                    <Ionicons name="heart" size={22} color={theme.accent} />
                 </View>
                 <View style={styles.summaryTextWrap}>
                     <Text style={styles.summaryTitle}>Tu colección guardada</Text>
@@ -197,7 +199,7 @@ export default function FavoritesScreen() {
                 </View>
             </LinearGradient>
         );
-    }, [favorites.length]);
+    }, [favorites.length, theme.accent, theme.accentSoft]);
 
     const renderEmptyState = useMemo(() => (
         <View style={styles.emptyContent}>
@@ -238,17 +240,17 @@ export default function FavoritesScreen() {
                 accessible
                 accessibilityLabel="Volver atrás"
             >
-                <Ionicons name="arrow-back" size={28} color="#FF6B6B" />
+                <Ionicons name="arrow-back" size={28} color={theme.accent} />
             </TouchableOpacity>
             <Text style={styles.topBarTitle}>Mis Favoritos</Text>
         </View>
-    ), [handleGoBack]);
+    ), [handleGoBack, theme.accent]);
 
     // Estados de carga y contenido
     if (loading) {
         return (
-            <LinearGradient colors={['#0F0F1A', '#252536']} style={styles.loadingContainer}>
-                <ActivityIndicator size="large" color="#FF6B6B" />
+            <LinearGradient colors={[theme.background, theme.backgroundSecondary]} style={styles.loadingContainer}>
+                <ActivityIndicator size="large" color={theme.accent} />
                 <Text style={styles.loadingText}>Cargando favoritos...</Text>
             </LinearGradient>
         );
@@ -256,7 +258,7 @@ export default function FavoritesScreen() {
 
     if (!currentUserUid) {
         return (
-            <LinearGradient colors={['#0F0F1A', '#252536']} style={styles.container}>
+            <LinearGradient colors={[theme.background, theme.backgroundSecondary]} style={styles.container}>
                 <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
                 <SafeAreaView style={[styles.safeArea, { paddingTop: insets.top }]}>
                     {renderTopBar}
@@ -267,7 +269,7 @@ export default function FavoritesScreen() {
     }
 
     return (
-        <LinearGradient colors={['#0F0F1A', '#252536']} style={styles.container}>
+        <LinearGradient colors={[theme.background, theme.backgroundSecondary]} style={styles.container}>
             <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
             <SafeAreaView style={[styles.safeArea, { paddingTop: insets.top }]}>
                 {renderTopBar}

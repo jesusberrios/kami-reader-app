@@ -32,30 +32,39 @@ const items = [
     { key: 'Profile' as const, label: 'Perfil', icon: 'account-circle-outline' },
 ];
 
-export default function GlobalBottomBar({ currentRouteName, visible, settingsActive = false, onNavigate, onOpenDrawer }: GlobalBottomBarProps) {
+function GlobalBottomBar({ currentRouteName, visible, settingsActive = false, onNavigate, onOpenDrawer }: GlobalBottomBarProps) {
     const insets = useSafeAreaInsets();
     const { theme } = usePersonalization();
 
     if (!visible) return null;
 
-    // Barra absolutamente flotante, sin reservar espacio y con fondo reservado transparente
+    // Barra flotante con fondo tematico uniforme para evitar cortes visuales.
     return (
         <View pointerEvents="box-none" style={[styles.absoluteOverlay, { bottom: 0, left: 0, right: 0 }]}> 
-            {/* Espacio reservado transparente para no tapar contenido */}
-            <View style={{ height: Math.max(insets.bottom, 10) + 64, backgroundColor: 'transparent', width: '100%', position: 'absolute', bottom: 0, left: 0, right: 0, zIndex: 0 }} pointerEvents="none" />
+            <View
+                pointerEvents="none"
+                style={{
+                    position: 'absolute',
+                    bottom: 0,
+                    left: 0,
+                    right: 0,
+                    height: Math.max(insets.bottom, 10) + 86,
+                    backgroundColor: withAlpha(theme.backgroundSecondary, 0.98),
+                }}
+            />
             <LinearGradient
-                colors={[withAlpha(theme.background, 0.12), 'rgba(0,0,0,0.04)']}
+                colors={[withAlpha(theme.card, 0.96), withAlpha(theme.backgroundSecondary, 0.96)]}
                 start={{ x: 0, y: 0 }}
                 end={{ x: 1, y: 1 }}
                 style={[
                     styles.container,
                     {
-                        borderColor: withAlpha(theme.text, 0.06),
-                        marginBottom: Math.max(insets.bottom, 10),
-                        marginHorizontal: 0, // full width
-                        width: '100%',
+                        borderColor: withAlpha(theme.border, 0.9),
+                        marginBottom: Math.max(insets.bottom, 6),
+                        marginHorizontal: 12,
+                        width: 'auto',
                         alignSelf: 'center',
-                        maxWidth: 600, // para tablets, no más de 600px
+                        maxWidth: 700,
                     },
                 ]}
             >
@@ -77,9 +86,9 @@ export default function GlobalBottomBar({ currentRouteName, visible, settingsAct
                                     end={{ x: 1, y: 1 }}
                                     style={[styles.homeButton, { borderColor: theme.backgroundSecondary }]}
                                 >
-                                    <MaterialCommunityIcons name={item.icon as any} size={26} color="#FFF" />
+                                    <MaterialCommunityIcons name={item.icon as any} size={26} color={theme.text} />
                                 </LinearGradient>
-                                <Text style={styles.homeLabel}>{item.label}</Text>
+                                <Text style={[styles.homeLabel, { color: theme.text }]}>{item.label}</Text>
                             </TouchableOpacity>
                         );
                     }
@@ -116,6 +125,8 @@ export default function GlobalBottomBar({ currentRouteName, visible, settingsAct
     );
 }
 
+export default React.memo(GlobalBottomBar);
+
 const styles = StyleSheet.create({
     absoluteOverlay: {
         position: 'absolute',
@@ -140,15 +151,15 @@ const styles = StyleSheet.create({
         paddingHorizontal: 10,
         borderWidth: 1.5,
         shadowColor: '#000',
-        shadowOpacity: 0.10,
-        shadowRadius: 24,
-        shadowOffset: { width: 0, height: 8 },
-        elevation: 16,
+        shadowOpacity: 0.16,
+        shadowRadius: 18,
+        shadowOffset: { width: 0, height: 6 },
+        elevation: 12,
         backgroundColor: 'transparent',
         marginBottom: 0,
         width: '100%',
         alignSelf: 'center',
-        maxWidth: 600,
+        maxWidth: 700,
     },
     item: {
         flex: 1,
@@ -201,7 +212,6 @@ const styles = StyleSheet.create({
     homeLabel: {
         marginTop: 4,
         marginBottom: 6,
-        color: '#FFFFFF',
         fontSize: 11,
         fontWeight: '800',
         textAlign: 'center',

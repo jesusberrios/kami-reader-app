@@ -23,7 +23,6 @@ class MainApplication : Application(), ReactApplication {
         object : DefaultReactNativeHost(this) {
           override fun getPackages(): List<ReactPackage> {
             val packages = PackageList(this).packages
-            packages.add(ImmersivePackage())
             return packages
           }
 

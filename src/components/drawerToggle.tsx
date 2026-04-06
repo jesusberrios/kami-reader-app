@@ -4,9 +4,11 @@ import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { DrawerNavigationProp, useDrawerStatus } from '@react-navigation/drawer';
 import { DrawerParamList } from '../navigation/types';
+import { usePersonalization } from '../contexts/PersonalizationContext';
 
 const DrawerToggle = () => {
     const navigation = useNavigation<DrawerNavigationProp<DrawerParamList>>();
+    const { theme } = usePersonalization();
     const scaleValue = useRef(new Animated.Value(1)).current;
     const rotationValue = useRef(new Animated.Value(0)).current;
     const drawerStatus = useDrawerStatus();
@@ -60,6 +62,7 @@ const DrawerToggle = () => {
         <Animated.View
             style={[
                 styles.container,
+                { backgroundColor: theme.accentSoft },
                 {
                     transform: [
                         { scale: scaleValue },
@@ -78,8 +81,8 @@ const DrawerToggle = () => {
                 <Ionicons
                     name="menu"
                     size={28}
-                    color="#FF6E6E"
-                    style={styles.icon}
+                    color={theme.accent}
+                    style={[styles.icon, { shadowColor: theme.background }]}
                 />
             </TouchableOpacity>
         </Animated.View>

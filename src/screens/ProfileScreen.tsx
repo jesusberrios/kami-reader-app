@@ -24,6 +24,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAlertContext } from '../contexts/AlertContext'; // Importar el contexto de alertas
+import { usePersonalization } from '../contexts/PersonalizationContext';
 import {
     READER_ACHIEVEMENTS,
     ReaderAchievement,
@@ -55,6 +56,7 @@ interface UserProfile {
 }
 
 const ProfileScreen = () => {
+    const { theme } = usePersonalization();
     const navigation = useNavigation<ProfileScreenNavigationProp>();
     const route = useRoute<ProfileScreenRouteProp>();
     const insets = useSafeAreaInsets();
@@ -265,8 +267,8 @@ const ProfileScreen = () => {
 
     if (loading || !userProfile) {
         return (
-            <LinearGradient colors={['#0F0F1A', '#1E1E28']} style={styles.loadingContainer}>
-                <ActivityIndicator size="large" color="#FF6E6E" />
+            <LinearGradient colors={[theme.background, theme.backgroundSecondary]} style={styles.loadingContainer}>
+                <ActivityIndicator size="large" color={theme.accent} />
                 <Text style={styles.loadingText}>Cargando perfil...</Text>
             </LinearGradient>
         );
@@ -275,7 +277,7 @@ const ProfileScreen = () => {
     return (
         <Animated.View style={[styles.container, { opacity: fadeAnim }]}>
             <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
-            <LinearGradient colors={['#0F0F1A', '#1E1E28']} style={styles.gradient}>
+            <LinearGradient colors={[theme.background, theme.backgroundSecondary]} style={styles.gradient}>
                 <View style={[styles.safeArea, { paddingTop: insets.top }]}>
                     <ScrollView contentContainerStyle={styles.scrollContainer}>
                         {/* Header */}
@@ -295,7 +297,7 @@ const ProfileScreen = () => {
                                         <Ionicons
                                             name="arrow-back"
                                             size={28}
-                                            color="#FF6E6E"
+                                            color={theme.accent}
                                         />
                                     </TouchableOpacity>
                                 </Animated.View>
@@ -316,17 +318,17 @@ const ProfileScreen = () => {
                                 {userProfile.avatar ? (
                                     <Image source={{ uri: userProfile.avatar }} style={styles.avatar} />
                                 ) : (
-                                    <Ionicons name="person-circle" size={120} color="#444" />
+                                    <Ionicons name="person-circle" size={120} color={theme.textMuted} />
                                 )}
                                 {uploadingAvatar && (
                                     <View style={styles.uploadOverlay}>
-                                        <ActivityIndicator color="#FFF" />
+                                        <ActivityIndicator color={theme.text} />
                                     </View>
                                 )}
                                 {isOwnProfile && !uploadingAvatar && (
-                                    <View style={styles.cameraIconContainer}>
+                                    <View style={[styles.cameraIconContainer, { backgroundColor: theme.accent, borderColor: theme.backgroundSecondary }]}>
                                         <View style={styles.cameraIconBackground}>
-                                            <Ionicons name="camera" size={16} color="#FFF" />
+                                            <Ionicons name="camera" size={16} color={theme.text} />
                                         </View>
                                     </View>
                                 )}
@@ -354,7 +356,7 @@ const ProfileScreen = () => {
                                             <Ionicons
                                                 name={isEditingUsername ? "checkmark" : "pencil"}
                                                 size={18}
-                                                color="#FF6E6E"
+                                                color={theme.accent}
                                             />
                                         </TouchableOpacity>
                                     )}
@@ -364,8 +366,8 @@ const ProfileScreen = () => {
                                 <View style={styles.badgeContainer}>
                                     <LinearGradient
                                         colors={userProfile.accountType === 'premium' ?
-                                            ['#FFD700', '#FFA500'] :
-                                            ['#6B8AFD', '#3A5FCD']}
+                                            [theme.warning, theme.accent] :
+                                            [theme.accentStrong, theme.accent]}
                                         style={styles.accountBadge}
                                         start={{ x: 0, y: 0 }}
                                         end={{ x: 1, y: 1 }}
@@ -376,7 +378,7 @@ const ProfileScreen = () => {
                                     </LinearGradient>
 
                                     {!isOwnProfile && userProfile.isFriend && (
-                                        <View style={[styles.accountBadge, { backgroundColor: '#4CAF50', marginLeft: 8 }]}>
+                                        <View style={[styles.accountBadge, { backgroundColor: theme.success, marginLeft: 8 }]}> 
                                             <Text style={styles.badgeText}>AMIGO</Text>
                                         </View>
                                     )}
@@ -387,19 +389,19 @@ const ProfileScreen = () => {
                                     <View style={styles.profileActions}>
                                         {userProfile.isFriend ? (
                                             <TouchableOpacity
-                                                style={styles.actionButton}
+                                                style={[styles.actionButton, { backgroundColor: theme.accent }]}
                                                 onPress={handleSendMessage}
                                             >
-                                                <Ionicons name="chatbubble-ellipses" size={20} color="#FFF" />
-                                                <Text style={styles.actionButtonText}>Mensaje</Text>
+                                                <Ionicons name="chatbubble-ellipses" size={20} color={theme.text} />
+                                                <Text style={[styles.actionButtonText, { color: theme.text }]}>Mensaje</Text>
                                             </TouchableOpacity>
                                         ) : (
                                             <TouchableOpacity
                                                 style={[styles.actionButton, styles.addFriendButton]}
                                                 onPress={handleAddFriend}
                                             >
-                                                <Ionicons name="person-add" size={20} color="#FFF" />
-                                                <Text style={styles.actionButtonText}>Agregar</Text>
+                                                <Ionicons name="person-add" size={20} color={theme.text} />
+                                                <Text style={[styles.actionButtonText, { color: theme.text }]}>Agregar</Text>
                                             </TouchableOpacity>
                                         )}
                                     </View>
@@ -414,19 +416,19 @@ const ProfileScreen = () => {
                                 <>
                                     <View style={styles.statsGrid}>
                                         <View style={styles.statCard}>
-                                            <Ionicons name="book" size={24} color="#FF6E6E" />
+                                            <Ionicons name="book" size={24} color={theme.accent} />
                                             <Text style={styles.statValue}>{userProfile.readingStats.totalRead}</Text>
                                             <Text style={styles.statLabel}>Lecturas</Text>
                                         </View>
                                         <View style={styles.statCard}>
-                                            <Ionicons name="time" size={24} color="#FF6E6E" />
+                                            <Ionicons name="time" size={24} color={theme.accent} />
                                             <Text style={styles.statValue}>
                                                 {formatReadingTime(userProfile.readingStats.totalReadingTimeMs || 0)}
                                             </Text>
                                             <Text style={styles.statLabel}>Tiempo</Text>
                                         </View>
                                         <View style={styles.statCard}>
-                                            <Ionicons name="heart" size={24} color="#FF6E6E" />
+                                            <Ionicons name="heart" size={24} color={theme.accent} />
                                             <Text style={styles.statValue}>{userProfile.readingStats.favorites}</Text>
                                             <Text style={styles.statLabel}>Favoritos</Text>
                                         </View>
@@ -437,14 +439,14 @@ const ProfileScreen = () => {
                                             onPress={handleResetStats}
                                             activeOpacity={0.85}
                                         >
-                                            <Ionicons name="refresh-circle-outline" size={18} color="#FFD3D3" />
+                                            <Ionicons name="refresh-circle-outline" size={18} color={theme.textMuted} />
                                             <Text style={styles.resetStatsText}>Reiniciar estadisticas</Text>
                                         </TouchableOpacity>
                                     )}
                                 </>
                             ) : (
                                 <View style={styles.lockedSection}>
-                                    <MaterialCommunityIcons name="lock" size={40} color="#B0BEC5" />
+                                    <MaterialCommunityIcons name="lock" size={40} color={theme.textMuted} />
                                     <Text style={styles.lockedText}>
                                         {isOwnProfile
                                             ? 'Estadísticas avanzadas disponibles solo para usuarios Premium.'
@@ -480,18 +482,18 @@ const ProfileScreen = () => {
                                                     <Ionicons
                                                         name={achievement.icon as any}
                                                         size={28}
-                                                        color={unlocked ? "#FFD700" : "#555"}
+                                                            color={unlocked ? theme.warning : theme.textMuted}
                                                     />
                                                     {unlocked && (
-                                                        <View style={styles.unlockedBadge}>
-                                                            <Ionicons name="checkmark" size={12} color="#FFF" />
+                                                        <View style={[styles.unlockedBadge, { backgroundColor: theme.success, borderColor: theme.backgroundSecondary }]}>
+                                                            <Ionicons name="checkmark" size={12} color={theme.text} />
                                                         </View>
                                                     )}
                                                 </View>
                                                 <View style={styles.achievementInfo}>
                                                     <Text style={[
                                                         styles.achievementName,
-                                                        unlocked && { color: '#FFD700' }
+                                                        unlocked && { color: theme.warning }
                                                     ]}>
                                                         {achievement.name}
                                                     </Text>
@@ -517,7 +519,7 @@ const ProfileScreen = () => {
                                 )
                             ) : (
                                 <View style={styles.lockedSection}>
-                                    <MaterialCommunityIcons name="lock" size={40} color="#B0BEC5" />
+                                    <MaterialCommunityIcons name="lock" size={40} color={theme.textMuted} />
                                     <Text style={styles.lockedText}>
                                         {isOwnProfile
                                             ? 'Desbloquea logros exclusivos al convertirte en Premium.'
@@ -544,12 +546,12 @@ const ProfileScreen = () => {
                                 activeOpacity={0.8}
                             >
                                 <LinearGradient
-                                    colors={['#FF6E6E', '#D23C3C']}
+                                    colors={[theme.accent, theme.accentStrong]}
                                     style={styles.upgradeGradient}
                                     start={{ x: 0, y: 0 }}
                                     end={{ x: 1, y: 1 }}
                                 >
-                                    <Ionicons name="rocket" size={32} color="#FFF" />
+                                    <Ionicons name="rocket" size={32} color={theme.text} />
                                     <Text style={styles.upgradeTitle}>Conviértete en Premium</Text>
                                     <Text style={styles.upgradeText}>
                                         Desbloquea estadísticas avanzadas y más beneficios

@@ -28,6 +28,7 @@ import {
 import { getAuth } from 'firebase/auth';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import { usePersonalization } from '../contexts/PersonalizationContext';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAlertContext } from '../contexts/AlertContext';
@@ -62,12 +63,14 @@ interface CommentsScreenRouteParams {
 // Componente memoizado para cada comentario
 const CommentItem = React.memo(({
     item,
+    theme,
     currentUserId,
     onDeleteComment,
     onLikeComment,
     deletingCommentId
 }: {
     item: Comment;
+    theme: any;
     currentUserId: string | null;
     onDeleteComment: (comment: Comment) => void;
     onLikeComment: (commentId: string, currentLikes: string[]) => void;
@@ -94,22 +97,22 @@ const CommentItem = React.memo(({
     }, [item.createdAt]);
 
     return (
-        <View style={styles.commentBox}>
+        <View style={[styles.commentBox, { backgroundColor: theme.card, borderColor: theme.border }]}>
             <View style={styles.commentHeader}>
                 {item.avatar ? (
-                    <Image source={{ uri: item.avatar }} style={styles.avatar} />
+                    <Image source={{ uri: item.avatar }} style={[styles.avatar, { backgroundColor: theme.surfaceMuted }]} />
                 ) : (
-                    <View style={styles.defaultAvatar}>
-                        <Text style={styles.defaultAvatarText}>
+                    <View style={[styles.defaultAvatar, { backgroundColor: theme.surfaceMuted }]}>
+                        <Text style={[styles.defaultAvatarText, { color: theme.text }]}>
                             {item.userName?.charAt(0).toUpperCase() || '?'}
                         </Text>
                     </View>
                 )}
                 <View style={styles.userInfo}>
-                    <Text style={styles.commentSender}>
+                    <Text style={[styles.commentSender, { color: theme.text }]}>
                         {isMyComment ? 'Tú' : item.userName}
                     </Text>
-                    <Text style={styles.commentTime}>{formattedTime}</Text>
+                    <Text style={[styles.commentTime, { color: theme.textMuted }]}>{formattedTime}</Text>
                 </View>
                 {isMyComment && (
                     <TouchableOpacity
@@ -118,14 +121,14 @@ const CommentItem = React.memo(({
                         disabled={isDeleting}
                     >
                         {isDeleting ? (
-                            <ActivityIndicator size="small" color="#FF6B6B" />
+                            <ActivityIndicator size="small" color={theme.danger} />
                         ) : (
-                            <MaterialCommunityIcons name="trash-can-outline" size={20} color="#FF6B6B" />
+                            <MaterialCommunityIcons name="trash-can-outline" size={20} color={theme.danger} />
                         )}
                     </TouchableOpacity>
                 )}
             </View>
-            <Text style={styles.commentText}>{item.text}</Text>
+            <Text style={[styles.commentText, { color: theme.text }]}>{item.text}</Text>
 
             <View style={styles.commentActions}>
                 <TouchableOpacity
@@ -136,9 +139,9 @@ const CommentItem = React.memo(({
                     <Ionicons
                         name={hasLiked ? "heart" : "heart-outline"}
                         size={20}
-                        color={hasLiked ? "#FF6B6B" : "#AAA"}
+                        color={hasLiked ? theme.danger : theme.textMuted}
                     />
-                    <Text style={styles.likeCountText}>{likeCount > 0 ? likeCount : ''}</Text>
+                    <Text style={[styles.likeCountText, { color: theme.text }]}>{likeCount > 0 ? likeCount : ''}</Text>
                 </TouchableOpacity>
             </View>
         </View>
@@ -146,6 +149,7 @@ const CommentItem = React.memo(({
 });
 
 const CommentsScreen: React.FC = () => {
+    const { theme } = usePersonalization();
     const route = useRoute();
     const { mangaTitle } = route.params as CommentsScreenRouteParams;
     const [comments, setComments] = useState<Comment[]>([]);
@@ -335,6 +339,7 @@ const CommentsScreen: React.FC = () => {
     const renderCommentItem: ListRenderItem<Comment> = useCallback(({ item }) => (
         <CommentItem
             item={item}
+            theme={theme}
             currentUserId={currentUserId}
             onDeleteComment={handleDeleteComment}
             onLikeComment={handleLikeComment}
@@ -346,26 +351,26 @@ const CommentsScreen: React.FC = () => {
 
     const emptyComponent = useMemo(() => (
         <View style={styles.emptyContainer}>
-            <Ionicons name="chatbubbles-outline" size={80} color="#666" />
-            <Text style={styles.emptyText}>No hay comentarios aún</Text>
-            <Text style={styles.emptySubtext}>Sé el primero en comentar</Text>
+            <Ionicons name="chatbubbles-outline" size={80} color={theme.textMuted} />
+            <Text style={[styles.emptyText, { color: theme.text }]}>No hay comentarios aún</Text>
+            <Text style={[styles.emptySubtext, { color: theme.textMuted }]}>Sé el primero en comentar</Text>
         </View>
-    ), []);
+    ), [theme.text, theme.textMuted]);
 
     const headerComponent = useMemo(() => (
         <View style={styles.header}>
             <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-                <Ionicons name="arrow-back" size={24} color="#FFF" />
+                <Ionicons name="arrow-back" size={24} color={theme.text} />
             </TouchableOpacity>
-            <Text style={styles.headerTitle} numberOfLines={1} ellipsizeMode="tail">
+            <Text style={[styles.headerTitle, { color: theme.text }]} numberOfLines={1} ellipsizeMode="tail">
                 {mangaTitle}
             </Text>
             <View style={styles.headerRightPlaceholder} />
         </View>
-    ), [navigation, mangaTitle]);
+    ), [navigation, mangaTitle, theme.text]);
 
     return (
-        <LinearGradient colors={['#0F0F1A', '#252536']} style={styles.container}>
+        <LinearGradient colors={[theme.background, theme.backgroundSecondary]} style={styles.container}>
             <SafeAreaView style={[styles.safeArea, { paddingTop: insets.top }]}>
                 <StatusBar barStyle="light-content" />
 
@@ -373,8 +378,8 @@ const CommentsScreen: React.FC = () => {
 
                 {loading ? (
                     <View style={styles.loadingContainer}>
-                        <ActivityIndicator size="large" color="#FF6B6B" />
-                        <Text style={styles.loadingText}>Cargando comentarios...</Text>
+                        <ActivityIndicator size="large" color={theme.accent} />
+                        <Text style={[styles.loadingText, { color: theme.text }]}>Cargando comentarios...</Text>
                     </View>
                 ) : (
                     <FlatList
@@ -396,23 +401,23 @@ const CommentsScreen: React.FC = () => {
                     keyboardVerticalOffset={Platform.OS === 'ios' ? insets.bottom : 0}
                 >
                     <TextInput
-                        style={styles.commentInput}
+                        style={[styles.commentInput, { borderColor: theme.border, color: theme.text, backgroundColor: theme.card }]}
                         placeholder="Escribe un comentario..."
-                        placeholderTextColor="#999"
+                        placeholderTextColor={theme.textMuted}
                         value={newComment}
                         onChangeText={setNewComment}
                         multiline
                         editable={!sending}
                     />
                     <TouchableOpacity
-                        style={[styles.sendButton, !canPostComment && styles.sendButtonDisabled]}
+                        style={[styles.sendButton, { backgroundColor: theme.accent }, !canPostComment && styles.sendButtonDisabled, !canPostComment && { backgroundColor: theme.textMuted }]}
                         onPress={handlePostComment}
                         disabled={!canPostComment}
                     >
                         {sending ? (
-                            <ActivityIndicator size="small" color="#FFF" />
+                            <ActivityIndicator size="small" color={theme.text} />
                         ) : (
-                            <Ionicons name="send" size={20} color="#FFF" />
+                            <Ionicons name="send" size={20} color={theme.text} />
                         )}
                     </TouchableOpacity>
                 </KeyboardAvoidingView>

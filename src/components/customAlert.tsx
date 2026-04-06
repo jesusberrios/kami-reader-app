@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
     View,
     Text,
@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
+import { usePersonalization } from '../contexts/PersonalizationContext';
 
 // Tipo para los iconos de Ionicons
 export type IoniconsIconName = keyof typeof Ionicons.glyphMap;
@@ -40,6 +41,24 @@ const CustomAlert: React.FC<CustomAlertProps> = ({
     iconName = 'information-circle',
     iconColor = '#FF6E6E'
 }) => {
+    const { theme } = usePersonalization();
+    const [canInteract, setCanInteract] = useState(false);
+
+    useEffect(() => {
+        if (!visible) {
+            setCanInteract(false);
+            return;
+        }
+        setCanInteract(false);
+        const timer = setTimeout(() => setCanInteract(true), 220);
+        return () => clearTimeout(timer);
+    }, [visible]);
+
+    const gradientColors = useMemo(
+        () => [theme.card, theme.backgroundSecondary],
+        [theme.card, theme.backgroundSecondary]
+    );
+
     if (!visible) return null;
 
     return (
@@ -49,12 +68,12 @@ const CustomAlert: React.FC<CustomAlertProps> = ({
             animationType="fade"
             onRequestClose={onDismiss}
         >
-            <TouchableWithoutFeedback onPress={onDismiss}>
+            <TouchableWithoutFeedback onPress={() => { if (canInteract) onDismiss(); }}>
                 <View style={styles.overlay}>
                     <TouchableWithoutFeedback>
-                        <View style={styles.alertContainer}>
+                        <View style={[styles.alertContainer, { borderColor: theme.border }] }>
                             <LinearGradient
-                                colors={['#1E1E2D', '#2D2D42']}
+                                colors={gradientColors as [string, string]}
                                 style={styles.gradient}
                                 start={{ x: 0, y: 0 }}
                                 end={{ x: 1, y: 1 }}
@@ -65,8 +84,8 @@ const CustomAlert: React.FC<CustomAlertProps> = ({
                                     </View>
                                 )}
 
-                                <Text style={styles.title}>{title}</Text>
-                                <Text style={styles.message}>{message}</Text>
+                                <Text style={[styles.title, { color: theme.accent }]}>{title}</Text>
+                                <Text style={[styles.message, { color: theme.text }]}>{message}</Text>
 
                                 <View style={[
                                     styles.buttonContainer,
@@ -77,19 +96,25 @@ const CustomAlert: React.FC<CustomAlertProps> = ({
                                             key={index}
                                             style={[
                                                 styles.button,
+                                                { backgroundColor: theme.accent },
                                                 button.style === 'cancel' && styles.cancelButton,
                                                 button.style === 'destructive' && styles.destructiveButton,
+                                                button.style === 'destructive' && { backgroundColor: theme.danger },
                                                 buttons.length > 2 && styles.columnButton
                                             ]}
                                             onPress={() => {
+                                                if (!canInteract) return;
                                                 button.onPress?.();
                                                 onDismiss();
                                             }}
+                                            disabled={!canInteract}
                                             activeOpacity={0.8}
                                         >
                                             <Text style={[
                                                 styles.buttonText,
-                                                button.style === 'cancel' && styles.cancelButtonText
+                                                { color: theme.text },
+                                                button.style === 'cancel' && styles.cancelButtonText,
+                                                button.style === 'cancel' && { color: theme.textMuted }
                                             ]}>
                                                 {button.text}
                                             </Text>

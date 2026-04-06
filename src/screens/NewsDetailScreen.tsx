@@ -13,6 +13,7 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
+import { usePersonalization } from '../contexts/PersonalizationContext';
 
 type NewsItem = {
     id: string;
@@ -37,6 +38,7 @@ const formatDate = (value: any) => {
 };
 
 const NewsDetailScreen = () => {
+    const { theme } = usePersonalization();
     const navigation = useNavigation<any>();
     const route = useRoute<any>();
     const insets = useSafeAreaInsets();
@@ -44,11 +46,11 @@ const NewsDetailScreen = () => {
     const newsItem: NewsItem | undefined = route?.params?.newsItem;
 
     return (
-        <LinearGradient colors={['#0F0F1A', '#252536']} style={styles.container}>
+        <LinearGradient colors={[theme.background, theme.backgroundSecondary]} style={styles.container}>
             <SafeAreaView style={[styles.safeArea, { paddingTop: insets.top }]}> 
                 <View style={styles.headerRow}>
                     <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-                        <Ionicons name="arrow-back" size={24} color="#FFF" />
+                        <Ionicons name="arrow-back" size={24} color={theme.text} />
                     </TouchableOpacity>
                     <Text style={styles.headerTitle}>Detalle</Text>
                     <View style={{ width: 34 }} />

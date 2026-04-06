@@ -14,6 +14,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { auth } from '../firebase/config';
 import { useNavigation, useRoute } from '@react-navigation/native';
+import { usePersonalization } from '../contexts/PersonalizationContext';
 
 const { width: screenWidth } = Dimensions.get('window');
 
@@ -52,6 +53,7 @@ const TUTORIAL_STEPS: TutorialStep[] = [
 ];
 
 const TutorialScreen = () => {
+    const { theme } = usePersonalization();
     const navigation = useNavigation<any>();
     const route = useRoute<any>();
     const scrollRef = useRef<ScrollView>(null);
@@ -96,15 +98,15 @@ const TutorialScreen = () => {
 
     return (
         <LinearGradient
-            colors={['#0E0F1C', '#17182A', '#0F1220']}
+            colors={[theme.background, theme.backgroundSecondary, theme.background]}
             style={styles.container}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 1 }}
         >
             <View style={styles.header}>
-                <Text style={styles.headerTitle}>Tutorial</Text>
+                <Text style={[styles.headerTitle, { color: theme.text }]}>Tutorial</Text>
                 <TouchableOpacity onPress={finishTutorial} hitSlop={10}>
-                    <Text style={styles.skipText}>Saltar</Text>
+                    <Text style={[styles.skipText, { color: theme.textMuted }]}>Saltar</Text>
                 </TouchableOpacity>
             </View>
 
@@ -118,11 +120,11 @@ const TutorialScreen = () => {
             >
                 {TUTORIAL_STEPS.map((step) => (
                     <View key={step.title} style={styles.slide}>
-                        <View style={styles.iconWrapper}>
-                            <MaterialCommunityIcons name={step.icon} size={68} color="#FF6E6E" />
+                        <View style={[styles.iconWrapper, { backgroundColor: theme.accentSoft, borderColor: theme.accent }]}>
+                            <MaterialCommunityIcons name={step.icon} size={68} color={theme.accent} />
                         </View>
-                        <Text style={styles.title}>{step.title}</Text>
-                        <Text style={styles.description}>{step.description}</Text>
+                        <Text style={[styles.title, { color: theme.text }]}>{step.title}</Text>
+                        <Text style={[styles.description, { color: theme.textMuted }]}>{step.description}</Text>
                     </View>
                 ))}
             </ScrollView>
@@ -132,18 +134,18 @@ const TutorialScreen = () => {
                     {TUTORIAL_STEPS.map((_, index) => (
                         <View
                             key={index}
-                            style={[styles.dot, index === currentIndex && styles.dotActive]}
+                            style={[styles.dot, { backgroundColor: theme.surface }, index === currentIndex && styles.dotActive, index === currentIndex && { backgroundColor: theme.accent }]}
                         />
                     ))}
                 </View>
 
                 {isLast ? (
-                    <TouchableOpacity style={styles.primaryButton} onPress={finishTutorial} activeOpacity={0.85}>
-                        <Text style={styles.primaryButtonText}>Comenzar</Text>
+                    <TouchableOpacity style={[styles.primaryButton, { backgroundColor: theme.accent }]} onPress={finishTutorial} activeOpacity={0.85}>
+                        <Text style={[styles.primaryButtonText, { color: theme.text }]}>Comenzar</Text>
                     </TouchableOpacity>
                 ) : (
-                    <TouchableOpacity style={styles.primaryButton} onPress={handleNext} activeOpacity={0.85}>
-                        <Text style={styles.primaryButtonText}>Siguiente</Text>
+                    <TouchableOpacity style={[styles.primaryButton, { backgroundColor: theme.accent }]} onPress={handleNext} activeOpacity={0.85}>
+                        <Text style={[styles.primaryButtonText, { color: theme.text }]}>Siguiente</Text>
                     </TouchableOpacity>
                 )}
             </View>

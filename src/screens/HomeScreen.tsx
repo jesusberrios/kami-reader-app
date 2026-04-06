@@ -3,7 +3,6 @@ import {
     View,
     Text,
     FlatList,
-    Image,
     StyleSheet,
     ActivityIndicator,
     Dimensions,
@@ -24,7 +23,9 @@ import { getAuth } from 'firebase/auth';
 import { getAppVersion } from '../utils/versionUtils';
 import UpdateRequiredModal from '../components/updateRequiredModal';
 import FloatingChatBubble from '../components/floatingChatBubble';
+import { usePersonalization } from '../contexts/PersonalizationContext';
 import { getLatestManga } from '../services/backendApi';
+import { Image as ExpoImage } from 'expo-image';
 
 // Import the new utilities
 import { getFlagEmoji, formatTimeAgo } from '../utils/flagUtils';
@@ -113,6 +114,7 @@ type NewsItem = {
 };
 
 const HomeScreen = ({ navigation }: any) => {
+    const { theme } = usePersonalization();
     // State
     const [topSafe, setTopSafe] = useState<Chapter[]>([]);
     const [topErotic, setTopErotic] = useState<Chapter[]>([]);
@@ -486,11 +488,13 @@ const HomeScreen = ({ navigation }: any) => {
             activeOpacity={0.7}
             accessibilityLabel={item.lastReadChapterHid ? `Continuar leyendo ${item.title}` : `Ver detalles de ${item.title}`}
         >
-            <Image
+            <ExpoImage
                 source={{ uri: item.cover }}
                 style={styles.cover}
-                resizeMode="cover"
-                defaultSource={require('../../assets/auth-bg.png')}
+                contentFit="cover"
+                placeholder={require('../../assets/auth-bg.png')}
+                cachePolicy="memory-disk"
+                transition={120}
             />
             <LinearGradient
                 colors={['transparent', 'rgba(0,0,0,0.8)']}
@@ -530,6 +534,56 @@ const HomeScreen = ({ navigation }: any) => {
         </TouchableOpacity>
     ), [handleComicPress]);
 
+    const renderLatestItem = useCallback(({ item }: { item: LatestManga }) => (
+        <TouchableOpacity
+            style={styles.comicItem}
+            onPress={() => navigation.navigate('Details', { slug: item.slug })}
+            activeOpacity={0.7}
+            accessibilityLabel={`Ver detalles de ${item.title}`}
+        >
+            <ExpoImage
+                source={{ uri: item.cover }}
+                style={styles.cover}
+                contentFit="cover"
+                placeholder={require('../../assets/auth-bg.png')}
+                cachePolicy="memory-disk"
+                transition={120}
+            />
+            <LinearGradient
+                colors={['transparent', 'rgba(0,0,0,0.8)']}
+                style={styles.comicGradient}
+            />
+            <Text style={styles.comicTitle} numberOfLines={2}>{item.title}</Text>
+            <View style={styles.latestTopBadgesRow}>
+                <View style={styles.latestProviderBadge}>
+                    <Text style={styles.providerBadgeText} numberOfLines={1}>
+                        {getProviderAliasLabel(item.source)}
+                    </Text>
+                </View>
+                <View style={[
+                    styles.latestStatusTag,
+                    { backgroundColor: getStatusBadgeStyles(item.status).backgroundColor },
+                ]}>
+                    <Text
+                        style={[
+                            styles.statusTagText,
+                            { color: getStatusBadgeStyles(item.status).textColor },
+                        ]}
+                        numberOfLines={1}
+                    >
+                        {getStatusBadgeLabel(item)}
+                    </Text>
+                </View>
+            </View>
+            {item.score && item.score !== '0.0' && (
+                <View style={styles.scoreBadge}>
+                    <MaterialCommunityIcons name="star" size={10} color={theme.warning} />
+                    <Text style={styles.scoreText}>{item.score}</Text>
+                </View>
+            )}
+        </TouchableOpacity>
+    ), [navigation, theme.warning]);
+
     const renderSectionHeader = useCallback((icon: string, title: string, color: string, subtitle?: string) => (
         <View style={styles.sectionHeader}>
             <MaterialCommunityIcons name={icon as any} size={24} color={color} />
@@ -542,15 +596,15 @@ const HomeScreen = ({ navigation }: any) => {
 
     if (loading) {
         return (
-            <LinearGradient colors={['#0F0F1A', '#252536']} style={styles.loadingContainer}>
-                <ActivityIndicator size="large" color="#FF6B6B" />
+            <LinearGradient colors={[theme.background, theme.backgroundSecondary]} style={styles.loadingContainer}>
+                <ActivityIndicator size="large" color={theme.accent} />
                 <Text style={styles.loadingText}>Cargando contenido...</Text>
             </LinearGradient>
         );
     }
 
     return (
-        <LinearGradient colors={['#0F0F1A', '#252536']} style={styles.container}>
+        <LinearGradient colors={[theme.background, theme.backgroundSecondary]} style={styles.container}>
             <SafeAreaView style={styles.safeArea} edges={['top', 'bottom', 'left', 'right']}>
                 <ScrollView
                     contentContainerStyle={styles.scrollViewContent}
@@ -558,9 +612,9 @@ const HomeScreen = ({ navigation }: any) => {
                         <RefreshControl
                             refreshing={refreshing}
                             onRefresh={handleRefresh}
-                            tintColor="#FF6B6B"
+                            tintColor={theme.accent}
                             title="Actualizando contenido..."
-                            titleColor="#FFF"
+                            titleColor={theme.text}
                         />
                     }
                 >
@@ -571,9 +625,9 @@ const HomeScreen = ({ navigation }: any) => {
                         </View>
                     </View>
 
-                    <LinearGradient colors={['#FF6B6B22', '#6B8AFD18']} style={styles.heroCard}>
+                    <LinearGradient colors={[theme.accentSoft, 'rgba(107,138,253,0.18)']} style={styles.heroCard}>
                         <View style={styles.heroIconWrap}>
-                            <MaterialCommunityIcons name="compass-rose" size={24} color="#FFD4D4" />
+                            <MaterialCommunityIcons name="compass-rose" size={24} color={theme.accent} />
                         </View>
                         <View style={styles.heroTextWrap}>
                             <Text style={styles.heroTitle}>Explora nuevos mangas</Text>
@@ -584,7 +638,7 @@ const HomeScreen = ({ navigation }: any) => {
                     <TouchableOpacity style={styles.donationCard} onPress={handleOpenDonation} activeOpacity={0.85}>
                         <LinearGradient colors={['#F59E0B33', '#FB718533']} style={StyleSheet.absoluteFill} />
                         <View style={styles.donationTopRow}>
-                            <MaterialCommunityIcons name="gift-outline" size={22} color="#FFD599" />
+                            <MaterialCommunityIcons name="gift-outline" size={22} color={theme.warning} />
                             <Text style={styles.donationTitle}>Donaciones</Text>
                         </View>
                         <Text style={styles.donationText}>
@@ -600,9 +654,9 @@ const HomeScreen = ({ navigation }: any) => {
                         <View style={styles.sectionContainer}>
                             <View style={styles.newsHeaderRow}>
                                 <View style={styles.newsHeaderLeft}>
-                                    <MaterialCommunityIcons name="newspaper" size={24} color="#FF6B6B" />
+                                        <MaterialCommunityIcons name="newspaper" size={24} color={theme.accent} />
                                     <View style={styles.newsHeaderTextWrap}>
-                                        <Text style={[styles.sectionTitle, { color: '#FF6B6B' }]}>Noticias</Text>
+                                            <Text style={[styles.sectionTitle, { color: theme.accent }]}>Noticias</Text>
                                         <Text style={styles.sectionSubtitle}>Actualizaciones del equipo</Text>
                                     </View>
                                 </View>
@@ -626,60 +680,14 @@ const HomeScreen = ({ navigation }: any) => {
 
                     {/* Latest Mangas Section */}
                     <View style={styles.sectionContainer}>
-                        {renderSectionHeader('clock-outline', 'Recientes', '#FFB347', 'Ultimas publicaciones')}
+                        {renderSectionHeader('clock-outline', 'Recientes', theme.warning, 'Ultimas publicaciones')}
                         {latestLoading ? (
-                            <ActivityIndicator size="small" color="#FFB347" style={styles.sectionLoadingIndicator} />
+                            <ActivityIndicator size="small" color={theme.warning} style={styles.sectionLoadingIndicator} />
                         ) : (
                             <FlatList
                                 data={latestMangas}
                                 keyExtractor={(item) => `${item.source || 'zonatmo'}:${item.slug}`}
-                                renderItem={({ item }) => (
-                                    <TouchableOpacity
-                                        style={styles.comicItem}
-                                        onPress={() => navigation.navigate('Details', { slug: item.slug })}
-                                        activeOpacity={0.7}
-                                        accessibilityLabel={`Ver detalles de ${item.title}`}
-                                    >
-                                        <Image
-                                            source={{ uri: item.cover }}
-                                            style={styles.cover}
-                                            resizeMode="cover"
-                                            defaultSource={require('../../assets/auth-bg.png')}
-                                        />
-                                        <LinearGradient
-                                            colors={['transparent', 'rgba(0,0,0,0.8)']}
-                                            style={styles.comicGradient}
-                                        />
-                                        <Text style={styles.comicTitle} numberOfLines={2}>{item.title}</Text>
-                                        <View style={styles.latestTopBadgesRow}>
-                                            <View style={styles.latestProviderBadge}>
-                                                <Text style={styles.providerBadgeText} numberOfLines={1}>
-                                                    {getProviderAliasLabel(item.source)}
-                                                </Text>
-                                            </View>
-                                            <View style={[
-                                                styles.latestStatusTag,
-                                                { backgroundColor: getStatusBadgeStyles(item.status).backgroundColor },
-                                            ]}>
-                                                <Text
-                                                    style={[
-                                                        styles.statusTagText,
-                                                        { color: getStatusBadgeStyles(item.status).textColor },
-                                                    ]}
-                                                    numberOfLines={1}
-                                                >
-                                                    {getStatusBadgeLabel(item)}
-                                                </Text>
-                                            </View>
-                                        </View>
-                                        {item.score && item.score !== '0.0' && (
-                                            <View style={styles.scoreBadge}>
-                                                <MaterialCommunityIcons name="star" size={10} color="#FFD700" />
-                                                <Text style={styles.scoreText}>{item.score}</Text>
-                                            </View>
-                                        )}
-                                    </TouchableOpacity>
-                                )}
+                                renderItem={renderLatestItem}
                                 horizontal
                                 showsHorizontalScrollIndicator={false}
                                 contentContainerStyle={styles.comicsList}
@@ -687,7 +695,7 @@ const HomeScreen = ({ navigation }: any) => {
                                 maxToRenderPerBatch={5}
                                 windowSize={7}
                                 getItemLayout={getItemLayout}
-                                removeClippedSubviews={Platform.OS === 'ios'}
+                                removeClippedSubviews={Platform.OS === 'android'}
                                 nestedScrollEnabled
                                 decelerationRate="fast"
                                 snapToInterval={CAROUSEL_SNAP_INTERVAL}
@@ -700,9 +708,9 @@ const HomeScreen = ({ navigation }: any) => {
                     {/* Continue Reading Section */}
                     {continueReadingComics.length > 0 && (
                         <View style={styles.sectionContainer}>
-                            {renderSectionHeader('book-open-outline', 'En Curso', '#4CAF50', 'Retoma donde te quedaste')}
+                            {renderSectionHeader('book-open-outline', 'En Curso', theme.success, 'Retoma donde te quedaste')}
                             {comicsLoading ? ( // You might want a separate loading state for this or reuse comicsLoading
-                                <ActivityIndicator size="small" color="#4CAF50" style={styles.sectionLoadingIndicator} />
+                                <ActivityIndicator size="small" color={theme.success} style={styles.sectionLoadingIndicator} />
                             ) : (
                                 <FlatList
                                     data={continueReadingComics}
@@ -715,7 +723,7 @@ const HomeScreen = ({ navigation }: any) => {
                                     maxToRenderPerBatch={5}
                                     windowSize={7}
                                     getItemLayout={getItemLayout}
-                                    removeClippedSubviews={Platform.OS === 'ios'}
+                                    removeClippedSubviews={Platform.OS === 'android'}
                                     nestedScrollEnabled
                                     decelerationRate="fast"
                                     snapToInterval={CAROUSEL_SNAP_INTERVAL}
@@ -728,9 +736,9 @@ const HomeScreen = ({ navigation }: any) => {
 
                     {/* Top Safe Comics */}
                     <View style={styles.sectionContainer}>
-                        {renderSectionHeader('shield-check', 'Top Seguros', '#6B8AFD', 'Mangas -18 (sin contenido erotico)')}
+                        {renderSectionHeader('shield-check', 'Top Seguros', theme.accentStrong, 'Mangas -18 (sin contenido erotico)')}
                         {comicsLoading ? (
-                            <ActivityIndicator size="small" color="#6B8AFD" style={styles.sectionLoadingIndicator} />
+                            <ActivityIndicator size="small" color={theme.accentStrong} style={styles.sectionLoadingIndicator} />
                         ) : (
                             <FlatList
                                 data={topSafe}
@@ -743,7 +751,7 @@ const HomeScreen = ({ navigation }: any) => {
                                 maxToRenderPerBatch={5}
                                 windowSize={7}
                                 getItemLayout={getItemLayout}
-                                removeClippedSubviews={Platform.OS === 'ios'}
+                                removeClippedSubviews={Platform.OS === 'android'}
                                 nestedScrollEnabled
                                 decelerationRate="fast"
                                 snapToInterval={CAROUSEL_SNAP_INTERVAL}
@@ -756,9 +764,9 @@ const HomeScreen = ({ navigation }: any) => {
                     {/* Top Erotic Comics */}
                     {topErotic.length > 0 && (
                         <View style={styles.sectionContainer}>
-                            {renderSectionHeader('fire', 'Top Eroticos', '#FF6B6B', 'Mangas +18')}
+                            {renderSectionHeader('fire', 'Top Eroticos', theme.accent, 'Mangas +18')}
                             {comicsLoading ? (
-                                <ActivityIndicator size="small" color="#FF6B6B" style={styles.sectionLoadingIndicator} />
+                                <ActivityIndicator size="small" color={theme.accent} style={styles.sectionLoadingIndicator} />
                             ) : (
                                 <FlatList
                                     data={topErotic}
@@ -771,7 +779,7 @@ const HomeScreen = ({ navigation }: any) => {
                                     maxToRenderPerBatch={5}
                                     windowSize={7}
                                     getItemLayout={getItemLayout}
-                                    removeClippedSubviews={Platform.OS === 'ios'}
+                                    removeClippedSubviews={Platform.OS === 'android'}
                                     nestedScrollEnabled
                                     decelerationRate="fast"
                                     snapToInterval={CAROUSEL_SNAP_INTERVAL}

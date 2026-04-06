@@ -37,7 +37,7 @@
 
   Compilar APK de release:
     cd android
-    ./gradlew assembleRelease
+    gradlew.bat assembleRelease
 
   El APK se genera en:
     android/app/build/outputs/apk/release/app-release.apk

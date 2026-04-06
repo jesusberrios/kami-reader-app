@@ -2,6 +2,7 @@ import React from 'react';
 import { TouchableOpacity, StyleSheet, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
+import { usePersonalization } from '../contexts/PersonalizationContext';
 
 interface FloatingChatBubbleProps {
     clientId?: string;
@@ -14,6 +15,7 @@ const FloatingChatBubble: React.FC<FloatingChatBubbleProps> = ({
     visible = true
 }) => {
     const navigation = useNavigation();
+    const { theme } = usePersonalization();
 
     const handlePress = () => {
         navigation.navigate('ChatList');
@@ -26,12 +28,12 @@ const FloatingChatBubble: React.FC<FloatingChatBubbleProps> = ({
             <TouchableOpacity
                 activeOpacity={0.7}
                 onPress={handlePress}
-                style={styles.bubble}
+                style={[styles.bubble, { backgroundColor: theme.accent }]}
             >
                 <Ionicons
                     name="chatbubbles"
                     size={28}
-                    color="#fff"
+                    color={theme.text}
                 />
                 {/* Puedes añadir un badge para mensajes no leídos */}
                 {/* <View style={styles.badge}>

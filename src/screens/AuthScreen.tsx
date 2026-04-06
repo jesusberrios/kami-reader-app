@@ -29,6 +29,7 @@ import UpdateRequiredModal from '../components/updateRequiredModal';
 import { getAppVersion } from '../utils/versionUtils';
 import { User } from 'firebase/auth';
 import { useAlertContext } from '../contexts/AlertContext';
+import { usePersonalization } from '../contexts/PersonalizationContext';
 
 const { width, height } = Dimensions.get('window');
 
@@ -51,6 +52,7 @@ const ALLOWED_DOMAINS = [
 
 // Componente memoizado para inputs
 const AuthInput = React.memo(({
+    theme,
     label,
     value,
     onChangeText,
@@ -73,6 +75,7 @@ const AuthInput = React.memo(({
     iconName: string;
     error?: string;
     onBlur?: () => void;
+    theme: any;
 }) => {
     const [secure, setSecure] = useState(secureTextEntry);
 
@@ -81,21 +84,22 @@ const AuthInput = React.memo(({
             <Text style={styles.label}>{label}</Text>
             <View style={[
                 styles.inputWrapper,
+                { backgroundColor: theme.surface, borderColor: theme.border },
                 error && styles.inputWrapperError
             ]}>
                 <MaterialCommunityIcons
                     name={iconName as any}
                     size={20}
-                    color={error ? '#FF5252' : '#888'}
+                    color={error ? theme.danger : theme.textMuted}
                     style={styles.inputIcon}
                 />
                 <TextInput
                     placeholder={placeholder}
-                    placeholderTextColor="#888"
+                    placeholderTextColor={theme.textMuted}
                     value={value}
                     onChangeText={onChangeText}
                     onBlur={onBlur}
-                    style={styles.input}
+                    style={[styles.input, { color: theme.text }]}
                     keyboardType={keyboardType}
                     autoCapitalize={autoCapitalize}
                     autoCorrect={false}
@@ -111,14 +115,14 @@ const AuthInput = React.memo(({
                         <MaterialCommunityIcons
                             name={secure ? "eye-off" : "eye"}
                             size={20}
-                            color="#888"
+                            color={theme.textMuted}
                         />
                     </TouchableOpacity>
                 )}
             </View>
             {error && (
-                <Text style={styles.errorText}>
-                    <MaterialCommunityIcons name="alert-circle" size={14} color="#FF5252" /> {error}
+                <Text style={[styles.errorText, { color: theme.danger }]}>
+                    <MaterialCommunityIcons name="alert-circle" size={14} color={theme.danger} /> {error}
                 </Text>
             )}
         </View>
@@ -126,6 +130,7 @@ const AuthInput = React.memo(({
 });
 
 const AuthScreen = () => {
+    const { theme } = usePersonalization();
     const navigation = useNavigation<AuthScreenNavigationProp>();
     const insets = useSafeAreaInsets();
     const { alertError, alertSuccess, alertConfirm, alert } = useAlertContext();
@@ -409,7 +414,7 @@ const AuthScreen = () => {
     if (loading && !updateModalVisible) {
         return (
             <View style={styles.fullScreenLoading}>
-                <ActivityIndicator size="large" color="#FF5252" />
+                <ActivityIndicator size="large" color={theme.accent} />
                 <Text style={styles.loadingText}>Verificando sesión...</Text>
             </View>
         );
@@ -425,7 +430,7 @@ const AuthScreen = () => {
             >
                 <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
 
-                <LinearGradient colors={['rgba(0,0,0,0.8)', 'rgba(0,0,0,0.9)']} style={styles.gradient}>
+                <LinearGradient colors={[theme.background, theme.backgroundSecondary]} style={styles.gradient}>
                     <KeyboardAvoidingView
                         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
                         style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}
@@ -433,7 +438,7 @@ const AuthScreen = () => {
                     >
                         <ScrollView contentContainerStyle={styles.scrollContainer} keyboardShouldPersistTaps="handled">
                             <View style={styles.logoContainer}>
-                                <MaterialCommunityIcons name="book-open-variant" size={60} color="#FF5252" />
+                                <MaterialCommunityIcons name="book-open-variant" size={60} color={theme.accent} />
                                 <Text style={styles.logoText}>KAMIREADER</Text>
                                 <Text style={styles.tagline}>Tu biblioteca de manga global</Text>
                             </View>
@@ -445,6 +450,7 @@ const AuthScreen = () => {
 
                                 {!isLogin && (
                                     <AuthInput
+                                        theme={theme}
                                         label="Nombre de usuario"
                                         value={username}
                                         onChangeText={setUsername}
@@ -455,6 +461,7 @@ const AuthScreen = () => {
                                 )}
 
                                 <AuthInput
+                                    theme={theme}
                                     label="Correo electrónico"
                                     value={email}
                                     onChangeText={(text) => {
@@ -470,6 +477,7 @@ const AuthScreen = () => {
                                 />
 
                                 <AuthInput
+                                    theme={theme}
                                     label="Contraseña"
                                     value={password}
                                     onChangeText={setPassword}
@@ -485,7 +493,7 @@ const AuthScreen = () => {
                                                 style={[styles.checkbox, termsAccepted && styles.checkboxChecked]}
                                                 onPress={() => setTermsAccepted(!termsAccepted)}
                                             >
-                                                {termsAccepted && <MaterialCommunityIcons name="check" size={16} color="white" />}
+                                                {termsAccepted && <MaterialCommunityIcons name="check" size={16} color={theme.text} />}
                                             </TouchableOpacity>
                                             <Text style={styles.termsLabel}>Acepto los términos y condiciones</Text>
                                         </View>
@@ -502,18 +510,18 @@ const AuthScreen = () => {
                                     onPress={handleAuth}
                                     disabled={!canSubmit}
                                 >
-                                    <LinearGradient colors={['#FF6B6B', '#FF4F4F']} style={styles.buttonGradient}>
+                                    <LinearGradient colors={[theme.accent, theme.accentStrong]} style={styles.buttonGradient}>
                                         {loading ? (
-                                            <ActivityIndicator size="small" color="white" />
+                                            <ActivityIndicator size="small" color={theme.text} />
                                         ) : (
                                             <>
-                                                <Text style={styles.primaryButtonText}>
+                                                <Text style={[styles.primaryButtonText, { color: theme.text }]}>
                                                     {isLogin ? 'INICIAR SESIÓN' : 'REGISTRARME'}
                                                 </Text>
                                                 <MaterialCommunityIcons
                                                     name={isLogin ? "login" : "account-plus"}
                                                     size={20}
-                                                    color="white"
+                                                    color={theme.text}
                                                     style={styles.buttonIcon}
                                                 />
                                             </>
@@ -585,6 +593,7 @@ const AuthScreen = () => {
                             <Text style={styles.modalTitle}>Restablecer Contraseña</Text>
                             <Text style={styles.modalText}>Ingresa tu correo electrónico para recibir un enlace para restablecer tu contraseña.</Text>
                             <AuthInput
+                                theme={theme}
                                 label="Correo electrónico"
                                 value={resetEmail}
                                 onChangeText={setResetEmail}

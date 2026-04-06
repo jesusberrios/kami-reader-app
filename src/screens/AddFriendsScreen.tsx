@@ -21,6 +21,7 @@ import { collection, query, where, getDocs, doc, getDoc, updateDoc, arrayUnion, 
 import { db, auth } from '../firebase/config';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAlertContext } from '../contexts/AlertContext';
+import { usePersonalization } from '../contexts/PersonalizationContext';
 
 const SUPPORT_EMAIL = 'sukisoft.soporte@gmail.com';
 
@@ -38,6 +39,7 @@ type TabType = 'friends' | 'sent' | 'received';
 // Componente memoizado para items de usuario
 const UserItem = React.memo(({
     item,
+    theme,
     onSendMessage,
     onOpenMenu,
     onCancelRequest,
@@ -46,6 +48,7 @@ const UserItem = React.memo(({
     onSendRequest
 }: {
     item: User;
+    theme: any;
     onSendMessage: (user: User) => void;
     onOpenMenu: (user: User, event: any) => void;
     onCancelRequest: (userId: string) => void;
@@ -54,26 +57,26 @@ const UserItem = React.memo(({
     onSendRequest: (userId: string) => void;
 }) => {
     return (
-        <View style={styles.userItem}>
+        <View style={[styles.userItem, { backgroundColor: theme.surface, borderColor: theme.border }]}>
             <Image
                 source={{ uri: item.avatar }}
-                style={styles.avatar}
+                style={[styles.avatar, { backgroundColor: theme.surfaceMuted }]}
                 defaultSource={require('../../assets/icon.png')}
             />
             <View style={styles.userInfo}>
-                <Text style={styles.username}>{item.username}</Text>
-                <Text style={styles.email}>{item.email}</Text>
+                <Text style={[styles.username, { color: theme.text }]}>{item.username}</Text>
+                <Text style={[styles.email, { color: theme.textMuted }]}>{item.email}</Text>
             </View>
 
             <View style={styles.actionsContainer}>
                 {item.status === 'friend' && (
                     <TouchableOpacity
-                        style={[styles.actionButton, styles.messageButton]}
+                        style={[styles.actionButton, styles.messageButton, { backgroundColor: theme.accent }]}
                         onPress={() => onSendMessage(item)}
                     >
-                        <MaterialCommunityIcons name="message-text" size={20} color="#FFF" />
+                        <MaterialCommunityIcons name="message-text" size={20} color={theme.text} />
                         {(item.unreadCount ?? 0) > 0 && (
-                            <View style={styles.unreadBadge}>
+                            <View style={[styles.unreadBadge, { backgroundColor: theme.danger, borderColor: theme.background }]}>
                                 <Text style={styles.unreadBadgeText}>
                                     {(item.unreadCount ?? 0) > 99 ? '99+' : item.unreadCount}
                                 </Text>
@@ -84,40 +87,40 @@ const UserItem = React.memo(({
 
                 {item.status === 'friend' ? (
                     <TouchableOpacity
-                        style={[styles.actionButton, styles.menuButton]}
+                        style={[styles.actionButton, styles.menuButton, { backgroundColor: theme.surfaceMuted }]}
                         onPress={(event) => onOpenMenu(item, event)}
                     >
-                        <MaterialCommunityIcons name="dots-horizontal" size={20} color="#FFF" />
+                        <MaterialCommunityIcons name="dots-horizontal" size={20} color={theme.text} />
                     </TouchableOpacity>
                 ) : item.status === 'requestSent' ? (
                     <TouchableOpacity
-                        style={[styles.actionButton, styles.cancelButton]}
+                        style={[styles.actionButton, styles.cancelButton, { backgroundColor: theme.warning }]}
                         onPress={() => onCancelRequest(item.uid)}
                     >
-                        <MaterialCommunityIcons name="close-circle" size={20} color="#FFF" />
+                        <MaterialCommunityIcons name="close-circle" size={20} color={theme.text} />
                         <Text style={styles.buttonText}>Cancelar</Text>
                     </TouchableOpacity>
                 ) : item.status === 'requestReceived' ? (
                     <View style={styles.requestActions}>
                         <TouchableOpacity
-                            style={[styles.actionButton, styles.acceptButton]}
+                            style={[styles.actionButton, styles.acceptButton, { backgroundColor: theme.success }]}
                             onPress={() => onAcceptRequest(item.uid)}
                         >
-                            <MaterialCommunityIcons name="check" size={20} color="#FFF" />
+                            <MaterialCommunityIcons name="check" size={20} color={theme.text} />
                         </TouchableOpacity>
                         <TouchableOpacity
-                            style={[styles.actionButton, styles.rejectButton]}
+                            style={[styles.actionButton, styles.rejectButton, { backgroundColor: theme.danger }]}
                             onPress={() => onRejectRequest(item.uid)}
                         >
-                            <MaterialCommunityIcons name="close" size={20} color="#FFF" />
+                            <MaterialCommunityIcons name="close" size={20} color={theme.text} />
                         </TouchableOpacity>
                     </View>
                 ) : (
                     <TouchableOpacity
-                        style={[styles.actionButton, styles.addButton]}
+                        style={[styles.actionButton, styles.addButton, { backgroundColor: theme.success }]}
                         onPress={() => onSendRequest(item.uid)}
                     >
-                        <MaterialCommunityIcons name="account-plus" size={20} color="#FFF" />
+                        <MaterialCommunityIcons name="account-plus" size={20} color={theme.text} />
                         <Text style={styles.buttonText}>Agregar</Text>
                     </TouchableOpacity>
                 )}
@@ -127,6 +130,7 @@ const UserItem = React.memo(({
 });
 
 const FriendsScreen = () => {
+    const { theme } = usePersonalization();
     const navigation = useNavigation();
     const insets = useSafeAreaInsets();
     const isFocused = useIsFocused();
@@ -517,6 +521,7 @@ const FriendsScreen = () => {
     const renderUserItem: ListRenderItem<User> = useCallback(({ item }) => (
         <UserItem
             item={item}
+            theme={theme}
             onSendMessage={handleSendMessage}
             onOpenMenu={handleOpenMenu}
             onCancelRequest={handleCancelRequest}
@@ -524,7 +529,7 @@ const FriendsScreen = () => {
             onRejectRequest={handleRejectRequest}
             onSendRequest={sendFriendRequest}
         />
-    ), [handleSendMessage, handleOpenMenu, handleCancelRequest, handleAcceptRequest, handleRejectRequest, sendFriendRequest]);
+    ), [handleSendMessage, handleOpenMenu, handleCancelRequest, handleAcceptRequest, handleRejectRequest, sendFriendRequest, theme]);
 
     const keyExtractor = useCallback((item: User) => item.uid, []);
 
@@ -532,8 +537,8 @@ const FriendsScreen = () => {
         if (searchQuery.trim()) {
             return (
                 <View style={styles.emptyContainer}>
-                    <MaterialCommunityIcons name="account-search" size={64} color="#666" />
-                    <Text style={styles.emptyText}>No se encontraron usuarios</Text>
+                    <MaterialCommunityIcons name="account-search" size={64} color={theme.textMuted} />
+                    <Text style={[styles.emptyText, { color: theme.text }]}>No se encontraron usuarios</Text>
                 </View>
             );
         }
@@ -548,19 +553,19 @@ const FriendsScreen = () => {
 
         return (
             <View style={styles.emptyContainer}>
-                <MaterialCommunityIcons name={icon as any} size={64} color="#666" />
-                <Text style={styles.emptyText}>{text}</Text>
+                <MaterialCommunityIcons name={icon as any} size={64} color={theme.textMuted} />
+                <Text style={[styles.emptyText, { color: theme.text }]}>{text}</Text>
             </View>
         );
-    }, [searchQuery, activeTab]);
+    }, [searchQuery, activeTab, theme.text, theme.textMuted]);
 
     if (loading) {
         return (
-            <LinearGradient colors={['#1A1A24', '#2C2C38']} style={styles.container}>
+            <LinearGradient colors={[theme.background, theme.backgroundSecondary]} style={styles.container}>
                 <StatusBar barStyle="light-content" />
                 <SafeAreaView style={styles.safeArea} edges={['top', 'bottom', 'left', 'right']}>
                     <View style={styles.loadingContainer}>
-                        <ActivityIndicator size="large" color="#FF5252" />
+                        <ActivityIndicator size="large" color={theme.accent} />
                     </View>
                 </SafeAreaView>
             </LinearGradient>
@@ -568,34 +573,34 @@ const FriendsScreen = () => {
     }
 
     return (
-        <LinearGradient colors={['#1A1A24', '#2C2C38']} style={styles.container}>
+        <LinearGradient colors={[theme.background, theme.backgroundSecondary]} style={styles.container}>
             <StatusBar barStyle="light-content" />
             <SafeAreaView style={styles.safeArea} edges={['top', 'bottom', 'left', 'right']}>
 
                 {/* Header */}
                 <View style={styles.header}>
                     <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-                        <Ionicons name="arrow-back" size={24} color="#FFF" />
+                        <Ionicons name="arrow-back" size={24} color={theme.text} />
                     </TouchableOpacity>
-                    <Text style={styles.headerTitle}>Amigos</Text>
+                    <Text style={[styles.headerTitle, { color: theme.text }]}>Amigos</Text>
                     <TouchableOpacity onPress={() => navigation.navigate('AddFriends' as never)} style={styles.addButton}>
-                        <MaterialCommunityIcons name="account-plus" size={24} color="#FFF" />
+                        <MaterialCommunityIcons name="account-plus" size={24} color={theme.text} />
                     </TouchableOpacity>
                 </View>
 
                 {/* Búsqueda */}
-                <View style={styles.searchContainer}>
-                    <MaterialCommunityIcons name="magnify" size={20} color="#666" style={styles.searchIcon} />
+                <View style={[styles.searchContainer, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+                    <MaterialCommunityIcons name="magnify" size={20} color={theme.textMuted} style={styles.searchIcon} />
                     <TextInput
-                        style={styles.searchInput}
+                        style={[styles.searchInput, { color: theme.text }]}
                         placeholder="Buscar usuarios..."
-                        placeholderTextColor="#666"
+                        placeholderTextColor={theme.textMuted}
                         value={searchQuery}
                         onChangeText={setSearchQuery}
                     />
                     {searchQuery.length > 0 && (
                         <TouchableOpacity onPress={() => setSearchQuery('')} style={styles.clearButton}>
-                            <MaterialCommunityIcons name="close-circle" size={20} color="#666" />
+                            <MaterialCommunityIcons name="close-circle" size={20} color={theme.textMuted} />
                         </TouchableOpacity>
                     )}
                 </View>
@@ -606,7 +611,7 @@ const FriendsScreen = () => {
                         {(['friends', 'received', 'sent'] as TabType[]).map(tab => (
                             <TouchableOpacity
                                 key={tab}
-                                style={[styles.tab, activeTab === tab && styles.activeTab]}
+                                style={[styles.tab, activeTab === tab && styles.activeTab, activeTab === tab && { borderBottomColor: theme.accent }]}
                                 onPress={() => setActiveTab(tab)}
                             >
                                 <MaterialCommunityIcons
@@ -615,9 +620,9 @@ const FriendsScreen = () => {
                                             tab === 'received' ? 'account-arrow-down' : 'account-arrow-up'
                                     }
                                     size={20}
-                                    color={activeTab === tab ? '#FF5252' : '#666'}
+                                    color={activeTab === tab ? theme.accent : theme.textMuted}
                                 />
-                                <Text style={[styles.tabText, activeTab === tab && styles.activeTabText]}>
+                                <Text style={[styles.tabText, { color: theme.textMuted }, activeTab === tab && styles.activeTabText, activeTab === tab && { color: theme.accent }]}>
                                     {tab === 'friends' ? `Amigos (${friends.length})` :
                                         tab === 'received' ? `Recibidas (${receivedRequests.length})` :
                                             `Enviadas (${sentRequests.length})`}
@@ -637,7 +642,7 @@ const FriendsScreen = () => {
                         <RefreshControl
                             refreshing={refreshing}
                             onRefresh={onRefresh}
-                            colors={['#FF5252']}
+                            colors={[theme.accent]}
                         />
                     }
                     ListEmptyComponent={renderEmptyList}
@@ -650,20 +655,20 @@ const FriendsScreen = () => {
                 {menuVisible && (
                     <Modal transparent animationType="fade" onRequestClose={() => setMenuVisible(false)}>
                         <Pressable style={styles.menuOverlay} onPress={() => setMenuVisible(false)}>
-                            <View style={[styles.menuContainer, { top: menuPosition.y, left: menuPosition.x }]}>
+                            <View style={[styles.menuContainer, { top: menuPosition.y, left: menuPosition.x, backgroundColor: theme.card, borderColor: theme.border }]}>
                                 <TouchableOpacity style={styles.menuItem} onPress={handleViewProfile}>
-                                    <MaterialCommunityIcons name="account-eye" size={20} color="#333" />
-                                    <Text style={styles.menuItemText}>Ver perfil</Text>
+                                    <MaterialCommunityIcons name="account-eye" size={20} color={theme.text} />
+                                    <Text style={[styles.menuItemText, { color: theme.text }]}>Ver perfil</Text>
                                 </TouchableOpacity>
                                 <TouchableOpacity style={styles.menuItem} onPress={() => selectedUser && handleSendMessage(selectedUser)}>
-                                    <MaterialCommunityIcons name="message-text" size={20} color="#333" />
-                                    <Text style={styles.menuItemText}>Enviar mensaje</Text>
+                                    <MaterialCommunityIcons name="message-text" size={20} color={theme.text} />
+                                    <Text style={[styles.menuItemText, { color: theme.text }]}>Enviar mensaje</Text>
                                 </TouchableOpacity>
                                 <TouchableOpacity
                                     style={[styles.menuItem, styles.menuItemDanger]}
                                     onPress={() => selectedUser && handleRemoveFriend(selectedUser.uid)}
                                 >
-                                    <MaterialCommunityIcons name="account-remove" size={20} color="#FF5252" />
+                                    <MaterialCommunityIcons name="account-remove" size={20} color={theme.danger} />
                                     <Text style={[styles.menuItemText, styles.menuItemTextDanger]}>Eliminar amigo</Text>
                                 </TouchableOpacity>
                             </View>
@@ -713,6 +718,7 @@ const styles = StyleSheet.create({
         borderRadius: 25,
         paddingHorizontal: 16,
         height: 50,
+        borderWidth: 1,
     },
     searchIcon: {
         marginRight: 12,
@@ -766,6 +772,7 @@ const styles = StyleSheet.create({
         borderRadius: 12,
         padding: 16,
         marginBottom: 12,
+        borderWidth: 1,
     },
     avatar: {
         width: 50,
@@ -932,6 +939,7 @@ const styles = StyleSheet.create({
         padding: 8,
         marginLeft: -60,
         minWidth: 180,
+        borderWidth: 1,
         shadowColor: '#000',
         shadowOffset: {
             width: 0,

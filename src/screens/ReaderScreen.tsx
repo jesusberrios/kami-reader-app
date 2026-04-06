@@ -102,14 +102,17 @@ const fetchJsonWithTimeout = async (url: string, timeoutMs = REQUEST_TIMEOUT_MS)
 };
 
 const LEGACY_SOURCE_MAP: Record<string, string> = {
-    lectormangaa: 'manhwaonline',
+    lectormangaa: 'manhwaweb',
+    manhwaonline: 'manhwaweb',
 };
 
 const normalizeMangaToken = (rawToken: string) => {
     const token = String(rawToken || '').trim();
     if (!token) return '';
 
-    const normalized = token.replace(/^lectormangaa__/i, 'manhwaonline__');
+    const normalized = token
+        .replace(/^lectormangaa__/i, 'manhwaweb__')
+        .replace(/^manhwaonline__/i, 'manhwaweb__');
     if (normalized.includes('__')) {
         const [source, ...rest] = normalized.split('__');
         const mappedSource = LEGACY_SOURCE_MAP[source.toLowerCase()] || source.toLowerCase();

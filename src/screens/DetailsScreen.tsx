@@ -21,6 +21,7 @@ import { db, auth } from '../firebase/config';
 import { doc, setDoc, deleteDoc, onSnapshot, collection, getDoc, serverTimestamp } from 'firebase/firestore';
 import { RootStackParamList } from '../navigation/types';
 import { useAlertContext } from '../contexts/AlertContext';
+import { usePersonalization } from '../contexts/PersonalizationContext';
 import { backendUrl } from '../config/backend';
 import { syncFullMangaReadState } from '../services/readingStatsService';
 import { getProviderAliasLabel } from '../utils/providerBranding';
@@ -94,6 +95,7 @@ const normalizeStatus = (value?: string) => {
 };
 
 const DetailsScreen: React.FC = () => {
+    const { theme } = usePersonalization();
     const route = useRoute();
     const detailsParams = (route.params ?? {}) as RootStackParamList['Details'];
     const { slug = '' } = detailsParams;
@@ -471,42 +473,46 @@ const DetailsScreen: React.FC = () => {
         const chapterReadKey = String(chapter.chapterSlug || chapter.slug || '').trim();
         const isRead = isPremium === true && readChapterSlugs.has(chapterReadKey);
         const uniqueKey = `${chapter.chapterSlug || chapter.slug}__${chapter.groupName || 'default'}__${chapter.lang || 'default'}__${index}`;
+        const chapterNum = Number(chapter.number);
+        const chapterNumLabel = Number.isFinite(chapterNum) ? String(chapterNum) : '?';
+        const rawTitle = String(chapter.title || '').replace(/\s+/g, ' ').trim();
+        const hasDuplicatedPrefix = new RegExp(`^cap[ií]tulo\s*${String(chapterNumLabel).replace('.', '\\.')}(\b|\s*)`, 'i').test(rawTitle);
+        const cleanTitle = hasDuplicatedPrefix ? rawTitle.replace(/^cap[ií]tulo\s*[\d.]+\s*[-:]?\s*/i, '').trim() : rawTitle;
+        const finalTitle = cleanTitle ? `Capitulo ${chapterNumLabel} - ${cleanTitle}` : `Capitulo ${chapterNumLabel}`;
         
         return (
             <TouchableOpacity key={uniqueKey} style={[styles.chapterItem, isRead && styles.chapterItemRead]} onPress={() => goToReader(chapter)}>
                 <View style={styles.chapterLeftBlock}>
                     <View style={[styles.chapterNumberPill, isRead && styles.chapterNumberPillRead]}>
-                        <Text style={styles.chapterNumberPillText}>{chapter.number || '?'}</Text>
+                        <Text style={styles.chapterNumberPillText}>{chapterNumLabel}</Text>
                     </View>
                     <View style={styles.chapterItemContent}>
-                        <Text style={styles.chapterTitle} numberOfLines={1}>
-                            Capitulo {chapter.number || '?'}{chapter.title ? ` - ${chapter.title}` : ''}
-                        </Text>
+                        <Text style={styles.chapterTitle} numberOfLines={1}>{finalTitle}</Text>
                         <View style={styles.chapterMetaRow}>
                             {!!chapter.lang && <Text style={styles.chapterMetaPill}>{chapter.lang.toUpperCase()}</Text>}
                             {!!chapter.groupName && <Text style={styles.chapterMetaPill}>{chapter.groupName}</Text>}
                         </View>
                     </View>
                 </View>
-                <Ionicons name={isRead ? 'checkmark-circle' : 'chevron-forward'} size={22} color={isRead ? '#4CAF50' : '#FF5252'} />
+                <Ionicons name={isRead ? 'checkmark-circle' : 'chevron-forward'} size={22} color={isRead ? theme.success : theme.accent} />
             </TouchableOpacity>
         );
-    }, [isPremium, readChapterSlugs, goToReader]);
+    }, [isPremium, readChapterSlugs, goToReader, theme.accent, theme.success]);
 
     if (loading) {
         return (
-            <LinearGradient colors={['#1A1A24', '#2C2C38']} style={styles.center}>
-                <ActivityIndicator size="large" color="#FF5252" />
-                <Text style={styles.loadingText}>Cargando detalles...</Text>
+            <LinearGradient colors={[theme.background, theme.backgroundSecondary]} style={styles.center}>
+                <ActivityIndicator size="large" color={theme.accent} />
+                <Text style={[styles.loadingText, { color: theme.text }]}>Cargando detalles...</Text>
             </LinearGradient>
         );
     }
 
     if (error || !manga) {
         return (
-            <LinearGradient colors={['#1A1A24', '#2C2C38']} style={styles.center}>
-                <Text style={styles.errorText}>{error || 'No se pudo cargar el manga.'}</Text>
-                <TouchableOpacity style={styles.retryButton} onPress={loadManga}>
+            <LinearGradient colors={[theme.background, theme.backgroundSecondary]} style={styles.center}>
+                <Text style={[styles.errorText, { color: theme.danger }]}>{error || 'No se pudo cargar el manga.'}</Text>
+                <TouchableOpacity style={[styles.retryButton, { backgroundColor: theme.accent }]} onPress={loadManga}>
                     <Text style={styles.retryButtonText}>Reintentar</Text>
                 </TouchableOpacity>
             </LinearGradient>
@@ -514,29 +520,29 @@ const DetailsScreen: React.FC = () => {
     }
 
     return (
-        <LinearGradient colors={['#1A1A24', '#2C2C38']} style={styles.container}>
+        <LinearGradient colors={[theme.background, theme.backgroundSecondary]} style={styles.container}>
             <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
             <SafeAreaView style={[styles.safeArea, { paddingTop: insets.top }]}>
                 <ScrollView
                     contentContainerStyle={styles.scrollContent}
-                    refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#FF5252" />}
+                    refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.accent} />}
                 >
-                    <View style={styles.heroCard}>
+                    <View style={[styles.heroCard, { backgroundColor: theme.surface, borderColor: theme.border }]}>
                         <View style={styles.headerContainer}>
-                            <Image source={{ uri: manga.cover }} style={styles.coverImage} resizeMode="cover" />
+                            <Image source={{ uri: manga.cover }} style={[styles.coverImage, { borderColor: theme.border }]} resizeMode="cover" />
                             <View style={styles.infoCard}>
-                                <Text style={styles.title} numberOfLines={2}>{manga.title}</Text>
+                                <Text style={[styles.title, { color: theme.text }]} numberOfLines={2}>{manga.title}</Text>
 
                                 <View style={styles.quickMetaRow}>
-                                    <Text style={styles.quickMetaChip}>{getProviderAliasLabel(manga.source)}</Text>
-                                    {manga.statusLabel && manga.statusLabel !== 'Desconocido' && <Text style={styles.quickMetaChip}>{manga.statusLabel}</Text>}
-                                    <Text style={styles.quickMetaChip}>{manga.contentRating || 'safe'}</Text>
+                                    <Text style={[styles.quickMetaChip, { color: theme.text, backgroundColor: theme.accentSoft, borderColor: theme.accent }]}>{getProviderAliasLabel(manga.source)}</Text>
+                                    {manga.statusLabel && manga.statusLabel !== 'Desconocido' && <Text style={[styles.quickMetaChip, { color: theme.text, backgroundColor: theme.accentSoft, borderColor: theme.accent }]}>{manga.statusLabel}</Text>}
+                                    <Text style={[styles.quickMetaChip, { color: theme.text, backgroundColor: theme.accentSoft, borderColor: theme.accent }]}>{manga.contentRating || 'safe'}</Text>
                                 </View>
 
                                 <View style={styles.infoGrid}>
-                                    <View style={styles.infoPill}><Text style={styles.infoPillLabel}>Capitulos</Text><Text style={styles.infoPillValue}>{manga.totalChapters || manga.chapters.length}</Text></View>
-                                    <View style={styles.infoPill}><Text style={styles.infoPillLabel}>Score</Text><Text style={styles.infoPillValue}>{manga.score || '0.0'}</Text></View>
-                                    <View style={styles.infoPill}><Text style={styles.infoPillLabel}>Idioma</Text><Text style={styles.infoPillValue}>{(manga.language || 'es').toUpperCase()}</Text></View>
+                                    <View style={[styles.infoPill, { backgroundColor: theme.card }]}><Text style={[styles.infoPillLabel, { color: theme.textMuted }]}>Capitulos</Text><Text style={[styles.infoPillValue, { color: theme.text }]}>{manga.totalChapters || manga.chapters.length}</Text></View>
+                                    <View style={[styles.infoPill, { backgroundColor: theme.card }]}><Text style={[styles.infoPillLabel, { color: theme.textMuted }]}>Score</Text><Text style={[styles.infoPillValue, { color: theme.text }]}>{manga.score || '0.0'}</Text></View>
+                                    <View style={[styles.infoPill, { backgroundColor: theme.card }]}><Text style={[styles.infoPillLabel, { color: theme.textMuted }]}>Idioma</Text><Text style={[styles.infoPillValue, { color: theme.text }]}>{(manga.language || 'es').toUpperCase()}</Text></View>
                                 </View>
                             </View>
                         </View>
@@ -544,12 +550,12 @@ const DetailsScreen: React.FC = () => {
 
                     {!!manga.badges?.length && (
                         <View style={styles.section}>
-                            <Text style={styles.sectionTitle}>Etiquetas</Text>
+                            <Text style={[styles.sectionTitle, { color: theme.text }]}>Etiquetas</Text>
                             <View style={styles.badgesRow}>
                                 {manga.badges.map((badge, idx) => (
-                                    <View key={`${badge}-${idx}`} style={styles.badge}>
+                                    <View key={`${badge}-${idx}`} style={[styles.badge, { backgroundColor: theme.surface, borderColor: theme.border }]}> 
                                         <Text style={styles.badgeEmoji}>✨</Text>
-                                        <Text style={styles.badgeText} numberOfLines={1}>{badge}</Text>
+                                        <Text style={[styles.badgeText, { color: theme.text }]} numberOfLines={1}>{badge}</Text>
                                     </View>
                                 ))}
                             </View>
@@ -558,10 +564,10 @@ const DetailsScreen: React.FC = () => {
 
                     {!!manga.genres?.length && (
                         <View style={styles.section}>
-                            <Text style={styles.sectionTitle}>Generos</Text>
+                            <Text style={[styles.sectionTitle, { color: theme.text }]}>Generos</Text>
                             <View style={styles.genreContainer}>
                                 {manga.genres.map((g, idx) => (
-                                    <View key={`${g}-${idx}`} style={styles.genreTag}><Text style={styles.genreText}>{g}</Text></View>
+                                    <View key={`${g}-${idx}`} style={[styles.genreTag, { backgroundColor: theme.surfaceMuted, borderColor: theme.border }]}><Text style={[styles.genreText, { color: theme.text }]}>{g}</Text></View>
                                 ))}
                             </View>
                         </View>
@@ -569,14 +575,14 @@ const DetailsScreen: React.FC = () => {
 
                     {!!manga.description && (
                         <View style={styles.section}>
-                            <Text style={styles.sectionTitle}>Descripcion</Text>
-                            <View style={styles.descriptionCard}>
-                                <Text style={styles.sectionText} numberOfLines={descriptionExpanded ? undefined : 7}>
+                            <Text style={[styles.sectionTitle, { color: theme.text }]}>Descripcion</Text>
+                            <View style={[styles.descriptionCard, { backgroundColor: theme.surface, borderColor: theme.border }]}> 
+                                <Text style={[styles.sectionText, { color: theme.textMuted }]} numberOfLines={descriptionExpanded ? undefined : 7}>
                                     {manga.description.replace(/<[^>]*>/g, '')}
                                 </Text>
                                 <TouchableOpacity style={styles.expandDescriptionButton} onPress={() => setDescriptionExpanded((v) => !v)}>
-                                    <Text style={styles.expandDescriptionText}>{descriptionExpanded ? 'Ver menos' : 'Ver mas'}</Text>
-                                    <Ionicons name={descriptionExpanded ? 'chevron-up' : 'chevron-down'} size={16} color="#FFD6D6" />
+                                    <Text style={[styles.expandDescriptionText, { color: theme.text }]}>{descriptionExpanded ? 'Ver menos' : 'Ver mas'}</Text>
+                                    <Ionicons name={descriptionExpanded ? 'chevron-up' : 'chevron-down'} size={16} color={theme.textMuted} />
                                 </TouchableOpacity>
                             </View>
                         </View>
@@ -584,12 +590,12 @@ const DetailsScreen: React.FC = () => {
 
                     <View style={styles.buttonRow}>
                         <TouchableOpacity style={[styles.actionButton, styles.commentsButton]} onPress={() => navigation.navigate('Comments' as never, { mangaTitle: manga.title })}>
-                            <Ionicons name="chatbubble-ellipses-outline" size={20} color="#FFF" />
+                            <Ionicons name="chatbubble-ellipses-outline" size={20} color={theme.text} />
                             <Text style={styles.actionButtonText}>Comentarios</Text>
                         </TouchableOpacity>
 
                         <TouchableOpacity style={styles.actionButton} onPress={onShare}>
-                            <Ionicons name="share-social-outline" size={20} color="#FFF" />
+                            <Ionicons name="share-social-outline" size={20} color={theme.text} />
                             <Text style={styles.actionButtonText}>Compartir</Text>
                         </TouchableOpacity>
 
@@ -599,21 +605,21 @@ const DetailsScreen: React.FC = () => {
                             disabled={favoriteLoading || isPremium === false || !currentUserUid}
                         >
                             {favoriteLoading ? (
-                                <ActivityIndicator size="small" color="#FFF" />
+                                <ActivityIndicator size="small" color={theme.text} />
                             ) : (
                                 <>
-                                    <Ionicons name={isFavorite ? 'bookmark' : 'bookmark-outline'} size={20} color="#FFF" />
+                                    <Ionicons name={isFavorite ? 'bookmark' : 'bookmark-outline'} size={20} color={theme.text} />
                                     <Text style={styles.actionButtonText}>{isFavorite ? 'Favorito' : 'Agregar Favorito'}</Text>
                                 </>
                             )}
                         </TouchableOpacity>
 
                         <TouchableOpacity
-                            style={[styles.actionButton, { backgroundColor: isMangaRead ? '#4CAF50' : '#2196F3' }, isPremium === false && styles.actionButtonLocked]}
+                            style={[styles.actionButton, { backgroundColor: isMangaRead ? theme.success : theme.accentStrong }, isPremium === false && styles.actionButtonLocked]}
                             onPress={toggleMangaReadStatus}
                             disabled={isPremium === false || !currentUserUid}
                         >
-                            <Ionicons name={isMangaRead ? 'book' : 'book-outline'} size={20} color="#FFF" />
+                            <Ionicons name={isMangaRead ? 'book' : 'book-outline'} size={20} color={theme.text} />
                             <Text style={styles.actionButtonText}>{isMangaRead ? 'Leído' : 'Marcar Leído'}</Text>
                         </TouchableOpacity>
                     </View>
@@ -641,9 +647,9 @@ const DetailsScreen: React.FC = () => {
                     </View>
 
                     <View style={styles.section}>
-                        <Text style={styles.sectionTitle}>Capitulos</Text>
+                        <Text style={[styles.sectionTitle, { color: theme.text }]}>Capitulos</Text>
                         {filteredChapters.length === 0 ? (
-                            <Text style={styles.sectionText}>No hay capitulos para los filtros seleccionados.</Text>
+                            <Text style={[styles.sectionText, { color: theme.textMuted }]}>No hay capitulos para los filtros seleccionados.</Text>
                         ) : (
                             filteredChapters.map((ch, idx) => renderChapterItem(ch, idx))
                         )}
@@ -657,8 +663,8 @@ const DetailsScreen: React.FC = () => {
                         activeOpacity={0.9}
                         accessibilityLabel="Continuar lectura desde la última imagen guardada"
                     >
-                        <LinearGradient colors={['#FFD54F', '#FFB300']} style={styles.floatingContinueGradient}>
-                            <Ionicons name="play" size={18} color="#201600" />
+                        <LinearGradient colors={[theme.accent, theme.accentStrong]} style={styles.floatingContinueGradient}>
+                            <Ionicons name="play" size={18} color={theme.text} />
                             <View style={styles.floatingContinueTextWrap}>
                                 <Text style={styles.floatingContinueTitle}>Continuar lectura</Text>
                                 <Text style={styles.floatingContinueSubtitle} numberOfLines={1}>

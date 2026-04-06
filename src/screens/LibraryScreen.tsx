@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useRef } from 'react';
+import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import {
     View,
     Text,
@@ -11,19 +11,23 @@ import {
     ScrollView,
     Dimensions,
     StatusBar,
-    Platform
+    Platform,
+    NativeSyntheticEvent,
+    NativeScrollEvent,
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
 import { useAlertContext } from '../contexts/AlertContext';
+import { usePersonalization } from '../contexts/PersonalizationContext';
 import { backendUrl } from '../config/backend';
 import { getProviderAliasLabel, normalizeProviderSource } from '../utils/providerBranding';
 
 const REQUEST_TIMEOUT_MS = 8000;
-const PAGE_LIMIT = 24;
+const PAGE_LIMIT = 32;
 const SEARCH_CACHE_TTL_MS = 5 * 60 * 1000;
+const LIBRARY_CACHE_TTL_MS = 2 * 60 * 1000;
 
 type Comic = {
     slug: string;
@@ -43,7 +47,7 @@ type Comic = {
 };
 
 type SortKey = 'default' | 'title_asc' | 'title_desc' | 'score_desc';
-type SourceKey = 'all' | 'zonatmo' | 'visormanga' | 'manhwaonline';
+type SourceKey = 'all' | 'zonatmo' | 'visormanga' | 'manhwaweb' | 'zonaikigai';
 type StatusKey = 'all' | 'ongoing' | 'completed' | 'hiatus' | 'cancelled' | 'unknown';
 type RatingKey = 'all' | 'safe' | 'suggestive' | 'erotica';
 
@@ -63,9 +67,10 @@ const SORT_OPTIONS: FilterOption[] = [
 
 const SOURCE_OPTIONS: FilterOption[] = [
     { label: 'Todas', value: 'all' },
-    { label: 'Catalogo A', value: 'zonatmo' },
-    { label: 'Catalogo B', value: 'visormanga' },
-    { label: 'Catalogo C', value: 'manhwaonline' },
+    { label: 'Luna Atlas', value: 'zonatmo' },
+    { label: 'Neko Shelf', value: 'visormanga' },
+    { label: 'Kumo Verse', value: 'manhwaweb' },
+    { label: 'Yoru Realm', value: 'zonaikigai' },
 ];
 
 const STATUS_OPTIONS: FilterOption[] = [
@@ -161,6 +166,14 @@ const buildSearchCacheKey = (
     sort: SortKey,
 ) => `${normalizeText(query)}|p:${page}|s:${source}|st:${status}|r:${rating}|o:${sort}`;
 
+const buildLibraryCacheKey = (
+    page: number,
+    source: SourceKey,
+    status: StatusKey,
+    rating: RatingKey,
+    sort: SortKey,
+) => `lib|p:${page}|s:${source}|st:${status}|r:${rating}|o:${sort}`;
+
 const applyRelevanceFilter = (list: Comic[], query: string): Comic[] => {
     const q = normalizeText(query);
     const qTokens = tokenize(query);
@@ -246,6 +259,7 @@ const mergeUniqueComics = (base: Comic[], incoming: Comic[]) => {
 };
 
 const LibraryScreen = ({ navigation }: any) => {
+    const { theme, settings } = usePersonalization();
     const [allComics, setAllComics] = useState<Comic[]>([]);
     const [comics, setComics] = useState<Comic[]>([]);
     const [loading, setLoading] = useState(false);
@@ -264,13 +278,27 @@ const LibraryScreen = ({ navigation }: any) => {
     const [currentPage, setCurrentPage] = useState(1);
     const [hasMore, setHasMore] = useState(true);
     const [isFetchingMore, setIsFetchingMore] = useState(false);
+    const [showScrollTop, setShowScrollTop] = useState(false);
     const isMounted = useRef(true);
     const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const requestIdRef = useRef(0);
     const allComicsRef = useRef<Comic[]>([]);
+    const listRef = useRef<FlatList<Comic>>(null);
+    const lastScrollOffsetRef = useRef(0);
     const searchCacheRef = useRef<Map<string, { timestamp: number; results: Comic[]; totalPages?: number }>>(new Map());
+    const libraryCacheRef = useRef<Map<string, { timestamp: number; results: Comic[]; hasMore: boolean }>>(new Map());
 
     const { alertError } = useAlertContext();
+
+    const activeFilterCount = useMemo(
+        () => [selectedSort !== 'default', selectedSource !== 'all', selectedStatus !== 'all', selectedRating !== 'all'].filter(Boolean).length,
+        [selectedSort, selectedSource, selectedStatus, selectedRating]
+    );
+
+    const compactCoverHeight = useMemo(() => {
+        const baseWidth = (width / 2) - (settings.compactCards ? 18 : 20);
+        return settings.compactCards ? baseWidth * 1.25 : baseWidth * 1.5;
+    }, [settings.compactCards]);
 
     useEffect(() => {
         isMounted.current = true;
@@ -299,6 +327,22 @@ const LibraryScreen = ({ navigation }: any) => {
     const loadLatest = useCallback(async (options?: { page?: number; append?: boolean }) => {
         const page = options?.page ?? 1;
         const append = options?.append ?? false;
+        const cacheKey = buildLibraryCacheKey(page, selectedSource, selectedStatus, selectedRating, selectedSort);
+
+        const cached = libraryCacheRef.current.get(cacheKey);
+        const isCacheFresh = !!cached && (Date.now() - cached.timestamp) <= LIBRARY_CACHE_TTL_MS;
+
+        if (isCacheFresh && cached) {
+            const merged = append ? mergeUniqueComics(allComicsRef.current, cached.results) : cached.results;
+            allComicsRef.current = merged;
+            if (isMounted.current) {
+                setAllComics(merged);
+                applyFiltersAndSort(merged, selectedSort, selectedSource, selectedStatus, selectedRating);
+                setCurrentPage(page);
+                setHasMore(cached.hasMore);
+            }
+            return;
+        }
 
         if (append) setIsFetchingMore(true);
         else setLoading(true);
@@ -313,13 +357,16 @@ const LibraryScreen = ({ navigation }: any) => {
             query.append('page', String(page));
             query.append('limit', String(PAGE_LIMIT));
 
-            const data = await fetchJsonWithTimeout(`${backendUrl('/latest')}${query.toString() ? `?${query.toString()}` : ''}`);
+            const data = await fetchJsonWithTimeout(`${backendUrl('/library')}${query.toString() ? `?${query.toString()}` : ''}`);
             const list: Comic[] = (data.results || []).map(mapApiComic);
 
+            const hasMoreRaw = data?.pagination?.hasMore;
             const totalPagesRaw = Number(data?.pagination?.totalPages);
-            const nextHasMore = Number.isFinite(totalPagesRaw)
-                ? page < totalPagesRaw
-                : list.length >= PAGE_LIMIT;
+            const nextHasMore = typeof hasMoreRaw === 'boolean'
+                ? hasMoreRaw
+                : Number.isFinite(totalPagesRaw)
+                    ? page < totalPagesRaw
+                    : list.length >= PAGE_LIMIT;
 
             if (isMounted.current) {
                 const merged = append ? mergeUniqueComics(allComicsRef.current, list) : list;
@@ -328,6 +375,43 @@ const LibraryScreen = ({ navigation }: any) => {
                 applyFiltersAndSort(merged, selectedSort, selectedSource, selectedStatus, selectedRating);
                 setCurrentPage(page);
                 setHasMore(nextHasMore);
+            }
+
+            libraryCacheRef.current.set(cacheKey, {
+                timestamp: Date.now(),
+                results: list,
+                hasMore: nextHasMore,
+            });
+
+            // Warm next page in cache so infinite-scroll feels instant.
+            if (!append && nextHasMore) {
+                const nextPage = page + 1;
+                const nextKey = buildLibraryCacheKey(nextPage, selectedSource, selectedStatus, selectedRating, selectedSort);
+                const nextCached = libraryCacheRef.current.get(nextKey);
+                const nextFresh = !!nextCached && (Date.now() - nextCached.timestamp) <= LIBRARY_CACHE_TTL_MS;
+                if (!nextFresh) {
+                    const nextQuery = new URLSearchParams();
+                    if (selectedSource !== 'all') nextQuery.append('source', selectedSource);
+                    if (selectedStatus !== 'all') nextQuery.append('status', selectedStatus);
+                    if (selectedRating !== 'all') nextQuery.append('contentRating', selectedRating);
+                    if (selectedSort !== 'default') nextQuery.append('sort', selectedSort);
+                    nextQuery.append('page', String(nextPage));
+                    nextQuery.append('limit', String(PAGE_LIMIT));
+
+                    fetchJsonWithTimeout(`${backendUrl('/library')}${nextQuery.toString() ? `?${nextQuery.toString()}` : ''}`)
+                        .then((nextData) => {
+                            const nextList: Comic[] = (nextData.results || []).map(mapApiComic);
+                            const hasMoreValue = typeof nextData?.pagination?.hasMore === 'boolean'
+                                ? nextData.pagination.hasMore
+                                : nextList.length >= PAGE_LIMIT;
+                            libraryCacheRef.current.set(nextKey, {
+                                timestamp: Date.now(),
+                                results: nextList,
+                                hasMore: hasMoreValue,
+                            });
+                        })
+                        .catch(() => {});
+                }
             }
         } catch (e: any) {
             setError(e.message);
@@ -452,6 +536,29 @@ const LibraryScreen = ({ navigation }: any) => {
         searchComics({ page: 1, append: false, query: q });
     }, [searchQuery, loadLatest, searchComics]);
 
+    useEffect(() => {
+        if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+
+        searchDebounceRef.current = setTimeout(() => {
+            const normalizedQuery = searchQuery.trim();
+
+            if (!normalizedQuery && committedSearchQuery) {
+                setCommittedSearchQuery('');
+                loadLatest({ page: 1, append: false });
+                return;
+            }
+
+            if (normalizedQuery.length >= 2 && normalizedQuery !== committedSearchQuery) {
+                setCommittedSearchQuery(normalizedQuery);
+                searchComics({ page: 1, append: false, query: normalizedQuery });
+            }
+        }, settings.reduceMotion ? 150 : 320);
+
+        return () => {
+            if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+        };
+    }, [searchQuery, committedSearchQuery, loadLatest, searchComics, settings.reduceMotion]);
+
     const handleLoadMore = useCallback(() => {
         if (loading || isFetchingMore || !hasMore) return;
 
@@ -463,16 +570,85 @@ const LibraryScreen = ({ navigation }: any) => {
         }
     }, [loading, isFetchingMore, hasMore, currentPage, committedSearchQuery, searchComics, loadLatest]);
 
+    const handleListScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+        const nextOffset = Math.max(0, Number(event.nativeEvent.contentOffset.y || 0));
+        const shouldShow = nextOffset > 420;
+        if (shouldShow !== showScrollTop) {
+            setShowScrollTop(shouldShow);
+        }
+        lastScrollOffsetRef.current = nextOffset;
+    }, [showScrollTop]);
+
+    const scrollToTop = useCallback(() => {
+        listRef.current?.scrollToOffset({ offset: 0, animated: true });
+    }, []);
+
+    const reloadWithFilters = useCallback(async (
+        sort: SortKey,
+        source: SourceKey,
+        status: StatusKey,
+        rating: RatingKey,
+        queryText?: string,
+    ) => {
+        const trimmedQuery = String(queryText || '').trim();
+        setCurrentPage(1);
+        setHasMore(true);
+        setLoading(true);
+        setError(null);
+
+        try {
+            const params = new URLSearchParams();
+            if (trimmedQuery) params.append('title', trimmedQuery);
+            if (source !== 'all') params.append('source', source);
+            if (status !== 'all') params.append('status', status);
+            if (rating !== 'all') params.append('contentRating', rating);
+            if (sort !== 'default') params.append('sort', sort);
+            params.append('page', '1');
+            params.append('limit', String(PAGE_LIMIT));
+
+            const endpoint = trimmedQuery ? '/search' : '/library';
+            const data = await fetchJsonWithTimeout(`${backendUrl(endpoint)}?${params.toString()}`);
+            const mapped = (data.results || []).map(mapApiComic);
+            const list = trimmedQuery ? applyRelevanceFilter(mapped, trimmedQuery) : mapped;
+            const hasMoreRaw = data?.pagination?.hasMore;
+            const totalPagesRaw = Number(data?.pagination?.totalPages);
+
+            if (!isMounted.current) return;
+            allComicsRef.current = list;
+            setAllComics(list);
+            setComics(list);
+            setCurrentPage(1);
+            setHasMore(typeof hasMoreRaw === 'boolean' ? hasMoreRaw : (Number.isFinite(totalPagesRaw) ? 1 < totalPagesRaw : list.length >= PAGE_LIMIT));
+        } catch (e: any) {
+            if (isMounted.current) setError(e.message);
+        } finally {
+            if (isMounted.current) {
+                setLoading(false);
+                setIsFetchingMore(false);
+            }
+        }
+    }, []);
+
     const applyFilters = useCallback(() => {
+        const sourceChanged = pendingSource !== selectedSource;
+        const requiresServerReload = sourceChanged || committedSearchQuery.trim().length > 0;
+
         setSelectedSort(pendingSort);
         setSelectedSource(pendingSource);
         setSelectedStatus(pendingStatus);
         setSelectedRating(pendingRating);
+        // Apply instantly to current in-memory list for responsive UI while backend refresh runs.
+        applyFiltersAndSort(allComicsRef.current, pendingSort, pendingSource, pendingStatus, pendingRating);
         setShowFilters(false);
-        applyFiltersAndSort(allComics, pendingSort, pendingSource, pendingStatus, pendingRating);
-    }, [pendingSort, pendingSource, pendingStatus, pendingRating, allComics, applyFiltersAndSort]);
+        if (requiresServerReload) {
+            reloadWithFilters(pendingSort, pendingSource, pendingStatus, pendingRating, committedSearchQuery);
+        }
+    }, [pendingSort, pendingSource, selectedSource, pendingStatus, pendingRating, committedSearchQuery, reloadWithFilters, applyFiltersAndSort]);
 
     const resetFilters = useCallback(() => {
+        const sourceChanged = selectedSource !== 'all';
+        const requiresServerReload = sourceChanged || committedSearchQuery.trim().length > 0;
+
         setPendingSort('default');
         setSelectedSort('default');
         setPendingSource('all');
@@ -481,14 +657,39 @@ const LibraryScreen = ({ navigation }: any) => {
         setSelectedStatus('all');
         setPendingRating('all');
         setSelectedRating('all');
+        applyFiltersAndSort(allComicsRef.current, 'default', 'all', 'all', 'all');
         setShowFilters(false);
-        applyFiltersAndSort(allComics, 'default', 'all', 'all', 'all');
-    }, [allComics, applyFiltersAndSort]);
+        if (requiresServerReload) {
+            reloadWithFilters('default', 'all', 'all', 'all', committedSearchQuery);
+        }
+    }, [selectedSource, committedSearchQuery, reloadWithFilters, applyFiltersAndSort]);
+
+    const removeSingleFilter = useCallback((type: 'sort' | 'source' | 'status' | 'rating') => {
+        const nextSort: SortKey = type === 'sort' ? 'default' : selectedSort;
+        const nextSource: SourceKey = type === 'source' ? 'all' : selectedSource;
+        const nextStatus: StatusKey = type === 'status' ? 'all' : selectedStatus;
+        const nextRating: RatingKey = type === 'rating' ? 'all' : selectedRating;
+        const sourceChanged = nextSource !== selectedSource;
+        const requiresServerReload = sourceChanged || committedSearchQuery.trim().length > 0;
+
+        setPendingSort(nextSort);
+        setSelectedSort(nextSort);
+        setPendingSource(nextSource);
+        setSelectedSource(nextSource);
+        setPendingStatus(nextStatus);
+        setSelectedStatus(nextStatus);
+        setPendingRating(nextRating);
+        setSelectedRating(nextRating);
+        applyFiltersAndSort(allComicsRef.current, nextSort, nextSource, nextStatus, nextRating);
+        if (requiresServerReload) {
+            reloadWithFilters(nextSort, nextSource, nextStatus, nextRating, committedSearchQuery);
+        }
+    }, [selectedSort, selectedSource, selectedStatus, selectedRating, committedSearchQuery, reloadWithFilters, applyFiltersAndSort]);
 
     if (loading && comics.length === 0) {
         return (
-            <LinearGradient colors={['#0F0F15', '#20202A']} style={styles.loadingContainer}>
-                <ActivityIndicator size="large" color="#FF5252" />
+            <LinearGradient colors={[theme.background, theme.backgroundSecondary]} style={styles.loadingContainer}>
+                <ActivityIndicator size="large" color={theme.accent} />
                 <Text style={styles.loadingText}>Cargando mangas...</Text>
             </LinearGradient>
         );
@@ -496,8 +697,8 @@ const LibraryScreen = ({ navigation }: any) => {
 
     if (error && comics.length === 0) {
         return (
-            <LinearGradient colors={['#0F0F15', '#20202A']} style={styles.errorContainer}>
-                <MaterialCommunityIcons name="alert-circle" size={40} color="#FF5252" />
+            <LinearGradient colors={[theme.background, theme.backgroundSecondary]} style={styles.errorContainer}>
+                <MaterialCommunityIcons name="alert-circle" size={40} color={theme.danger} />
                 <Text style={styles.errorText}>No se pudo conectar</Text>
                 <Text style={styles.errorSubText}>{error}</Text>
                 <TouchableOpacity style={styles.retryButton} onPress={() => loadLatest({ page: 1, append: false })}>
@@ -508,12 +709,12 @@ const LibraryScreen = ({ navigation }: any) => {
     }
 
     return (
-        <LinearGradient colors={['#0F0F15', '#20202A']} style={styles.container}>
+        <LinearGradient colors={[theme.background, theme.backgroundSecondary]} style={styles.container}>
             <SafeAreaView style={styles.safeArea} edges={['top', 'bottom', 'left', 'right']}>
                 {/* Header */}
                 <View style={styles.header}>
                     <View style={styles.headerSideSpacer} />
-                    <Text style={styles.title}>Biblioteca</Text>
+                    <Text style={[styles.title, { color: theme.text }]}>Biblioteca</Text>
                     <TouchableOpacity
                         onPress={() => {
                             setPendingSort(selectedSort);
@@ -524,25 +725,26 @@ const LibraryScreen = ({ navigation }: any) => {
                         }}
                         style={[
                             styles.filterButton,
+                            { backgroundColor: activeFilterCount > 0 ? theme.accent : theme.accentSoft, borderColor: theme.accent },
                             (selectedSort !== 'default' || selectedSource !== 'all' || selectedStatus !== 'all' || selectedRating !== 'all') && styles.filterButtonActive,
                         ]}
                     >
                         <MaterialCommunityIcons
                             name="filter"
                             size={24}
-                            color={(selectedSort !== 'default' || selectedSource !== 'all' || selectedStatus !== 'all' || selectedRating !== 'all') ? '#FFF' : '#FF5252'}
+                            color={(selectedSort !== 'default' || selectedSource !== 'all' || selectedStatus !== 'all' || selectedRating !== 'all') ? theme.text : theme.accent}
                         />
                     </TouchableOpacity>
                 </View>
 
                 {/* Search Bar */}
                 <View style={styles.searchContainer}>
-                    <View style={styles.searchInputContainer}>
-                        <MaterialCommunityIcons name="magnify" size={20} color="#888" style={styles.searchIcon} />
+                    <View style={[styles.searchInputContainer, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+                        <MaterialCommunityIcons name="magnify" size={20} color={theme.textMuted} style={styles.searchIcon} />
                         <TextInput
-                            style={styles.searchInput}
-                            placeholder="Buscar cómics..."
-                            placeholderTextColor="#888"
+                            style={[styles.searchInput, { color: theme.text }]}
+                            placeholder="Buscar por título o descripción..."
+                            placeholderTextColor={theme.textMuted}
                             value={searchQuery}
                             onChangeText={setSearchQuery}
                             onSubmitEditing={runSearch}
@@ -550,13 +752,20 @@ const LibraryScreen = ({ navigation }: any) => {
                         />
                         {searchQuery !== '' && (
                             <TouchableOpacity onPress={() => { setSearchQuery(''); setCommittedSearchQuery(''); loadLatest({ page: 1, append: false }); }} style={styles.clearSearchButton}>
-                                <MaterialCommunityIcons name="close-circle" size={20} color="#888" />
+                                <MaterialCommunityIcons name="close-circle" size={20} color={theme.textMuted} />
                             </TouchableOpacity>
                         )}
                     </View>
-                    <TouchableOpacity style={styles.searchButton} onPress={runSearch}>
-                        <Text style={styles.searchButtonText}>Buscar</Text>
+                    <TouchableOpacity style={[styles.searchButton, { backgroundColor: theme.accent, shadowColor: theme.accent }]} onPress={runSearch}>
+                        <Text style={[styles.searchButtonText, { color: theme.text }]}>{committedSearchQuery ? 'Actualizar' : 'Buscar'}</Text>
                     </TouchableOpacity>
+                </View>
+
+                <View style={styles.resultsMetaRow}>
+                    <Text style={[styles.resultsMetaText, { color: theme.textMuted }]}>
+                        {committedSearchQuery ? `Resultados para "${committedSearchQuery}"` : 'Explora los más recientes'} · {comics.length} títulos
+                    </Text>
+                    {settings.compactCards ? <Text style={[styles.resultsMetaText, { color: theme.accent, textAlign: 'right' }]}>Modo compacto</Text> : null}
                 </View>
 
                 {/* Active Filters */}
@@ -565,27 +774,27 @@ const LibraryScreen = ({ navigation }: any) => {
                     <View style={styles.activeFiltersContainer}>
                         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.activeFiltersScrollContent}>
                             {selectedSort !== 'default' && (
-                                <View style={styles.activeFilter}>
-                                    <Text style={styles.activeFilterText}>{SORT_OPTIONS.find(o => o.value === selectedSort)?.label}</Text>
-                                </View>
+                                <TouchableOpacity style={[styles.activeFilter, { backgroundColor: theme.accentSoft, borderColor: theme.accent }]} onPress={() => removeSingleFilter('sort')}>
+                                    <Text style={[styles.activeFilterText, { color: theme.accent }]}>{SORT_OPTIONS.find(o => o.value === selectedSort)?.label}</Text>
+                                </TouchableOpacity>
                             )}
                             {selectedSource !== 'all' && (
-                                <View style={styles.activeFilter}>
-                                    <Text style={styles.activeFilterText}>{SOURCE_OPTIONS.find(o => o.value === selectedSource)?.label}</Text>
-                                </View>
+                                <TouchableOpacity style={[styles.activeFilter, { backgroundColor: theme.accentSoft, borderColor: theme.accent }]} onPress={() => removeSingleFilter('source')}>
+                                    <Text style={[styles.activeFilterText, { color: theme.accent }]}>{SOURCE_OPTIONS.find(o => o.value === selectedSource)?.label}</Text>
+                                </TouchableOpacity>
                             )}
                             {selectedStatus !== 'all' && (
-                                <View style={styles.activeFilter}>
-                                    <Text style={styles.activeFilterText}>{STATUS_OPTIONS.find(o => o.value === selectedStatus)?.label}</Text>
-                                </View>
+                                <TouchableOpacity style={[styles.activeFilter, { backgroundColor: theme.accentSoft, borderColor: theme.accent }]} onPress={() => removeSingleFilter('status')}>
+                                    <Text style={[styles.activeFilterText, { color: theme.accent }]}>{STATUS_OPTIONS.find(o => o.value === selectedStatus)?.label}</Text>
+                                </TouchableOpacity>
                             )}
                             {selectedRating !== 'all' && (
-                                <View style={styles.activeFilter}>
-                                    <Text style={styles.activeFilterText}>{RATING_OPTIONS.find(o => o.value === selectedRating)?.label}</Text>
-                                </View>
+                                <TouchableOpacity style={[styles.activeFilter, { backgroundColor: theme.accentSoft, borderColor: theme.accent }]} onPress={() => removeSingleFilter('rating')}>
+                                    <Text style={[styles.activeFilterText, { color: theme.accent }]}>{RATING_OPTIONS.find(o => o.value === selectedRating)?.label}</Text>
+                                </TouchableOpacity>
                             )}
-                            <TouchableOpacity onPress={resetFilters} style={styles.clearAllFiltersButton}>
-                                <Text style={styles.clearAllFiltersText}>Limpiar</Text>
+                            <TouchableOpacity onPress={resetFilters} style={[styles.clearAllFiltersButton, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+                                <Text style={[styles.clearAllFiltersText, { color: theme.textMuted }]}>Limpiar</Text>
                             </TouchableOpacity>
                         </ScrollView>
                     </View>
@@ -593,52 +802,61 @@ const LibraryScreen = ({ navigation }: any) => {
 
                 {/* Comics List */}
                 <FlatList
+                    ref={listRef}
                     data={comics}
                     keyExtractor={(item) => `${item.source}:${item.slug}`}
                     contentContainerStyle={styles.comicsList}
                     numColumns={2}
                     columnWrapperStyle={styles.row}
+                    initialNumToRender={8}
+                    maxToRenderPerBatch={10}
+                    windowSize={7}
+                    updateCellsBatchingPeriod={50}
+                    removeClippedSubviews={Platform.OS === 'android'}
                     onEndReached={handleLoadMore}
                     onEndReachedThreshold={0.4}
+                    onScroll={handleListScroll}
+                    scrollEventThrottle={16}
                     ListFooterComponent={
                         isFetchingMore ? (
-                            <ActivityIndicator style={{ marginVertical: 20 }} size="large" color="#FF5252" />
+                            <ActivityIndicator style={{ marginVertical: 20 }} size="large" color={theme.accent} />
                         ) : null
                     }
                     ListEmptyComponent={() =>
                         !loading ? (
                             <View style={styles.emptyContainer}>
-                                <MaterialCommunityIcons name="book-alert" size={50} color="#666" />
-                                <Text style={styles.emptyText}>No se encontraron mangas</Text>
-                                <TouchableOpacity style={styles.resetButton} onPress={() => loadLatest({ page: 1, append: false })}>
-                                    <Text style={styles.resetButtonText}>Mostrar recientes</Text>
+                                <MaterialCommunityIcons name="book-alert" size={50} color={theme.textMuted} />
+                                <Text style={[styles.emptyText, { color: theme.text }]}>No se encontraron mangas</Text>
+                                <TouchableOpacity style={[styles.resetButton, { backgroundColor: theme.accent }]} onPress={() => loadLatest({ page: 1, append: false })}>
+                                    <Text style={[styles.resetButtonText, { color: theme.text }]}>Mostrar recientes</Text>
                                 </TouchableOpacity>
                             </View>
                         ) : null
                     }
                     renderItem={({ item }) => (
                         <TouchableOpacity
-                            style={styles.comicGridItem}
+                            style={[styles.comicGridItem, { backgroundColor: theme.surface, width: settings.compactCards ? (width / 2) - 18 : (width / 2) - 20 }]}
                             onPress={() => navigation.navigate('Details', { slug: item.slug })}
                         >
                             <Image
                                 source={{ uri: item.cover }}
-                                style={styles.comicCover}
+                                style={[styles.comicCover, { height: compactCoverHeight, backgroundColor: theme.surfaceMuted }]}
                                 contentFit="cover"
+                                cachePolicy="memory-disk"
                                 placeholder={require('../../assets/auth-bg.png')}
                             />
                             <LinearGradient
                                 colors={['transparent', 'rgba(0,0,0,0.85)']}
                                 style={styles.comicTitleGradient}
                             >
-                                <Text style={styles.comicGridTitle} numberOfLines={2}>{item.title}</Text>
+                                <Text style={[styles.comicGridTitle, { color: theme.text, fontSize: settings.compactCards ? 13 : 14 }]} numberOfLines={settings.compactCards ? 1 : 2}>{item.title}</Text>
                             </LinearGradient>
-                            <View style={styles.providerBadge}>
-                                <Text style={styles.providerBadgeText}>{getProviderAliasLabel(item.source)}</Text>
+                            <View style={[styles.providerBadge, { backgroundColor: theme.card, borderColor: theme.border }]}>
+                                <Text style={[styles.providerBadgeText, { color: theme.text }]}>{getProviderAliasLabel(item.source)}</Text>
                             </View>
                             {item.score && item.score !== '0.0' && (
                                 <View style={styles.scoreBadge}>
-                                    <MaterialCommunityIcons name="star" size={10} color="#FFD700" />
+                                    <MaterialCommunityIcons name="star" size={10} color={theme.warning} />
                                     <Text style={styles.scoreText}>{item.score}</Text>
                                 </View>
                             )}
@@ -661,39 +879,71 @@ const LibraryScreen = ({ navigation }: any) => {
                     )}
                 />
 
+                {showScrollTop && (
+                    <TouchableOpacity
+                        onPress={scrollToTop}
+                        activeOpacity={0.9}
+                        style={styles.scrollTopButtonWrap}
+                        accessibilityRole="button"
+                        accessibilityLabel="Volver arriba"
+                    >
+                        <LinearGradient
+                            colors={[theme.accent, theme.accentStrong]}
+                            start={{ x: 0, y: 0 }}
+                            end={{ x: 1, y: 1 }}
+                            style={[
+                                styles.scrollTopButton,
+                                {
+                                    borderColor: theme.border,
+                                    shadowColor: theme.accent,
+                                },
+                            ]}
+                        >
+                            <View style={[styles.scrollTopButtonIconWrap, { backgroundColor: 'rgba(255,255,255,0.18)' }]}>
+                                <MaterialCommunityIcons name="arrow-up-thin" size={22} color={theme.text} />
+                            </View>
+                            <Text style={[styles.scrollTopButtonLabel, { color: theme.text }]}>Arriba</Text>
+                        </LinearGradient>
+                    </TouchableOpacity>
+                )}
+
                 {/* Sort Modal */}
                 <Modal
                     visible={showFilters}
-                    animationType="slide"
+                    animationType={settings.reduceMotion ? 'none' : 'slide'}
                     transparent={true}
                     onRequestClose={() => setShowFilters(false)}
                 >
                     <View style={styles.modalOverlay}>
-                        <LinearGradient colors={['#181820', '#2A2A36']} style={styles.modalContainer}>
+                        <LinearGradient colors={[theme.backgroundSecondary, theme.card]} style={styles.modalContainer}>
                             <SafeAreaView style={styles.modalSafeArea}>
                                 <View style={styles.modalHeader}>
-                                    <Text style={styles.modalTitle}>Ordenar</Text>
+                                    <Text style={[styles.modalTitle, { color: theme.text }]}>Filtros</Text>
                                     <TouchableOpacity onPress={() => setShowFilters(false)} style={styles.closeModalButton}>
-                                        <MaterialCommunityIcons name="close" size={26} color="#FF5252" />
+                                        <MaterialCommunityIcons name="close" size={26} color={theme.accent} />
                                     </TouchableOpacity>
                                 </View>
 
                                 <ScrollView style={styles.filtersContainer} contentContainerStyle={styles.filtersScrollContent}>
                                     <View style={styles.filterGroup}>
-                                        <Text style={styles.filterGroupTitle}>Orden</Text>
+                                        <Text style={[styles.filterGroupTitle, { color: theme.accent }]}>Orden</Text>
                                         <View style={styles.filterOptions}>
                                             {SORT_OPTIONS.map((option) => (
                                                 <TouchableOpacity
                                                     key={option.value}
                                                     style={[
                                                         styles.filterOption,
+                                                        { backgroundColor: theme.surface, borderColor: theme.border },
                                                         pendingSort === option.value && styles.selectedFilterOption,
+                                                        pendingSort === option.value && { backgroundColor: theme.accent, borderColor: theme.accent },
                                                     ]}
                                                     onPress={() => setPendingSort(option.value as SortKey)}
                                                 >
                                                     <Text style={[
                                                         styles.filterOptionText,
+                                                        { color: theme.textMuted },
                                                         pendingSort === option.value && styles.selectedFilterOptionText,
+                                                        pendingSort === option.value && { color: theme.text },
                                                     ]}>
                                                         {option.label}
                                                     </Text>
@@ -703,20 +953,24 @@ const LibraryScreen = ({ navigation }: any) => {
                                     </View>
 
                                     <View style={styles.filterGroup}>
-                                        <Text style={styles.filterGroupTitle}>Fuente</Text>
+                                        <Text style={[styles.filterGroupTitle, { color: theme.accent }]}>Fuente</Text>
                                         <View style={styles.filterOptions}>
                                             {SOURCE_OPTIONS.map((option) => (
                                                 <TouchableOpacity
                                                     key={option.value}
                                                     style={[
                                                         styles.filterOption,
+                                                        { backgroundColor: theme.surface, borderColor: theme.border },
                                                         pendingSource === option.value && styles.selectedFilterOption,
+                                                        pendingSource === option.value && { backgroundColor: theme.accent, borderColor: theme.accent },
                                                     ]}
                                                     onPress={() => setPendingSource(option.value as SourceKey)}
                                                 >
                                                     <Text style={[
                                                         styles.filterOptionText,
+                                                        { color: theme.textMuted },
                                                         pendingSource === option.value && styles.selectedFilterOptionText,
+                                                        pendingSource === option.value && { color: theme.text },
                                                     ]}>
                                                         {option.label}
                                                     </Text>
@@ -726,20 +980,24 @@ const LibraryScreen = ({ navigation }: any) => {
                                     </View>
 
                                     <View style={styles.filterGroup}>
-                                        <Text style={styles.filterGroupTitle}>Estado</Text>
+                                        <Text style={[styles.filterGroupTitle, { color: theme.accent }]}>Estado</Text>
                                         <View style={styles.filterOptions}>
                                             {STATUS_OPTIONS.map((option) => (
                                                 <TouchableOpacity
                                                     key={option.value}
                                                     style={[
                                                         styles.filterOption,
+                                                        { backgroundColor: theme.surface, borderColor: theme.border },
                                                         pendingStatus === option.value && styles.selectedFilterOption,
+                                                        pendingStatus === option.value && { backgroundColor: theme.accent, borderColor: theme.accent },
                                                     ]}
                                                     onPress={() => setPendingStatus(option.value as StatusKey)}
                                                 >
                                                     <Text style={[
                                                         styles.filterOptionText,
+                                                        { color: theme.textMuted },
                                                         pendingStatus === option.value && styles.selectedFilterOptionText,
+                                                        pendingStatus === option.value && { color: theme.text },
                                                     ]}>
                                                         {option.label}
                                                     </Text>
@@ -749,20 +1007,24 @@ const LibraryScreen = ({ navigation }: any) => {
                                     </View>
 
                                     <View style={styles.filterGroup}>
-                                        <Text style={styles.filterGroupTitle}>Clasificacion</Text>
+                                        <Text style={[styles.filterGroupTitle, { color: theme.accent }]}>Clasificación</Text>
                                         <View style={styles.filterOptions}>
                                             {RATING_OPTIONS.map((option) => (
                                                 <TouchableOpacity
                                                     key={option.value}
                                                     style={[
                                                         styles.filterOption,
+                                                        { backgroundColor: theme.surface, borderColor: theme.border },
                                                         pendingRating === option.value && styles.selectedFilterOption,
+                                                        pendingRating === option.value && { backgroundColor: theme.accent, borderColor: theme.accent },
                                                     ]}
                                                     onPress={() => setPendingRating(option.value as RatingKey)}
                                                 >
                                                     <Text style={[
                                                         styles.filterOptionText,
+                                                        { color: theme.textMuted },
                                                         pendingRating === option.value && styles.selectedFilterOptionText,
+                                                        pendingRating === option.value && { color: theme.text },
                                                     ]}>
                                                         {option.label}
                                                     </Text>
@@ -773,11 +1035,11 @@ const LibraryScreen = ({ navigation }: any) => {
                                 </ScrollView>
 
                                 <View style={styles.modalFooter}>
-                                    <TouchableOpacity style={styles.resetFiltersButton} onPress={resetFilters}>
-                                        <Text style={styles.resetFiltersText}>Restablecer</Text>
+                                    <TouchableOpacity style={[styles.resetFiltersButton, { borderColor: theme.accent }]} onPress={resetFilters}>
+                                        <Text style={[styles.resetFiltersText, { color: theme.accent }]}>Restablecer</Text>
                                     </TouchableOpacity>
-                                    <TouchableOpacity style={styles.applyFiltersButton} onPress={applyFilters}>
-                                        <Text style={styles.applyFiltersText}>Aplicar</Text>
+                                    <TouchableOpacity style={[styles.applyFiltersButton, { backgroundColor: theme.accent, shadowColor: theme.accent }]} onPress={applyFilters}>
+                                        <Text style={[styles.applyFiltersText, { color: theme.text }]}>Aplicar</Text>
                                     </TouchableOpacity>
                                 </View>
                             </SafeAreaView>
@@ -929,6 +1191,20 @@ const styles = StyleSheet.create({
         color: '#FFFFFF',
         fontFamily: 'Roboto-Medium',
     },
+    resultsMetaRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingHorizontal: 20,
+        marginTop: -10,
+        marginBottom: 12,
+        gap: 12,
+    },
+    resultsMetaText: {
+        fontSize: 12,
+        fontFamily: 'Roboto-Medium',
+        flex: 1,
+    },
     activeFiltersContainer: {
         paddingLeft: 20,
         marginBottom: 15,
@@ -1012,6 +1288,38 @@ const styles = StyleSheet.create({
         fontSize: 14,
         textAlign: 'center',
         marginBottom: 4,
+    },
+    scrollTopButtonWrap: {
+        position: 'absolute',
+        right: 16,
+        bottom: 98,
+    },
+    scrollTopButton: {
+        minWidth: 112,
+        height: 48,
+        borderRadius: 24,
+        borderWidth: 1,
+        paddingHorizontal: 10,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+        elevation: 9,
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.38,
+        shadowRadius: 9,
+    },
+    scrollTopButtonIconWrap: {
+        width: 30,
+        height: 30,
+        borderRadius: 15,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    scrollTopButtonLabel: {
+        fontFamily: 'Roboto-Bold',
+        fontSize: 13,
+        letterSpacing: 0.4,
     },
     scoreBadge: {
         position: 'absolute',

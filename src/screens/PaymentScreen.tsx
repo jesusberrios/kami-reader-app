@@ -16,6 +16,7 @@ import type {
 import { auth, db } from '../firebase/config';
 import { doc, updateDoc } from 'firebase/firestore';
 import { useAlertContext } from '../contexts/AlertContext'; // Importar el contexto de alertas
+import { usePersonalization } from '../contexts/PersonalizationContext';
 
 // Get screen dimensions for responsive design
 const { width } = Dimensions.get('window');
@@ -56,6 +57,7 @@ const products: Product[] = [
 ];
 
 const PaymentScreen = () => {
+    const { theme } = usePersonalization();
     const insets = useSafeAreaInsets();
     const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
     const [purchaseStatus, setPurchaseStatus] = useState<'idle' | 'processing' | 'success' | 'failure'>('idle');
@@ -260,7 +262,7 @@ const PaymentScreen = () => {
     };
 
     return (
-        <LinearGradient colors={['#1a1a24', '#2c2c38']} style={styles.container}>
+        <LinearGradient colors={[theme.background, theme.backgroundSecondary]} style={styles.container}>
             <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
             <SafeAreaView style={styles.safeArea}>
                 <ScrollView contentContainerStyle={styles.scrollViewContent}>
@@ -274,7 +276,7 @@ const PaymentScreen = () => {
                     <View style={styles.productsContainer}>
                         {productsLoading ? (
                             <View style={styles.loadingProductsContainer}>
-                                <ActivityIndicator size="large" color="#FFD700" />
+                                <ActivityIndicator size="large" color={theme.warning} />
                                 <Text style={styles.loadingProductsText}>Cargando planes Premium...</Text>
                             </View>
                         ) : availableProducts.length === 0 ? (
@@ -329,7 +331,7 @@ const PaymentScreen = () => {
                     </View>
 
                     <View style={styles.paymentInfo}>
-                        <Icon name="security" size={24} color="#4CD964" style={styles.paymentIcon} />
+                        <Icon name="security" size={24} color={theme.success} style={styles.paymentIcon} />
                         <Text style={[styles.paymentText, { fontFamily: bodyFont }]}>
                             Pago seguro. Tu información está encriptada.
                         </Text>
@@ -347,7 +349,7 @@ const PaymentScreen = () => {
                         >
                             {purchaseStatus === 'processing' ? (
                                 <View style={styles.processingContent}>
-                                    <ActivityIndicator size="small" color="#fff" />
+                                    <ActivityIndicator size="small" color={theme.text} />
                                     <Text style={[styles.buyButtonText, { fontFamily: bodyFont, marginLeft: 10 }]}>Procesando...</Text>
                                 </View>
                             ) : (

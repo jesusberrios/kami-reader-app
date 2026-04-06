@@ -38,10 +38,20 @@ interface CustomDrawerContentProps {
     [key: string]: any;
 }
 
-const UserPlanBadge = ({ accountType }: { accountType: 'free' | 'premium' }) => {
+const withAlpha = (hexColor: string, alpha: number) => {
+    const sanitized = String(hexColor || '').replace('#', '');
+    if (sanitized.length !== 6) return `rgba(15, 15, 26, ${alpha})`;
+
+    const red = parseInt(sanitized.slice(0, 2), 16);
+    const green = parseInt(sanitized.slice(2, 4), 16);
+    const blue = parseInt(sanitized.slice(4, 6), 16);
+    return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
+};
+
+const UserPlanBadge = ({ accountType, theme }: { accountType: 'free' | 'premium'; theme: ReturnType<typeof usePersonalization>['theme'] }) => {
     return (
         <LinearGradient
-            colors={accountType === 'premium' ? ['#FFD700', '#FFA500'] : ['#6E6E80', '#4A4A5A']}
+            colors={accountType === 'premium' ? [theme.warning, theme.accent] : [theme.surface, theme.surfaceMuted]}
             style={styles.badgeContainer}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 1 }}
@@ -49,11 +59,11 @@ const UserPlanBadge = ({ accountType }: { accountType: 'free' | 'premium' }) => 
             <Feather
                 name={accountType === 'premium' ? "award" : "user"}
                 size={12}
-                color={accountType === 'premium' ? '#333' : '#FFF'}
+                color={theme.text}
             />
             <Text style={[
                 styles.badgeText,
-                { color: accountType === 'premium' ? '#333' : '#FFF' }
+                { color: theme.text }
             ]}>
                 {accountType === 'premium' ? 'Premium' : 'Free'}
             </Text>
@@ -309,7 +319,7 @@ const CustomDrawerContent = (props: CustomDrawerContentProps) => {
                     {/* User Profile Section */}
                     <TouchableOpacity style={styles.userHeader} onPress={handleOpenProfile} activeOpacity={0.82}>
                         <LinearGradient
-                            colors={['rgba(255,110,110,0.18)', 'rgba(107,138,253,0.08)']}
+                            colors={[withAlpha(theme.accent, 0.18), withAlpha(theme.accentStrong, 0.08)]}
                             style={styles.userHeaderGlow}
                             start={{ x: 0, y: 0 }}
                             end={{ x: 1, y: 1 }}
@@ -317,22 +327,22 @@ const CustomDrawerContent = (props: CustomDrawerContentProps) => {
                         <View style={styles.avatarContainer}>
                             <Image
                                 source={userData?.avatar ? { uri: userData.avatar } : require('../../assets/icon.png')}
-                                style={styles.avatar}
+                                style={[styles.avatar, { borderColor: theme.accent }]}
                             />
                             <View style={[
                                 styles.onlineStatus,
-                                { backgroundColor: isPremiumUser ? '#4CD964' : '#A0A0B0' }
+                                { backgroundColor: isPremiumUser ? theme.success : theme.textMuted, borderColor: theme.background }
                             ]} />
                         </View>
 
                         <View style={styles.userInfo}>
                             <View style={styles.userNameContainer}>
-                                <Text style={styles.userName} numberOfLines={1}>
+                                <Text style={[styles.userName, { color: theme.text }]} numberOfLines={1}>
                                     {userData?.username || 'Invitado'}
                                 </Text>
-                                {userData?.accountType && <UserPlanBadge accountType={userData.accountType} />}
+                                {userData?.accountType && <UserPlanBadge accountType={userData.accountType} theme={theme} />}
                             </View>
-                            <Text style={styles.userEmail} numberOfLines={1}>
+                            <Text style={[styles.userEmail, { color: theme.textMuted }]} numberOfLines={1}>
                                 {userData?.email || 'usuario@example.com'}
                             </Text>
                         </View>
@@ -341,29 +351,29 @@ const CustomDrawerContent = (props: CustomDrawerContentProps) => {
                     {/* Stats Section */}
                     <View style={styles.statsContainer}>
                         <LinearGradient
-                            colors={['rgba(30, 30, 45, 0.8)', 'rgba(20, 20, 35, 0.9)']}
-                            style={styles.statsBackground}
+                            colors={[withAlpha(theme.card, 0.92), withAlpha(theme.backgroundSecondary, 0.96)]}
+                            style={[styles.statsBackground, { borderColor: withAlpha(theme.accent, 0.2) }]}
                             start={{ x: 0, y: 0 }}
                             end={{ x: 1, y: 1 }}
                         >
                             {isPremiumUser ? (
                                 <>
                                     <View style={styles.statItem}>
-                                        <Ionicons name="book" size={22} color="#FF6E6E" />
-                                        <Text style={styles.statValue}>{mangasReadCount}</Text>
-                                        <Text style={styles.statLabel}>Leídos</Text>
+                                        <Ionicons name="book" size={22} color={theme.accent} />
+                                        <Text style={[styles.statValue, { color: theme.text }]}>{mangasReadCount}</Text>
+                                        <Text style={[styles.statLabel, { color: theme.textMuted }]}>Leídos</Text>
                                     </View>
-                                    <View style={styles.statDivider} />
+                                    <View style={[styles.statDivider, { backgroundColor: withAlpha(theme.accent, 0.2) }]} />
                                     <View style={styles.statItem}>
-                                        <Ionicons name="time" size={22} color="#FF6E6E" />
-                                        <Text style={styles.statValue}>{formatReadingTime(totalReadingTimeMs)}</Text>
-                                        <Text style={styles.statLabel}>Tiempo</Text>
+                                        <Ionicons name="time" size={22} color={theme.accent} />
+                                        <Text style={[styles.statValue, { color: theme.text }]}>{formatReadingTime(totalReadingTimeMs)}</Text>
+                                        <Text style={[styles.statLabel, { color: theme.textMuted }]}>Tiempo</Text>
                                     </View>
-                                    <View style={styles.statDivider} />
+                                    <View style={[styles.statDivider, { backgroundColor: withAlpha(theme.accent, 0.2) }]} />
                                     <View style={styles.statItem}>
-                                        <Ionicons name="heart" size={22} color="#FF6E6E" />
-                                        <Text style={styles.statValue}>{favoritesCount}</Text>
-                                        <Text style={styles.statLabel}>Favoritos</Text>
+                                        <Ionicons name="heart" size={22} color={theme.accent} />
+                                        <Text style={[styles.statValue, { color: theme.text }]}>{favoritesCount}</Text>
+                                        <Text style={[styles.statLabel, { color: theme.textMuted }]}>Favoritos</Text>
                                     </View>
                                 </>
                             ) : (
@@ -375,11 +385,11 @@ const CustomDrawerContent = (props: CustomDrawerContentProps) => {
                                     <MaterialCommunityIcons
                                         name="crown"
                                         size={32}
-                                        color="#FFD700"
-                                        style={styles.crownIcon}
+                                        color={theme.warning}
+                                        style={[styles.crownIcon, { shadowColor: theme.warning }]}
                                     />
-                                    <Text style={styles.lockedStatsText}>Desbloquea estadísticas completas</Text>
-                                    <Text style={styles.lockedStatsSubText}>Conviértete en Premium</Text>
+                                    <Text style={[styles.lockedStatsText, { color: theme.warning }]}>Desbloquea estadísticas completas</Text>
+                                    <Text style={[styles.lockedStatsSubText, { color: theme.textMuted }]}>Conviértete en Premium</Text>
                                 </TouchableOpacity>
                             )}
                         </LinearGradient>
@@ -394,13 +404,13 @@ const CustomDrawerContent = (props: CustomDrawerContentProps) => {
                     >
                         {/* Navigation Items */}
                         <TouchableOpacity
-                            style={styles.tutorialButton}
+                            style={[styles.tutorialButton, { backgroundColor: theme.surface, borderWidth: 1, borderColor: theme.border }]}
                             onPress={handleOpenTutorial}
                             activeOpacity={0.8}
                         >
                             <View style={styles.tutorialButtonContent}>
-                                <MaterialCommunityIcons name="school-outline" size={22} color="#C5C5D6" />
-                                <Text style={styles.tutorialButtonText}>Tutorial</Text>
+                                <MaterialCommunityIcons name="school-outline" size={22} color={theme.textMuted} />
+                                <Text style={[styles.tutorialButtonText, { color: theme.text }]}>Tutorial</Text>
                             </View>
                         </TouchableOpacity>
                         <TouchableOpacity
@@ -441,20 +451,20 @@ const CustomDrawerContent = (props: CustomDrawerContentProps) => {
                         activeOpacity={0.7}
                     >
                         <LinearGradient
-                            colors={['rgba(255, 110, 110, 0.2)', 'rgba(255, 80, 80, 0.3)']}
+                            colors={[withAlpha(theme.accent, 0.2), withAlpha(theme.danger, 0.3)]}
                             style={styles.signOutGradient}
                             start={{ x: 0, y: 0 }}
                             end={{ x: 1, y: 1 }}
                         >
-                            <MaterialCommunityIcons name="logout" size={20} color="#FF6E6E" />
-                            <Text style={styles.signOutText}>Cerrar sesión</Text>
+                            <MaterialCommunityIcons name="logout" size={20} color={theme.accent} />
+                            <Text style={[styles.signOutText, { color: theme.accent }]}>Cerrar sesión</Text>
                         </LinearGradient>
                     </TouchableOpacity>
                 </Animated.View>
 
                 <View style={styles.versionContainer}>
-                    <Text style={styles.footerText}>Kamireader v1.0.9</Text>
-                    <Text style={styles.footerText}>© {new Date().getFullYear()} KAMI Studios</Text>
+                    <Text style={[styles.footerText, { color: theme.textMuted }]}>Kamireader v1.0.9</Text>
+                    <Text style={[styles.footerText, { color: theme.textMuted }]}>© {new Date().getFullYear()} KAMI Studios</Text>
                 </View>
             </View>
         </LinearGradient>

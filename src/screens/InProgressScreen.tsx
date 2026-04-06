@@ -17,6 +17,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { auth, db } from '../firebase/config';
 import { collection, onSnapshot, deleteDoc, doc } from 'firebase/firestore';
 import { useAlertContext } from '../contexts/AlertContext';
+import { usePersonalization } from '../contexts/PersonalizationContext';
 import { getProviderAliasLabel } from '../utils/providerBranding';
 
 // Define the type for an in-progress item
@@ -51,6 +52,7 @@ const formatRelativeDate = (date?: Date | null) => {
 };
 
 export default function InProgressScreen() {
+    const { theme } = usePersonalization();
     const navigation = useNavigation<any>();
     const [inProgressComics, setInProgressComics] = useState<InProgressItem[]>([]);
     const [loading, setLoading] = useState(true);
@@ -59,6 +61,14 @@ export default function InProgressScreen() {
     const insets = useSafeAreaInsets();
 
     const { alertError, alertSuccess, alertConfirm } = useAlertContext();
+
+    const summaryGradientColors = useMemo(
+        () => [
+            `rgba(${parseInt(theme.accent.slice(1, 3), 16)}, ${parseInt(theme.accent.slice(3, 5), 16)}, ${parseInt(theme.accent.slice(5, 7), 16)}, 0.2)`,
+            `rgba(${parseInt(theme.accentStrong.slice(1, 3), 16)}, ${parseInt(theme.accentStrong.slice(3, 5), 16)}, ${parseInt(theme.accentStrong.slice(5, 7), 16)}, 0.1)`,
+        ],
+        [theme.accent, theme.accentStrong]
+    );
 
     useEffect(() => {
         const unsubscribe = auth.onAuthStateChanged(user => {
@@ -126,24 +136,26 @@ export default function InProgressScreen() {
             return;
         }
 
-        alertConfirm(
-            `¿Estás seguro de que quieres eliminar "${mangaTitle}" de tus cómics en curso?`,
-            async () => {
-                try {
-                    setRemovingId(mangaId);
-                    const comicRef = doc(db, 'users', currentUserUid, 'inProgressManga', mangaId);
-                    await deleteDoc(comicRef);
-                    alertSuccess(`'${mangaTitle}' ha sido eliminado.`);
-                } catch {
-                    alertError(`No se pudo eliminar '${mangaTitle}'.`);
-                } finally {
-                    setRemovingId(null);
-                }
-            },
-            "Confirmar Eliminación",
-            "Sí, eliminar",
-            "Cancelar"
-        );
+        setTimeout(() => {
+            alertConfirm(
+                `¿Estás seguro de que quieres eliminar "${mangaTitle}" de tus cómics en curso?`,
+                async () => {
+                    try {
+                        setRemovingId(mangaId);
+                        const comicRef = doc(db, 'users', currentUserUid, 'inProgressManga', mangaId);
+                        await deleteDoc(comicRef);
+                        alertSuccess(`'${mangaTitle}' ha sido eliminado.`);
+                    } catch {
+                        alertError(`No se pudo eliminar '${mangaTitle}'.`);
+                    } finally {
+                        setRemovingId(null);
+                    }
+                },
+                'Confirmar Eliminación',
+                'Sí, eliminar',
+                'Cancelar'
+            );
+        }, 80);
     }, [alertConfirm, alertError, alertSuccess, currentUserUid]);
 
     const renderTopBar = useMemo(() => (
@@ -154,32 +166,32 @@ export default function InProgressScreen() {
                 accessible
                 accessibilityLabel="Volver atrás"
             >
-                <Ionicons name="arrow-back" size={28} color="#6B8AFD" />
+                <Ionicons name="arrow-back" size={28} color={theme.accent} />
             </TouchableOpacity>
-            <Text style={styles.topBarTitle}>En Curso</Text>
+            <Text style={[styles.topBarTitle, { color: theme.text }]}>En Curso</Text>
         </View>
-    ), [navigation]);
+    ), [navigation, theme.accent, theme.text]);
 
     const renderSummaryHeader = useMemo(() => {
         if (inProgressComics.length === 0) return null;
 
         return (
-            <LinearGradient colors={['rgba(107,138,253,0.2)', 'rgba(255,107,107,0.1)']} style={styles.summaryCard}>
-                <View style={styles.summaryIconWrap}>
-                    <Ionicons name="time-outline" size={22} color="#D9E2FF" />
+            <LinearGradient colors={summaryGradientColors as [string, string]} style={[styles.summaryCard, { borderColor: theme.border }]}>
+                <View style={[styles.summaryIconWrap, { backgroundColor: theme.accentSoft }] }>
+                    <Ionicons name="time-outline" size={22} color={theme.text} />
                 </View>
                 <View style={styles.summaryTextWrap}>
-                    <Text style={styles.summaryTitle}>Sigue donde te quedaste</Text>
-                    <Text style={styles.summarySubtitle}>
+                    <Text style={[styles.summaryTitle, { color: theme.text }]}>Sigue donde te quedaste</Text>
+                    <Text style={[styles.summarySubtitle, { color: theme.textMuted }]}>
                         {inProgressComics.length} {inProgressComics.length === 1 ? 'serie activa' : 'series activas'} en tu historial reciente.
                     </Text>
                 </View>
             </LinearGradient>
         );
-    }, [inProgressComics.length]);
+    }, [inProgressComics.length, summaryGradientColors, theme.accentSoft, theme.border, theme.text, theme.textMuted]);
 
     const renderInProgressItem = useCallback(({ item }: { item: InProgressItem }) => (
-        <View style={styles.item}>
+        <View style={[styles.item, { backgroundColor: theme.surface, borderColor: theme.border }]}>
             <TouchableOpacity
                 style={styles.itemMainPressable}
                 onPress={() => handleInProgressPress(item)}
@@ -200,74 +212,74 @@ export default function InProgressScreen() {
                 />
                 <View style={styles.itemContent}>
                     <View style={styles.itemMetaRow}>
-                        <View style={styles.sourcePill}>
-                            <Text style={styles.sourcePillText}>{getProviderAliasLabel(item.source)}</Text>
+                        <View style={[styles.sourcePill, { backgroundColor: theme.accentSoft, borderColor: theme.accent }] }>
+                            <Text style={[styles.sourcePillText, { color: theme.text }]}>{getProviderAliasLabel(item.source)}</Text>
                         </View>
-                        <Text style={styles.activityText}>{item.activityText}</Text>
+                        <Text style={[styles.activityText, { color: theme.textMuted }]}>{item.activityText}</Text>
                     </View>
-                    <Text style={styles.title} numberOfLines={2}>{item.mangaTitle}</Text>
+                    <Text style={[styles.title, { color: theme.text }]} numberOfLines={2}>{item.mangaTitle}</Text>
                     {item.lastReadChapterNumber ? (
-                        <Text style={styles.lastReadText}>
+                        <Text style={[styles.lastReadText, { color: theme.text }]}>
                             {`Capítulo actual: ${item.lastReadChapterNumber}${item.lastReadImagePage ? ` · Img. ${item.lastReadImagePage}` : ''}`}
                         </Text>
                     ) : (
-                        <Text style={styles.lastReadText}>Progreso guardado sin número de capítulo</Text>
+                        <Text style={[styles.lastReadText, { color: theme.textMuted }]}>Progreso guardado sin número de capítulo</Text>
                     )}
                     {item.startedAt && (
-                        <Text style={styles.startedAtText}>Agregado el {item.startedAt}</Text>
+                        <Text style={[styles.startedAtText, { color: theme.textMuted }]}>Agregado el {item.startedAt}</Text>
                     )}
                 </View>
             </TouchableOpacity>
 
             <View style={styles.itemActionsRow}>
                 <TouchableOpacity
-                    style={styles.continueButton}
+                    style={[styles.continueButton, { backgroundColor: theme.accent }]}
                     onPress={() => handleInProgressPress(item)}
                     accessibilityLabel={`Abrir ${item.mangaTitle}`}
                 >
-                    <Ionicons name="play" size={16} color="#FFFFFF" />
-                    <Text style={styles.continueButtonText}>Continuar</Text>
+                    <Ionicons name="play" size={16} color={theme.text} />
+                    <Text style={[styles.continueButtonText, { color: theme.text }]}>Continuar</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                    style={[styles.deleteButton, removingId === item.id && styles.deleteButtonDisabled]}
+                    style={[styles.deleteButton, { backgroundColor: theme.danger }, removingId === item.id && styles.deleteButtonDisabled]}
                     onPress={() => handleDeleteComic(item.id, item.mangaTitle)}
                     disabled={removingId === item.id}
                     accessibilityLabel={`Eliminar ${item.mangaTitle} de cómics en curso`}
                 >
                     {removingId === item.id ? (
-                        <ActivityIndicator size="small" color="#FFFFFF" />
+                        <ActivityIndicator size="small" color={theme.text} />
                     ) : (
                         <>
-                            <Ionicons name="trash-outline" size={18} color="#FFFFFF" />
-                            <Text style={styles.deleteButtonText}>Quitar</Text>
+                            <Ionicons name="trash-outline" size={18} color={theme.text} />
+                            <Text style={[styles.deleteButtonText, { color: theme.text }]}>Quitar</Text>
                         </>
                     )}
                 </TouchableOpacity>
             </View>
         </View>
-    ), [handleDeleteComic, handleInProgressPress, removingId]);
+    ), [handleDeleteComic, handleInProgressPress, removingId, theme.accent, theme.border, theme.danger, theme.surface, theme.text, theme.textMuted, theme.accentSoft]);
 
     if (loading) {
         return (
-            <LinearGradient colors={['#0F0F1A', '#252536']} style={styles.loadingContainer}>
-                <ActivityIndicator size="large" color="#6B8AFD" />
-                <Text style={styles.loadingText}>Cargando cómics en curso...</Text>
+            <LinearGradient colors={[theme.background, theme.backgroundSecondary]} style={styles.loadingContainer}>
+                <ActivityIndicator size="large" color={theme.accentStrong} />
+                <Text style={[styles.loadingText, { color: theme.accent }]}>Cargando cómics en curso...</Text>
             </LinearGradient>
         );
     }
 
     if (!currentUserUid) {
         return (
-            <LinearGradient colors={['#0F0F1A', '#252536']} style={styles.emptyStateContainer}>
-                <Ionicons name="person-circle-outline" size={80} color="#B0BEC5" />
-                <Text style={styles.emptyStateText}>Inicia sesión para ver tus cómics en curso</Text>
+            <LinearGradient colors={[theme.background, theme.backgroundSecondary]} style={styles.emptyStateContainer}>
+                <Ionicons name="person-circle-outline" size={80} color={theme.textMuted} />
+                <Text style={[styles.emptyStateText, { color: theme.text }]}>Inicia sesión para ver tus cómics en curso</Text>
                 <TouchableOpacity
-                    style={styles.loginButton}
+                    style={[styles.loginButton, { backgroundColor: theme.accent, shadowColor: theme.accent }]}
                     onPress={() => navigation.navigate('Auth')}
                     accessible
                     accessibilityLabel="Ir a la pantalla de inicio de sesión"
                 >
-                    <Text style={styles.loginButtonText}>Iniciar Sesión</Text>
+                    <Text style={[styles.loginButtonText, { color: theme.text }]}>Iniciar Sesión</Text>
                 </TouchableOpacity>
             </LinearGradient>
         );
@@ -275,21 +287,21 @@ export default function InProgressScreen() {
 
     if (inProgressComics.length === 0) {
         return (
-            <LinearGradient colors={['#0F0F1A', '#252536']} style={styles.container}>
+            <LinearGradient colors={[theme.background, theme.backgroundSecondary]} style={styles.container}>
                 <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
                 <SafeAreaView style={[styles.safeArea, { paddingTop: insets.top }]}>
                     {renderTopBar}
                     <View style={styles.emptyContent}>
-                        <Ionicons name="book-outline" size={80} color="#B0BEC5" />
-                        <Text style={styles.emptyStateText}>No tienes cómics en curso</Text>
-                        <Text style={styles.emptyStateSubText}>Empieza a leer un cómic y lo verás aquí</Text>
+                        <Ionicons name="book-outline" size={80} color={theme.textMuted} />
+                        <Text style={[styles.emptyStateText, { color: theme.text }]}>No tienes cómics en curso</Text>
+                        <Text style={[styles.emptyStateSubText, { color: theme.textMuted }]}>Empieza a leer un cómic y lo verás aquí</Text>
                         <TouchableOpacity
-                            style={styles.browseButton}
+                            style={[styles.browseButton, { backgroundColor: theme.accentStrong, shadowColor: theme.accentStrong }]}
                             onPress={() => navigation.navigate('Library')}
                             accessible
                             accessibilityLabel="Explorar cómics"
                         >
-                            <Text style={styles.browseButtonText}>Explorar Cómics</Text>
+                            <Text style={[styles.browseButtonText, { color: theme.text }]}>Explorar Cómics</Text>
                         </TouchableOpacity>
                     </View>
                 </SafeAreaView>
@@ -298,7 +310,7 @@ export default function InProgressScreen() {
     }
 
     return (
-        <LinearGradient colors={['#0F0F1A', '#252536']} style={styles.container}>
+        <LinearGradient colors={[theme.background, theme.backgroundSecondary]} style={styles.container}>
             <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
             <SafeAreaView style={[styles.safeArea, { paddingTop: insets.top }]}>
                 {renderTopBar}
@@ -310,6 +322,11 @@ export default function InProgressScreen() {
                     ListHeaderComponent={renderSummaryHeader}
                     contentContainerStyle={styles.flatListContent}
                     showsVerticalScrollIndicator={false}
+                    initialNumToRender={6}
+                    maxToRenderPerBatch={6}
+                    updateCellsBatchingPeriod={40}
+                    windowSize={7}
+                    removeClippedSubviews={Platform.OS === 'android'}
                 />
             </SafeAreaView>
         </LinearGradient>
