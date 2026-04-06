@@ -1,1 +1,118 @@
-Términos y Condiciones de Uso de KamiReader Última actualización: 20 de mayo de 2025 1. Objeto de la Aplicación KamiReader proporciona una plataforma que organiza y presenta contenido de lectura (mangas, manhuas y manhwas) accesible públicamente mediante servicios o APIs de terceros. Su uso está limitado a fines personales y de entretenimiento. Está prohibido el uso con fines comerciales o de redistribución. 2. Propiedad Intelectual KamiReader no aloja, almacena ni distribuye directamente contenido protegido por derechos de autor. Todo el contenido es obtenido a través de fuentes públicas o servicios de terceros. Todos los derechos de autor, marcas registradas y demás derechos de propiedad intelectual pertenecen a sus respectivos titulares. KamiReader no reivindica ningún derecho sobre dichos contenidos. 3. Contenido de Terceros KamiReader se basa en APIs y servicios externos. No se garantiza la legalidad, disponibilidad, exactitud ni continuidad del contenido proporcionado por estos terceros. El acceso y uso de dichos contenidos se realiza bajo responsabilidad exclusiva del usuario. 4. Exclusión de Responsabilidad El uso de KamiReader es bajo su propio riesgo. No garantizamos la continuidad, exactitud o ausencia de errores, interrupciones o malware en la App. Adicionalmente, entiende y acepta que la disponibilidad del contenido depende exclusivamente de servicios de terceros. No garantizamos que dicho contenido esté disponible en todo momento, ni que su acceso sea ininterrumpido. 5. Eliminación de Contenido Si usted es titular de derechos de autor y desea solicitar la eliminación de contenido referenciado por KamiReader, puede enviar un correo a: sukisoft.soporte@gmail.com, incluyendo: Identificación clara del contenido. Prueba válida de titularidad. Información de contacto verificable. KamiReader responderá con celeridad para evaluar y atender la solicitud de forma razonable. 6. Publicidad y Enlaces Externos KamiReader puede incluir enlaces a sitios web de terceros o mostrar publicidad de redes externas. No somos responsables del contenido, prácticas o políticas de dichos servicios externos. 7. Modificaciones KamiReader se reserva el derecho a modificar estos Términos y Condiciones en cualquier momento. Las modificaciones se harán efectivas desde su publicación en la App. El uso continuado de la App después de las modificaciones implica la aceptación de los nuevos términos. 8. Conducta del Usuario Usted se compromete a no: Utilizar KamiReader para fines ilegales o no autorizados. Interferir con el funcionamiento normal de la App. Acceder sin autorización a sistemas restringidos o vulnerar medidas de seguridad. Sobrecargar, deshabilitar o perjudicar la infraestructura técnica de la App. Cualquier incumplimiento podrá resultar en la suspensión inmediata del acceso. 9. Indemnización Usted acepta indemnizar y eximir de responsabilidad a KamiReader, así como a sus desarrolladores, empleados y afiliados, frente a cualquier reclamo, daño, pérdida o gasto (incluidos honorarios legales) derivados de: Su uso de la App. Su incumplimiento de estos Términos. Su infracción de derechos de terceros. 10. Jurisdicción y Ley Aplicable Estos Términos se rigen por las leyes de [Chile/Región Metropolitana que elijas]. Cualquier controversia será resuelta por los tribunales competentes de [Santiago, Chile], renunciando expresamente a cualquier otro fuero. 11. Terminación KamiReader se reserva el derecho de suspender o cancelar el acceso a la App, total o parcialmente, en cualquier momento y sin previo aviso, si se detecta un incumplimiento de estos Términos o si se considera necesario para proteger la seguridad de la App o sus usuarios. 12. Contacto Para consultas, reclamaciones o solicitudes legales, puedes escribir a: 📧 [sukisoft.soporte@gmail.com] ⚠️ Renuncia de Responsabilidad KamiReader actúa como un agregador de contenido a través de servicios de terceros. No aloja ni distribuye directamente archivos con derechos de autor. Todo el contenido mostrado es responsabilidad de sus proveedores. KamiReader no se responsabiliza por la infracción de derechos realizada por terceros ajenos a su control. Si consideras que se está infringiendo algún derecho, puedes solicitar su revisión conforme al procedimiento descrito en el punto 5.
+# Términos y Condiciones de Uso de KamiReader
+
+Última actualización: 6 de abril de 2026
+
+## 1. Aceptación de los términos
+Al descargar, instalar, acceder o utilizar KamiReader (la App), usted declara haber leído, entendido y aceptado íntegramente estos Términos y Condiciones.
+
+Si no está de acuerdo con estos Términos, debe abstenerse de usar la App.
+
+## 2. Identificación del servicio
+KamiReader es una aplicación que organiza y muestra enlaces y/o referencias de lectura de contenido disponible mediante servicios, fuentes o APIs de terceros.
+
+Correo de contacto legal y soporte: sukisoft.soporte@gmail.com.
+
+## 3. Elegibilidad y uso permitido
+Usted se compromete a usar la App únicamente para fines personales, lícitos y no comerciales, salvo autorización expresa y por escrito de KamiReader.
+
+No está permitido:
+- reproducir, revender, sublicenciar o explotar comercialmente la App;
+- extraer datos de forma automatizada (scraping, bots, crawlers) que afecte la disponibilidad del servicio;
+- eludir medidas técnicas de seguridad o restricciones de acceso.
+
+Si usted es menor de edad según la legislación aplicable, debe usar la App bajo supervisión y consentimiento de su representante legal.
+
+## 4. Licencia de uso
+KamiReader le otorga una licencia limitada, no exclusiva, revocable, intransferible y no sublicenciable para usar la App en dispositivos de su propiedad o control, conforme a estos Términos.
+
+Todos los derechos no expresamente otorgados quedan reservados.
+
+## 5. Contenido de terceros y derechos de autor
+KamiReader no aloja ni almacena en sus servidores contenido de lectura protegido por derechos de autor de terceros. La App puede mostrar, indexar o enlazar contenido disponible a través de fuentes externas.
+
+La titularidad de todo contenido de terceros (obras, marcas, logos, nombres comerciales y demás activos de propiedad intelectual) pertenece a sus respectivos titulares.
+
+KamiReader no reclama titularidad sobre dicho contenido y actúa como intermediario técnico de acceso/referencia.
+
+## 6. Solicitudes por infracción de derechos (notice and takedown)
+Si usted es titular de derechos y considera que un contenido referenciado por la App infringe su propiedad intelectual, puede solicitar revisión y retiro enviando un correo a sukisoft.soporte@gmail.com con:
+- identificación precisa del contenido o URL/referencia afectada;
+- acreditación razonable de titularidad o representación;
+- datos de contacto válidos;
+- declaración de buena fe sobre la supuesta infracción.
+
+KamiReader evaluará cada solicitud en un plazo razonable y podrá bloquear o retirar referencias cuando corresponda.
+
+## 7. Disponibilidad del servicio
+KamiReader procura mantener la App operativa, pero no garantiza disponibilidad continua, ausencia de errores, compatibilidad universal, ni funcionamiento ininterrumpido.
+
+La disponibilidad del contenido depende de proveedores y servicios de terceros, por lo que puede variar, limitarse o dejar de estar disponible sin aviso previo.
+
+## 8. Publicidad, enlaces externos y servicios de terceros
+La App puede incluir publicidad, SDKs y enlaces externos operados por terceros.
+
+KamiReader no controla ni asume responsabilidad por:
+- contenido, políticas o prácticas de terceros;
+- daños derivados de interacciones del usuario con dichos terceros;
+- cambios, bloqueos o interrupciones de servicios externos.
+
+## 9. Datos personales y privacidad
+El tratamiento de datos personales asociado al uso de la App se realiza conforme a la normativa aplicable, incluyendo la Ley N° 19.628 sobre Protección de la Vida Privada (Chile), cuando corresponda.
+
+Para ejercicio de derechos y solicitudes sobre cuenta o datos, puede contactar a sukisoft.soporte@gmail.com.
+
+## 10. Seguridad y conducta del usuario
+Usted acepta no:
+- usar la App para actividades ilícitas o no autorizadas;
+- introducir malware, código malicioso o ejecutar acciones que comprometan la seguridad de la App;
+- intentar acceder sin autorización a sistemas, cuentas o infraestructura relacionada;
+- interferir, sobrecargar o degradar el funcionamiento del servicio.
+
+El incumplimiento podrá dar lugar a suspensión temporal o terminación definitiva del acceso.
+
+## 11. Compras y servicios de pago (si aplican)
+Si la App incorpora funciones de pago, suscripciones o compras integradas, estas se regirán adicionalmente por los términos de la tienda o pasarela de pago correspondiente (por ejemplo, Google Play) y por la normativa de protección al consumidor aplicable.
+
+Los precios, periodos y condiciones podrán mostrarse dentro de la App antes de confirmar la operación.
+
+## 12. Exclusión y limitación de responsabilidad
+En la máxima medida permitida por la ley, KamiReader se proporciona en estado tal cual y según disponibilidad.
+
+KamiReader no garantiza:
+- exactitud, integridad o actualidad del contenido de terceros;
+- ausencia de fallos, vulnerabilidades o interrupciones;
+- idoneidad de la App para un propósito particular del usuario.
+
+En ningún caso KamiReader será responsable por daños indirectos, incidentales, especiales, punitivos o lucro cesante derivados del uso o imposibilidad de uso de la App, salvo cuando la ley disponga lo contrario de forma imperativa.
+
+## 13. Indemnidad
+Usted acepta defender, indemnizar y mantener indemne a KamiReader, sus desarrolladores y colaboradores frente a reclamaciones de terceros derivadas de:
+- su uso indebido de la App;
+- incumplimiento de estos Términos;
+- infracción de derechos de terceros por actos imputables al usuario.
+
+## 14. Suspensión y terminación
+KamiReader podrá suspender o terminar, total o parcialmente, el acceso a la App, con o sin aviso previo, cuando existan indicios de uso abusivo, incumplimiento de estos Términos, requerimientos legales o riesgos de seguridad.
+
+La terminación no extingue obligaciones pendientes ni derechos devengados con anterioridad.
+
+## 15. Modificaciones de los términos
+KamiReader puede modificar estos Términos en cualquier momento.
+
+La versión vigente será publicada en la App o en los canales oficiales. El uso continuado de la App tras la entrada en vigor de cambios constituye aceptación de los términos actualizados.
+
+## 16. Ley aplicable y jurisdicción
+Estos Términos se rigen por las leyes de la República de Chile.
+
+Cualquier conflicto que no pueda resolverse de forma amistosa será sometido a la competencia de los tribunales ordinarios de justicia de Santiago de Chile, salvo norma de competencia imperativa en contrario.
+
+## 17. Contacto
+Para consultas legales, reclamos de derechos, soporte o solicitudes relacionadas con cuenta:
+
+sukisoft.soporte@gmail.com
+
+## 18. Cláusula de separabilidad
+Si alguna disposición de estos Términos fuese declarada inválida o inaplicable por autoridad competente, las demás disposiciones conservarán plena vigencia y efecto.
+
+## 19. Acuerdo completo
+Estos Términos constituyen el acuerdo completo entre usted y KamiReader respecto del uso de la App, y sustituyen cualquier comunicación previa sobre la misma materia.
