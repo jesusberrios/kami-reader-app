@@ -14,27 +14,15 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { usePersonalization } from '../contexts/PersonalizationContext';
+import { formatNotificationDate, getNotificationDateValue } from '../utils/notificationUtils';
 
 type NewsItem = {
     id: string;
     title: string;
     message: string;
+    date?: any;
     createdAt?: any;
-};
-
-const toMillis = (value: any) => {
-    if (!value) return 0;
-    if (typeof value?.toMillis === 'function') return value.toMillis();
-    if (value?.seconds) return Number(value.seconds) * 1000;
-    const parsed = new Date(value).getTime();
-    return Number.isFinite(parsed) ? parsed : 0;
-};
-
-const formatDate = (value: any) => {
-    const ms = toMillis(value);
-    if (!ms) return 'Sin fecha';
-    const date = new Date(ms);
-    return `${date.toLocaleDateString()} ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+    isNew?: boolean;
 };
 
 const NewsDetailScreen = () => {
@@ -58,7 +46,7 @@ const NewsDetailScreen = () => {
 
                 <ScrollView contentContainerStyle={styles.scrollContent}>
                     <Text style={styles.title}>{newsItem?.title || 'Sin título'}</Text>
-                    <Text style={styles.date}>{formatDate(newsItem?.createdAt)}</Text>
+                    <Text style={styles.date}>{formatNotificationDate(getNotificationDateValue(newsItem))}</Text>
                     <View style={styles.bodyCard}>
                         <Text style={styles.bodyText}>{String(newsItem?.message || '').replace(/<[^>]*>/g, '')}</Text>
                     </View>

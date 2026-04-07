@@ -17,6 +17,20 @@ type CacheEntry<T> = {
 const DEFAULT_TIMEOUT_MS = 8000;
 const memoryCache = new Map<string, CacheEntry<unknown>>();
 const inFlight = new Map<string, Promise<unknown>>();
+const MAX_MEMORY_CACHE_ENTRIES = 240;
+
+const trimMemoryCacheIfNeeded = () => {
+    if (memoryCache.size <= MAX_MEMORY_CACHE_ENTRIES) return;
+
+    // Remove the oldest entries first to keep memory bounded.
+    const overflow = memoryCache.size - MAX_MEMORY_CACHE_ENTRIES;
+    const iterator = memoryCache.keys();
+    for (let i = 0; i < overflow; i += 1) {
+        const next = iterator.next();
+        if (next.done) break;
+        memoryCache.delete(next.value);
+    }
+};
 
 const buildQueryString = (query?: Query) => {
     if (!query) return '';
@@ -67,6 +81,7 @@ const fetchJson = async <T>(path: string, query?: Query, options?: FetchOptions)
 
             if (ttlMs > 0) {
                 memoryCache.set(key, { ts: Date.now(), data });
+                trimMemoryCacheIfNeeded();
             }
 
             return data;

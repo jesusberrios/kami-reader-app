@@ -18,27 +18,21 @@ import { db } from '../firebase/config';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { usePersonalization } from '../contexts/PersonalizationContext';
+import {
+    formatNotificationDate,
+    getNotificationDateValue,
+    isNotificationOld,
+    normalizeNotification,
+    sortNotificationsByDateDesc,
+} from '../utils/notificationUtils';
 
 type NewsItem = {
     id: string;
     title: string;
     message: string;
+    date?: any;
     createdAt?: any;
-};
-
-const toMillis = (value: any) => {
-    if (!value) return 0;
-    if (typeof value?.toMillis === 'function') return value.toMillis();
-    if (value?.seconds) return Number(value.seconds) * 1000;
-    const parsed = new Date(value).getTime();
-    return Number.isFinite(parsed) ? parsed : 0;
-};
-
-const formatDate = (value: any) => {
-    const ms = toMillis(value);
-    if (!ms) return 'Sin fecha';
-    const date = new Date(ms);
-    return `${date.toLocaleDateString()} ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+    isNew?: boolean;
 };
 
 const NewsScreen = () => {
@@ -54,10 +48,10 @@ const NewsScreen = () => {
     const loadNews = useCallback(async () => {
         try {
             const snapshot = await getDocs(collection(db, 'notifications'));
-            const list: NewsItem[] = snapshot.docs.map((d) => ({
+            const list: NewsItem[] = sortNotificationsByDateDesc(snapshot.docs.map((d) => normalizeNotification({
                 id: d.id,
                 ...(d.data() as Omit<NewsItem, 'id'>),
-            }));
+            })));
             setNews(list);
         } finally {
             setLoading(false);
@@ -70,12 +64,9 @@ const NewsScreen = () => {
     }, [loadNews]);
 
     const sortedNews = useMemo(() => {
-        const copy = [...news];
-        copy.sort((a, b) => {
-            const diff = toMillis(b.createdAt) - toMillis(a.createdAt);
-            return mode === 'recent' ? diff : -diff;
+        return sortNotificationsByDateDesc(news).filter((item) => {
+            return mode === 'recent' ? !isNotificationOld(item) : isNotificationOld(item);
         });
-        return copy;
     }, [news, mode]);
 
     if (loading) {
@@ -118,14 +109,14 @@ const NewsScreen = () => {
                     keyExtractor={(item) => item.id}
                     refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); loadNews(); }} tintColor={theme.accent} />}
                     contentContainerStyle={styles.listContent}
-                    ListEmptyComponent={<Text style={styles.emptyText}>No hay noticias disponibles.</Text>}
+                    ListEmptyComponent={<Text style={styles.emptyText}>{mode === 'recent' ? 'No hay noticias nuevas.' : 'No hay noticias antiguas.'}</Text>}
                     renderItem={({ item }) => (
                         <TouchableOpacity
                             style={styles.card}
                             onPress={() => navigation.navigate('NewsDetail', { newsItem: item })}
                         >
                             <Text style={styles.cardTitle} numberOfLines={2}>{item.title || 'Sin título'}</Text>
-                            <Text style={styles.cardDate}>{formatDate(item.createdAt)}</Text>
+                            <Text style={styles.cardDate}>{formatNotificationDate(getNotificationDateValue(item))}</Text>
                             <Text style={styles.cardBody} numberOfLines={3}>{String(item.message || '').replace(/<[^>]*>/g, '')}</Text>
                         </TouchableOpacity>
                     )}

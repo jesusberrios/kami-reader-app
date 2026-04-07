@@ -32,6 +32,7 @@ import { getFlagEmoji, formatTimeAgo } from '../utils/flagUtils';
 // Import the new cache utilities
 import { getCachedData, setCacheData } from '../utils/cacheUtils';
 import { getProviderAliasLabel, normalizeProviderSource } from '../utils/providerBranding';
+import { filterNotificationsForHome, normalizeNotification } from '../utils/notificationUtils';
 
 // Constants
 const windowWidth = Dimensions.get('window').width;
@@ -110,7 +111,9 @@ type NewsItem = {
     id: string;
     title: string;
     message: string;
+    date?: any;
     createdAt?: any;
+    isNew?: boolean;
 };
 
 const HomeScreen = ({ navigation }: any) => {
@@ -130,6 +133,7 @@ const HomeScreen = ({ navigation }: any) => {
     const [continueReadingComics, setContinueReadingComics] = useState<Chapter[]>([]); // New state for continue reading
     const [latestMangas, setLatestMangas] = useState<LatestManga[]>([]);
     const [latestLoading, setLatestLoading] = useState(true);
+    const [homeNotice, setHomeNotice] = useState('');
 
     // Refs and hooks
     const headerRef = useRef<View>(null);
@@ -221,6 +225,9 @@ const HomeScreen = ({ navigation }: any) => {
                 await setCacheData('topComics', { safe: safeComics, erotic: eroticComics });
             }
         } catch (error) {
+            if (isMounted.current) {
+                setHomeNotice('No pudimos actualizar Top ahora. Revisa tu conexion y vuelve a intentar.');
+            }
         } finally {
             if (isMounted.current) {
                 setComicsLoading(false);
@@ -241,6 +248,9 @@ const HomeScreen = ({ navigation }: any) => {
                 }
             }
         } catch (error) {
+            if (isMounted.current) {
+                setHomeNotice('No pudimos cargar noticias nuevas en este momento.');
+            }
         }
     }, []);
 
@@ -249,20 +259,20 @@ const HomeScreen = ({ navigation }: any) => {
             const cachedNews = await getCachedData('appNews');
             if (cachedNews) {
                 if (isMounted.current) {
-                    setNews(cachedNews);
+                    setNews(filterNotificationsForHome((cachedNews as NewsItem[]).map((item) => normalizeNotification(item))));
                 }
                 return;
             }
 
             const snapshot = await getDocs(collection(db, 'notifications'));
             if (isMounted.current) {
-                const fetchedNews = snapshot.docs.map(doc => ({
+                const normalizedNews = snapshot.docs.map(doc => normalizeNotification({
                     ...doc.data(),
                     id: doc.id,
-                    createdAt: doc.data().createdAt || null
                 } as NewsItem));
+                const fetchedNews = filterNotificationsForHome(normalizedNews);
                 setNews(fetchedNews);
-                await setCacheData('appNews', fetchedNews);
+                await setCacheData('appNews', normalizedNews);
             }
         } catch (error) {
         }
@@ -360,7 +370,9 @@ const HomeScreen = ({ navigation }: any) => {
                 setLatestMangas(res.results);
             }
         } catch (error) {
-            // silencioso si el backend no está disponible
+            if (isMounted.current) {
+                setHomeNotice('La seccion de recientes esta temporalmente no disponible.');
+            }
         } finally {
             if (isMounted.current) setLatestLoading(false);
         }
@@ -418,6 +430,7 @@ const HomeScreen = ({ navigation }: any) => {
     // Handlers
     const handleRefresh = useCallback(async () => {
         setRefreshing(true);
+        setHomeNotice('');
         await Promise.all([
             fetchTopComics({ forceRefresh: true }),
             fetchNews(),
@@ -634,6 +647,13 @@ const HomeScreen = ({ navigation }: any) => {
                             <Text style={styles.heroSubtitle}>Top por rating, recientes y tus lecturas en progreso en un solo lugar.</Text>
                         </View>
                     </LinearGradient>
+
+                    {!!homeNotice && (
+                        <View style={[styles.noticeCard, { borderColor: theme.warning, backgroundColor: `${theme.warning}22` }]}>
+                            <MaterialCommunityIcons name="wifi-alert" size={18} color={theme.warning} />
+                            <Text style={styles.noticeText}>{homeNotice}</Text>
+                        </View>
+                    )}
 
                     <TouchableOpacity style={styles.donationCard} onPress={handleOpenDonation} activeOpacity={0.85}>
                         <LinearGradient colors={['#F59E0B33', '#FB718533']} style={StyleSheet.absoluteFill} />
@@ -956,6 +976,24 @@ const styles = StyleSheet.create({
         fontFamily: 'Roboto-Regular',
         marginTop: 4,
         lineHeight: 18,
+    },
+    noticeCard: {
+        marginHorizontal: 20,
+        marginBottom: 16,
+        borderRadius: 12,
+        borderWidth: 1,
+        paddingHorizontal: 12,
+        paddingVertical: 10,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+    },
+    noticeText: {
+        flex: 1,
+        color: '#FFEFD9',
+        fontSize: 12,
+        lineHeight: 17,
+        fontFamily: 'Roboto-Medium',
     },
     donationCard: {
         marginHorizontal: 20,

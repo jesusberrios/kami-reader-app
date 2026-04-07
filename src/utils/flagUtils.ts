@@ -26,15 +26,39 @@ export const getFlagEmoji = (lang: string): string => {
     }
 };
 
-// utils/timeUtils.ts (can be in the same file or separate)
-export const formatTimeAgo = (timestamp: any): string => {
-    if (!timestamp || !timestamp.toDate) {
-        return 'N/A'; // Or handle cases where timestamp is not a Firebase Timestamp
+const toDate = (value: any): Date | null => {
+    if (!value) return null;
+    if (value instanceof Date) return value;
+    if (typeof value?.toDate === 'function') {
+        const result = value.toDate();
+        return result instanceof Date ? result : null;
+    }
+    if (typeof value?.toMillis === 'function') {
+        const ms = Number(value.toMillis());
+        return Number.isFinite(ms) ? new Date(ms) : null;
+    }
+    if (typeof value === 'number') {
+        const normalized = Math.abs(value) < 1e12 ? value * 1000 : value;
+        return Number.isFinite(normalized) ? new Date(normalized) : null;
     }
 
-    const date = timestamp.toDate();
+    const parsed = new Date(value);
+    return Number.isFinite(parsed.getTime()) ? parsed : null;
+};
+
+// utils/timeUtils.ts (can be in the same file or separate)
+export const formatTimeAgo = (timestamp: any): string => {
+    const date = toDate(timestamp);
+    if (!date) {
+        return 'N/A';
+    }
+
     const now = new Date();
     const seconds = Math.floor((now.getTime() - date.getTime()) / 1000);
+
+    if (!Number.isFinite(seconds) || seconds < 0) {
+        return 'Ahora';
+    }
 
     let interval = seconds / 31536000; // years
     if (interval > 1) {

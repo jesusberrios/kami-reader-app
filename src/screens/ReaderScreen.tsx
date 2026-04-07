@@ -45,6 +45,7 @@ const PROGRESS_SAVE_DEBOUNCE_MS = 900;
 const RESUME_SCROLL_DELAY_MS = 180;
 const CHAPTER_PREFETCH_AHEAD = 1;
 const VERTICAL_END_THRESHOLD_PX = 48;
+const MIN_VERTICAL_SCROLL_TO_ARM_ADVANCE_PX = 72;
 
 const AD_UNIT_ID = __DEV__ ? TestIds.BANNER : 'ca-app-pub-6584977537844104/1888694522';
 MobileAds().initialize();
@@ -89,7 +90,13 @@ const fetchJsonWithTimeout = async (url: string, timeoutMs = REQUEST_TIMEOUT_MS)
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
     try {
         const res = await fetch(url, { signal: controller.signal });
-        if (!res.ok) throw new Error(`Error HTTP: ${res.status}`);
+        if (!res.ok) {
+            const status = Number(res.status || 0);
+            if (status === 404) throw new Error('No se encontro el capitulo o las imagenes ya no estan disponibles.');
+            if (status === 429) throw new Error('Demasiadas solicitudes. Intenta nuevamente en unos segundos.');
+            if (status >= 500) throw new Error('El servidor esta tardando en responder. Intenta nuevamente.');
+            throw new Error(`Error HTTP: ${status}`);
+        }
         return await res.json();
     } catch (error: any) {
         if (error?.name === 'AbortError') {
@@ -265,6 +272,7 @@ const ReaderScreen = () => {
     const [hudLocked, setHudLocked] = useState(false);
     const [prevChapterRefreshing, setPrevChapterRefreshing] = useState(false);
     const [currentChapterMeta, setCurrentChapterMeta] = useState<ChapterMeta | null>(null);
+    const [chapterLoadError, setChapterLoadError] = useState('');
 
     const flashListRef = useRef<any>(null);
     const controlsOpacity = useRef(new Animated.Value(1)).current;
@@ -279,6 +287,7 @@ const ReaderScreen = () => {
     const isReaderFocusedRef = useRef(false);
     const appStateRef = useRef<AppStateStatus>(AppState.currentState);
     const currentVisibleImageIndexRef = useRef(0);
+    const currentMaxVisibleImageIndexRef = useRef(0);
     const currentScrollOffsetRef = useRef(0);
     const pendingResumeIndexRef = useRef<number | null>(null);
     const pendingResumeOffsetRef = useRef<number | null>(null);
@@ -289,6 +298,7 @@ const ReaderScreen = () => {
     const chapterBundleCacheRef = useRef<Map<string, ChapterBundle>>(new Map());
     const sessionChapterProgressRef = useRef<Map<string, SavedReadingPosition>>(new Map());
     const verticalAdvanceTriggeredRef = useRef(false);
+    const verticalAutoAdvanceArmedRef = useRef(false);
 
     const parsed = useMemo(() => parseComposite(currentCompositeSlug), [currentCompositeSlug]);
 
@@ -636,6 +646,7 @@ const ReaderScreen = () => {
 
         const cachedBundle = chapterBundleCacheRef.current.get(currentCompositeSlug);
         setLoadingChapter(!cachedBundle);
+        setChapterLoadError('');
         setImages([]);
         setCurrentChapterMeta(null);
 
@@ -749,17 +760,21 @@ const ReaderScreen = () => {
             currentVisibleImageIndexRef.current = resumePosition
                 ? Math.max(0, Math.min(resumePosition.imageIndex, imgs.length - 1))
                 : 0;
+            currentMaxVisibleImageIndexRef.current = currentVisibleImageIndexRef.current;
             currentScrollOffsetRef.current = resumePosition?.scrollOffset || 0;
             pendingResumeIndexRef.current = currentVisibleImageIndexRef.current;
             pendingResumeOffsetRef.current = typeof resumePosition?.scrollOffset === 'number' ? resumePosition.scrollOffset : null;
             lastSavedProgressKeyRef.current = '';
             verticalAdvanceTriggeredRef.current = false;
+            verticalAutoAdvanceArmedRef.current = false;
             prefetchImages(imgs, INITIAL_IMAGE_WARM_COUNT);
             prefetchAdjacentChapters(bundle).catch(() => {
                 // ignore background prefetch errors
             });
         } catch (error: any) {
-            alertError(error.message || 'No se pudo cargar el capitulo.');
+            const message = error?.message || 'No se pudo cargar el capitulo.';
+            setChapterLoadError(message);
+            alertError(message);
         } finally {
             setLoadingChapter(false);
         }
@@ -854,6 +869,7 @@ const ReaderScreen = () => {
         if (chapterChangeMode !== 'vertical') return;
         if (loadingChapter) return;
         if (!nextCompositeSlug) return;
+        if (!verticalAutoAdvanceArmedRef.current) return;
         if (chapterSwitchInProgressRef.current) return;
         if (verticalAdvanceTriggeredRef.current) return;
 
@@ -885,7 +901,18 @@ const ReaderScreen = () => {
     useEffect(() => {
         chapterSwitchInProgressRef.current = false;
         setPrevChapterRefreshing(false);
+        verticalAutoAdvanceArmedRef.current = false;
     }, [currentCompositeSlug]);
+
+    const handleReaderScrollBeginDrag = useCallback(() => {
+        if (!hudLocked) {
+            showAndResetControls();
+        }
+
+        if (chapterChangeMode === 'vertical') {
+            verticalAutoAdvanceArmedRef.current = true;
+        }
+    }, [chapterChangeMode, hudLocked, showAndResetControls]);
 
     const renderImageItem = useCallback(({ item, index }: { item: ReaderImage; index: number }) => {
         return <ReaderImageItem item={item} index={index} />;
@@ -908,6 +935,7 @@ const ReaderScreen = () => {
         }
 
         if (maxVisibleIndex >= 0) {
+            currentMaxVisibleImageIndexRef.current = maxVisibleIndex;
             prefetchImages(imagesRef.current, maxVisibleIndex + 1);
         }
     }).current;
@@ -919,12 +947,17 @@ const ReaderScreen = () => {
 
         currentScrollOffsetRef.current = Math.max(0, offsetY);
 
+        if (chapterChangeMode === 'vertical' && offsetY > MIN_VERTICAL_SCROLL_TO_ARM_ADVANCE_PX) {
+            verticalAutoAdvanceArmedRef.current = true;
+        }
+
         if (chapterChangeMode !== 'vertical' || loadingChapter || !nextCompositeSlug || chapterSwitchInProgressRef.current) {
             return;
         }
 
         const distanceToEnd = contentHeight - (offsetY + layoutHeight);
-        if (distanceToEnd <= VERTICAL_END_THRESHOLD_PX && maxSafeIndex(imagesRef.current.length - 1) === currentVisibleImageIndexRef.current) {
+        const lastVisibleIndex = Math.max(0, imagesRef.current.length - 1);
+        if (distanceToEnd <= VERTICAL_END_THRESHOLD_PX && currentMaxVisibleImageIndexRef.current >= lastVisibleIndex) {
             handleVerticalEndReached();
             return;
         }
@@ -933,8 +966,6 @@ const ReaderScreen = () => {
             verticalAdvanceTriggeredRef.current = false;
         }
     }, [chapterChangeMode, handleVerticalEndReached, loadingChapter, nextCompositeSlug]);
-
-    const maxSafeIndex = (value: number) => Math.max(0, value);
 
     return (
         <View style={styles.container}>
@@ -959,6 +990,19 @@ const ReaderScreen = () => {
                 </View>
             )}
 
+            {!!chapterLoadError && !loadingChapter && (
+                <View style={styles.errorOverlay}>
+                    <View style={styles.errorCard}>
+                        <Ionicons name="warning-outline" size={26} color="#FFD166" />
+                        <Text style={styles.errorTitle}>No se pudo cargar el capitulo</Text>
+                        <Text style={styles.errorMessage}>{chapterLoadError}</Text>
+                        <TouchableOpacity style={styles.errorRetryButton} onPress={loadChapterData} activeOpacity={0.85}>
+                            <Text style={styles.errorRetryText}>Reintentar</Text>
+                        </TouchableOpacity>
+                    </View>
+                </View>
+            )}
+
             {chapterChangeMode === 'horizontal' ? (
                 <FlingGestureHandler direction={Directions.LEFT} onHandlerStateChange={handleSwipeLeft}>
                     <FlingGestureHandler direction={Directions.RIGHT} onHandlerStateChange={handleSwipeRight}>
@@ -971,7 +1015,7 @@ const ReaderScreen = () => {
                                 renderItem={renderImageItem}
                                 showsVerticalScrollIndicator={false}
                                 removeClippedSubviews={true}
-                                onScrollBeginDrag={hudLocked ? undefined : showAndResetControls}
+                                onScrollBeginDrag={handleReaderScrollBeginDrag}
                                 onMomentumScrollBegin={hudLocked ? undefined : showAndResetControls}
                                 drawDistance={screenHeight * 1.15}
                                 getItemType={() => 0}
@@ -995,7 +1039,7 @@ const ReaderScreen = () => {
                         renderItem={renderImageItem}
                         showsVerticalScrollIndicator={false}
                         removeClippedSubviews={true}
-                        onScrollBeginDrag={hudLocked ? undefined : showAndResetControls}
+                        onScrollBeginDrag={handleReaderScrollBeginDrag}
                         onMomentumScrollBegin={hudLocked ? undefined : showAndResetControls}
                         drawDistance={screenHeight * 1.15}
                         getItemType={() => 0}
@@ -1003,6 +1047,8 @@ const ReaderScreen = () => {
                         maintainVisibleContentPosition={{ disabled: true }}
                         onViewableItemsChanged={handleViewableItemsChanged}
                         onScroll={handleScroll}
+                        onEndReached={handleVerticalEndReached}
+                        onEndReachedThreshold={0.01}
                         viewabilityConfig={{ itemVisiblePercentThreshold: 10 }}
                         scrollEventThrottle={16}
                         refreshControl={
@@ -1101,6 +1147,50 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         alignItems: 'center',
         zIndex: 20,
+    },
+    errorOverlay: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: 'rgba(0,0,0,0.62)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        zIndex: 21,
+        paddingHorizontal: 20,
+    },
+    errorCard: {
+        width: '100%',
+        maxWidth: 420,
+        borderRadius: 14,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.16)',
+        backgroundColor: 'rgba(20,20,20,0.94)',
+        alignItems: 'center',
+        paddingHorizontal: 16,
+        paddingVertical: 18,
+        gap: 8,
+    },
+    errorTitle: {
+        color: '#FFFFFF',
+        fontSize: 16,
+        fontWeight: '700',
+        textAlign: 'center',
+    },
+    errorMessage: {
+        color: 'rgba(255,255,255,0.82)',
+        fontSize: 13,
+        lineHeight: 18,
+        textAlign: 'center',
+    },
+    errorRetryButton: {
+        marginTop: 6,
+        backgroundColor: '#FF5555',
+        borderRadius: 10,
+        paddingHorizontal: 16,
+        paddingVertical: 10,
+    },
+    errorRetryText: {
+        color: '#FFFFFF',
+        fontSize: 14,
+        fontWeight: '700',
     },
     bannerContainer: {
         position: 'absolute',

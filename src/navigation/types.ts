@@ -8,7 +8,7 @@ export type RootStackParamList = {
     Details: { slug: string };
     Reader: { hid: string; resumeFromProgress?: boolean };
     News: undefined;
-    NewsDetail: { newsItem: { id: string; title: string; message: string; createdAt?: any } };
+    NewsDetail: { newsItem: { id: string; title: string; message: string; createdAt?: any; date?: any; isNew?: boolean } };
     Payment: undefined;
     Profile: { userId?: string }; // Añade userId como parámetro opcional
     AddFriends: undefined;
