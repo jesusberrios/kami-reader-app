@@ -14,7 +14,7 @@
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
   Descarga directa (última versión):
-  https://github.com/jesusberrios/kami-reader-app/releases/download/1.1.2/kamireader-1.1.2-release.apk
+  https://github.com/jesusberrios/kami-reader-app/releases/download/1.1.2/kamireader-1.1.2-pre-release.apk
 
   Todas las versiones:
   https://github.com/jesusberrios/kami-reader-app/releases
