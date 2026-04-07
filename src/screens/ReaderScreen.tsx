@@ -19,7 +19,6 @@ import { RootStackParamList } from '../navigation/types';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
-import { Image } from 'expo-image';
 import { FlashList } from '@shopify/flash-list';
 import { BannerAd, BannerAdSize, MobileAds, TestIds } from 'react-native-google-mobile-ads';
 import { FlingGestureHandler, Directions, State } from 'react-native-gesture-handler';
@@ -37,15 +36,14 @@ const { width: screenWidth } = Dimensions.get('window');
 const { height: screenHeight } = Dimensions.get('window');
 const REQUEST_TIMEOUT_MS = 8000;
 const AUTO_HIDE_DELAY = 4500;
-const IMAGE_PREFETCH_WINDOW = 6;
-const INITIAL_IMAGE_WARM_COUNT = 7;
 const READING_SYNC_INTERVAL_MS = 60000;
 const MIN_READING_SYNC_MS = 10000;
 const PROGRESS_SAVE_DEBOUNCE_MS = 900;
 const RESUME_SCROLL_DELAY_MS = 180;
-const CHAPTER_PREFETCH_AHEAD = 1;
 const VERTICAL_END_THRESHOLD_PX = 48;
 const MIN_VERTICAL_SCROLL_TO_ARM_ADVANCE_PX = 72;
+const HUGE_BITMAP_PIXEL_THRESHOLD = 18_000_000;
+const MAX_CHAPTER_BUNDLE_CACHE = 18;
 
 const AD_UNIT_ID = __DEV__ ? TestIds.BANNER : 'ca-app-pub-6584977537844104/1888694522';
 MobileAds().initialize();
@@ -173,77 +171,66 @@ const parseComposite = (compositeSlug: string) => {
     };
 };
 
-const ReaderImageItem = React.memo(({ item, index }: { item: ReaderImage; index: number }) => {
+const trimChapterBundleCache = (cache: Map<string, ChapterBundle>) => {
+    if (cache.size <= MAX_CHAPTER_BUNDLE_CACHE) return;
+    const overflow = cache.size - MAX_CHAPTER_BUNDLE_CACHE;
+    const keys = cache.keys();
+    for (let i = 0; i < overflow; i += 1) {
+        const next = keys.next();
+        if (next.done) break;
+        cache.delete(next.value);
+    }
+};
+
+const ReaderImageItem = React.memo(({ item }: { item: ReaderImage; index: number }) => {
     const initialRatio = useMemo(() => {
         if (item.hasIntrinsicSize && item.w > 0 && item.h > 0) {
             return item.h / item.w;
         }
-        return null;
+        // Deterministic fallback ratio to avoid runtime relayout jitter/crashes.
+        return 1.45;
     }, [item.hasIntrinsicSize, item.w, item.h]);
-    const [ratio, setRatio] = useState<number | null>(initialRatio);
-    const height = useMemo(() => {
-        if (!ratio || !Number.isFinite(ratio) || ratio <= 0) {
-            return 24;
-        }
-        return Math.max(1, screenWidth * ratio);
-    }, [ratio]);
-    const adjustedRatioRef = useRef(false);
+    const [ratio, setRatio] = useState(initialRatio);
 
     useEffect(() => {
         setRatio(initialRatio);
-        adjustedRatioRef.current = false;
+    }, [initialRatio, item.url]);
 
-        if (item.hasIntrinsicSize) {
-            return;
-        }
-
-        let active = true;
-        RNImage.getSize(
-            item.url,
-            (loadedWidth, loadedHeight) => {
-                if (!active) return;
-                if (loadedWidth <= 0 || loadedHeight <= 0) return;
-
-                adjustedRatioRef.current = true;
-                setRatio(loadedHeight / loadedWidth);
-            },
-            () => {
-                // Leave the minimal placeholder height until expo-image reports dimensions.
-            }
-        );
-
-        return () => {
-            active = false;
-        };
-    }, [item.url, initialRatio, item.hasIntrinsicSize]);
-
-    const handleImageLoad = useCallback((event: any) => {
+    const handleLoad = useCallback((event: any) => {
         if (item.hasIntrinsicSize) return;
-        if (adjustedRatioRef.current) return;
+        const w = Number(event?.nativeEvent?.source?.width || 0);
+        const h = Number(event?.nativeEvent?.source?.height || 0);
+        if (w <= 0 || h <= 0) return;
 
-        const loadedWidth = Number(event?.source?.width || 0);
-        const loadedHeight = Number(event?.source?.height || 0);
-        if (loadedWidth <= 0 || loadedHeight <= 0) return;
-
-        const loadedRatio = loadedHeight / loadedWidth;
-        // Avoid frequent relayouts while scrolling; only correct if clearly off.
-        if (!ratio || Math.abs(loadedRatio - ratio) > 0.02) {
+        const loadedRatio = h / w;
+        if (!Number.isFinite(loadedRatio) || loadedRatio <= 0) return;
+        if (Math.abs(loadedRatio - ratio) > 0.02) {
             setRatio(loadedRatio);
-            adjustedRatioRef.current = true;
         }
     }, [item.hasIntrinsicSize, ratio]);
 
+    const height = useMemo(() => {
+        if (!Number.isFinite(ratio) || ratio <= 0) {
+            return Math.round(screenWidth * 1.45);
+        }
+        return Math.max(1, Math.round(screenWidth * ratio));
+    }, [ratio]);
+
+    const shouldForceResize = useMemo(() => {
+        if (!item.hasIntrinsicSize) return false;
+        const pixels = Math.max(0, Number(item.w || 0)) * Math.max(0, Number(item.h || 0));
+        return pixels >= HUGE_BITMAP_PIXEL_THRESHOLD;
+    }, [item.hasIntrinsicSize, item.w, item.h]);
+
     return (
         <View style={styles.imageContainer}>
-            <Image
+            <RNImage
                 source={{ uri: item.url }}
                 style={{ width: screenWidth, height }}
-                contentFit="cover"
-                transition={0}
-                cachePolicy="memory-disk"
-                recyclingKey={item.url}
-                priority={index < 4 ? 'high' : 'normal'}
-                onLoad={handleImageLoad}
+                resizeMode="contain"
+                resizeMethod={shouldForceResize ? 'resize' : 'none'}
+                fadeDuration={0}
+                onLoad={handleLoad}
             />
         </View>
     );
@@ -277,10 +264,7 @@ const ReaderScreen = () => {
     const flashListRef = useRef<any>(null);
     const controlsOpacity = useRef(new Animated.Value(1)).current;
     const autoHideTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const prefetchedUrlsRef = useRef<Set<string>>(new Set());
     const imagesRef = useRef<ReaderImage[]>([]);
-    const prefetchInFlightRef = useRef(false);
-    const lastPrefetchStartRef = useRef(-1);
     const chapterSwitchInProgressRef = useRef(false);
     const readingSessionStartedAtRef = useRef<number | null>(null);
     const readingSyncIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -296,6 +280,7 @@ const ReaderScreen = () => {
     const lastSavedProgressKeyRef = useRef('');
     const mangaDataCacheRef = useRef<any | null>(null);
     const chapterBundleCacheRef = useRef<Map<string, ChapterBundle>>(new Map());
+    const loadRequestIdRef = useRef(0);
     const sessionChapterProgressRef = useRef<Map<string, SavedReadingPosition>>(new Map());
     const verticalAdvanceTriggeredRef = useRef(false);
     const verticalAutoAdvanceArmedRef = useRef(false);
@@ -305,17 +290,6 @@ const ReaderScreen = () => {
     useEffect(() => {
         imagesRef.current = images;
     }, [images]);
-
-    const warmImageUrls = useCallback(async (urls: string[]) => {
-        const pending = urls.filter(Boolean).filter((url) => {
-            if (prefetchedUrlsRef.current.has(url)) return false;
-            prefetchedUrlsRef.current.add(url);
-            return true;
-        });
-
-        if (!pending.length) return;
-        await Promise.all(pending.map((url) => Image.prefetch(url)));
-    }, []);
 
     const getMangaData = useCallback(async () => {
         if (mangaDataCacheRef.current) {
@@ -395,26 +369,9 @@ const ReaderScreen = () => {
         }
 
         chapterBundleCacheRef.current.set(normalizedCompositeSlug, bundle);
+        trimChapterBundleCache(chapterBundleCacheRef.current);
         return bundle;
     }, [buildChapterBundle, getMangaData]);
-
-    const prefetchAdjacentChapters = useCallback(async (bundle: ChapterBundle) => {
-        const compositesToPrefetch = [bundle.nextCompositeSlug, bundle.prevCompositeSlug]
-            .filter(Boolean)
-            .slice(0, CHAPTER_PREFETCH_AHEAD * 2) as string[];
-
-        await Promise.all(compositesToPrefetch.map(async (compositeSlug) => {
-            if (chapterBundleCacheRef.current.has(compositeSlug)) {
-                return;
-            }
-            try {
-                const prefetchedBundle = await fetchChapterBundle(compositeSlug);
-                await warmImageUrls(prefetchedBundle.images.slice(0, 3).map((img) => img.url));
-            } catch {
-                // ignore prefetch errors
-            }
-        }));
-    }, [fetchChapterBundle, warmImageUrls]);
 
     const persistReadingPosition = useCallback(async (imageIndex?: number) => {
         const user = auth.currentUser;
@@ -610,54 +567,24 @@ const ReaderScreen = () => {
         fetchUserReaderSettings();
     }, []);
 
-    const prefetchImages = useCallback(async (imageList: ReaderImage[], startIndex: number, count: number = IMAGE_PREFETCH_WINDOW) => {
-        if (prefetchInFlightRef.current) return;
-        if (startIndex <= lastPrefetchStartRef.current) return;
-
-        const batch = imageList.slice(startIndex, startIndex + count);
-        const pending = batch
-            .map((img) => img.url)
-            .filter((url) => {
-                if (prefetchedUrlsRef.current.has(url)) return false;
-                prefetchedUrlsRef.current.add(url);
-                return true;
-            });
-
-        if (!pending.length) {
-            lastPrefetchStartRef.current = startIndex;
-            return;
-        }
-
-        prefetchInFlightRef.current = true;
-        try {
-            await Promise.all(pending.map((url) => Image.prefetch(url)));
-            lastPrefetchStartRef.current = startIndex;
-        } finally {
-            prefetchInFlightRef.current = false;
-        }
-    }, []);
-
     const loadChapterData = useCallback(async () => {
+        const requestId = ++loadRequestIdRef.current;
         if (!parsed.mangaSlug || !parsed.chapterSlug) {
             alertError('Slug de capitulo invalido.');
             setLoadingChapter(false);
             return;
         }
 
-        const cachedBundle = chapterBundleCacheRef.current.get(currentCompositeSlug);
-        setLoadingChapter(!cachedBundle);
+        const cachedBundle = chapterBundleCacheRef.current.get(currentCompositeSlug) || null;
+        setLoadingChapter(true);
         setChapterLoadError('');
-        setImages([]);
-        setCurrentChapterMeta(null);
 
         try {
             const bundle = cachedBundle || await fetchChapterBundle(currentCompositeSlug);
             const mangaData = await getMangaData();
+            if (requestId !== loadRequestIdRef.current) return;
             const imgs = bundle.images;
 
-            prefetchedUrlsRef.current.clear();
-            lastPrefetchStartRef.current = -1;
-            await warmImageUrls(imgs.slice(0, INITIAL_IMAGE_WARM_COUNT).map((img) => img.url));
             let resumePosition: SavedReadingPosition | null = null;
             const sessionProgress = sessionChapterProgressRef.current.get(currentCompositeSlug) || null;
 
@@ -745,6 +672,8 @@ const ReaderScreen = () => {
                 }
             }
 
+            if (requestId !== loadRequestIdRef.current) return;
+
             setChapterTitle(bundle.chapterTitle);
             setCurrentChapterMeta(bundle.currentChapter ? {
                 slug: bundle.currentChapter.slug,
@@ -767,21 +696,24 @@ const ReaderScreen = () => {
             lastSavedProgressKeyRef.current = '';
             verticalAdvanceTriggeredRef.current = false;
             verticalAutoAdvanceArmedRef.current = false;
-            prefetchImages(imgs, INITIAL_IMAGE_WARM_COUNT);
-            prefetchAdjacentChapters(bundle).catch(() => {
-                // ignore background prefetch errors
-            });
         } catch (error: any) {
+            if (requestId !== loadRequestIdRef.current) return;
             const message = error?.message || 'No se pudo cargar el capitulo.';
             setChapterLoadError(message);
             alertError(message);
         } finally {
-            setLoadingChapter(false);
+            if (requestId === loadRequestIdRef.current) {
+                setLoadingChapter(false);
+            }
         }
-    }, [alertError, currentCompositeSlug, fetchChapterBundle, getMangaData, parsed.mangaSlug, prefetchAdjacentChapters, prefetchImages, plan, warmImageUrls]);
+    }, [alertError, currentCompositeSlug, fetchChapterBundle, getMangaData, parsed.mangaSlug, plan]);
 
     useEffect(() => {
         loadChapterData();
+        return () => {
+            // Invalidate pending chapter loads on unmount/slug change.
+            loadRequestIdRef.current += 1;
+        };
     }, [loadChapterData]);
 
     const resetAutoHide = useCallback(() => {
@@ -839,8 +771,10 @@ const ReaderScreen = () => {
         return () => clearTimeout(timeoutId);
     }, [images, loadingChapter]);
 
-    const changeChapter = (compositeSlug: string | null) => {
+    const changeChapter = useCallback((compositeSlug: string | null) => {
         if (!compositeSlug) return;
+        const normalized = normalizeCompositeSlug(compositeSlug);
+        if (!normalized || normalized === currentCompositeSlug) return;
         if (progressSaveTimeoutRef.current) {
             clearTimeout(progressSaveTimeoutRef.current);
             progressSaveTimeoutRef.current = null;
@@ -848,8 +782,8 @@ const ReaderScreen = () => {
         persistReadingPosition(currentVisibleImageIndexRef.current).catch(() => {
             // silently ignored to avoid interrupting reading
         });
-        setCurrentCompositeSlug(normalizeCompositeSlug(compositeSlug));
-    };
+        setCurrentCompositeSlug(normalized);
+    }, [currentCompositeSlug, persistReadingPosition]);
 
     const handleSwipeLeft = useCallback(({ nativeEvent }: any) => {
         if (nativeEvent.state === State.END) {
@@ -936,7 +870,6 @@ const ReaderScreen = () => {
 
         if (maxVisibleIndex >= 0) {
             currentMaxVisibleImageIndexRef.current = maxVisibleIndex;
-            prefetchImages(imagesRef.current, maxVisibleIndex + 1);
         }
     }).current;
 
