@@ -552,11 +552,11 @@ const AuthScreen = () => {
                             <View style={styles.footer}>
                                 <Text style={styles.footerText}>
                                     Al continuar, aceptas nuestros
-                                    <TouchableOpacity onPress={() => openExternalLink('https://example.com/terms-of-service')}>
+                                    <TouchableOpacity onPress={() => openExternalLink('https://suki-s-soft.github.io/sukisoft-web/kami-reader-terminos.html')}>
                                         <Text style={styles.link}> Términos de servicio</Text>
                                     </TouchableOpacity>
                                     y
-                                    <TouchableOpacity onPress={() => openExternalLink('https://example.com/privacy-policy')}>
+                                    <TouchableOpacity onPress={() => openExternalLink('https://suki-s-soft.github.io/sukisoft-web/kami-reader-privacidad.html')}>
                                         <Text style={styles.link}> Política de privacidad</Text>
                                     </TouchableOpacity>
                                 </Text>
