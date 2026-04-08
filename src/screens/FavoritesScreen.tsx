@@ -124,8 +124,10 @@ export default function FavoritesScreen() {
     }, [navigation]);
 
     const handleAuthNavigation = useCallback(() => {
-        navigation.navigate('Auth');
-    }, [navigation]);
+        auth.signOut().catch(() => {
+            // ignore: auth state listener will redirect when needed
+        });
+    }, []);
 
     const handleLibraryNavigation = useCallback(() => {
         navigation.navigate('Library');

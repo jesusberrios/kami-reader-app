@@ -12,6 +12,8 @@ import {
     RefreshControl,
     ScrollView,
     Linking,
+    AppState,
+    AppStateStatus,
 } from 'react-native';
 import { collection, doc, getDoc, getDocs } from 'firebase/firestore'; // Removed query, where as they are not needed for this subcollection fetch
 import { db } from '../firebase/config';
@@ -46,6 +48,7 @@ const APP_IDS = {
     android: 'com.yourusername.kamireader' // Asegúrate de cambiar esto por el ID de tu paquete Android
 };
 const DONATION_URL = process.env.EXPO_PUBLIC_DONATION_URL || 'https://ko-fi.com/sukisoft';
+const HOME_LATEST_AUTO_REFRESH_MS = 45 * 1000;
 
 const getStatusLabel = (value?: string, fallbackLabel?: string) => {
     const raw = String(value || '').toLowerCase();
@@ -138,6 +141,8 @@ const HomeScreen = ({ navigation }: any) => {
     // Refs and hooks
     const headerRef = useRef<View>(null);
     const isMounted = useRef(true);
+    const appStateRef = useRef<AppStateStatus>(AppState.currentState);
+    const latestAutoRefreshIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
     // Version check
     const checkAppVersion = useCallback(async () => {
@@ -358,25 +363,31 @@ const HomeScreen = ({ navigation }: any) => {
         }
     }, []);
 
-    const fetchLatestMangas = useCallback(async (options?: { forceRefresh?: boolean }) => {
-        setLatestLoading(true);
+    const fetchLatestMangas = useCallback(async (options?: { forceRefresh?: boolean; silent?: boolean }) => {
+        const silent = options?.silent === true;
+        if (!silent) setLatestLoading(true);
         try {
-            const res = await getLatestManga({ page: 1, limit: 24 }, {
+            const res = await getLatestManga({ page: 1, limit: 10 }, {
                 ttlMs: 60 * 1000,
                 forceRefresh: options?.forceRefresh === true,
             });
             
             if (isMounted.current && Array.isArray(res?.results)) {
-                setLatestMangas(res.results);
+                setLatestMangas(res.results.slice(0, 10));
             }
         } catch (error) {
             if (isMounted.current) {
                 setHomeNotice('La seccion de recientes esta temporalmente no disponible.');
             }
         } finally {
-            if (isMounted.current) setLatestLoading(false);
+            if (isMounted.current && !silent) setLatestLoading(false);
         }
     }, []);
+
+    const refreshLatestInBackground = useCallback(() => {
+        if (!isMounted.current) return;
+        fetchLatestMangas({ forceRefresh: true, silent: true });
+    }, [fetchLatestMangas]);
 
     // Función para cargar los datos iniciales (noticias, plan, cómics)
     const loadInitialData = useCallback(async () => {
@@ -404,6 +415,48 @@ const HomeScreen = ({ navigation }: any) => {
             isMounted.current = false;
         };
     }, [checkAppVersion, loadInitialData]);
+
+    useEffect(() => {
+        const startPolling = () => {
+            if (latestAutoRefreshIntervalRef.current) return;
+            latestAutoRefreshIntervalRef.current = setInterval(() => {
+                if (appStateRef.current !== 'active') return;
+                refreshLatestInBackground();
+            }, HOME_LATEST_AUTO_REFRESH_MS);
+        };
+
+        const stopPolling = () => {
+            if (!latestAutoRefreshIntervalRef.current) return;
+            clearInterval(latestAutoRefreshIntervalRef.current);
+            latestAutoRefreshIntervalRef.current = null;
+        };
+
+        const subscription = AppState.addEventListener('change', (nextState) => {
+            const prevState = appStateRef.current;
+            appStateRef.current = nextState;
+
+            if (nextState === 'active') {
+                startPolling();
+                if (prevState !== 'active') {
+                    refreshLatestInBackground();
+                }
+                return;
+            }
+
+            if (nextState.match(/inactive|background/)) {
+                stopPolling();
+            }
+        });
+
+        if (appStateRef.current === 'active') {
+            startPolling();
+        }
+
+        return () => {
+            subscription.remove();
+            stopPolling();
+        };
+    }, [refreshLatestInBackground]);
 
     useEffect(() => {
         if (!loading && isMounted.current) {

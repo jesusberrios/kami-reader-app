@@ -130,7 +130,7 @@ const UserItem = React.memo(({
 });
 
 const FriendsScreen = () => {
-    const { theme } = usePersonalization();
+    const { theme, settings } = usePersonalization();
     const navigation = useNavigation();
     const insets = useSafeAreaInsets();
     const isFocused = useIsFocused();
@@ -224,6 +224,10 @@ const FriendsScreen = () => {
             activeTab === 'sent' ? sentRequests :
                 receivedRequests;
     }, [searchQuery, searchResults, activeTab, friends, sentRequests, receivedRequests]);
+
+    const totalUnreadFromFriends = useMemo(() => {
+        return friends.reduce((acc, user) => acc + Number(user.unreadCount || 0), 0);
+    }, [friends]);
 
     // Cargar datos de amigos
     const loadFriendsData = useCallback(async () => {
@@ -365,10 +369,10 @@ const FriendsScreen = () => {
                 setSearchResults([]);
                 setIsSearching(false);
             }
-        }, 500);
+        }, settings.reduceMotion ? 650 : 450);
 
         return () => clearTimeout(handler);
-    }, [searchQuery, searchUsers]);
+    }, [searchQuery, searchUsers, settings.reduceMotion]);
 
     // Listeners en tiempo real
     useEffect(() => {
@@ -627,6 +631,11 @@ const FriendsScreen = () => {
                                         tab === 'received' ? `Recibidas (${receivedRequests.length})` :
                                             `Enviadas (${sentRequests.length})`}
                                 </Text>
+                                {tab === 'friends' && totalUnreadFromFriends > 0 && (
+                                    <View style={[styles.tabUnreadOrb, { backgroundColor: theme.accent, shadowColor: theme.accent }]}>
+                                        <Text style={styles.tabUnreadText}>{totalUnreadFromFriends > 99 ? '99+' : totalUnreadFromFriends}</Text>
+                                    </View>
+                                )}
                             </TouchableOpacity>
                         ))}
                     </View>
@@ -646,14 +655,20 @@ const FriendsScreen = () => {
                         />
                     }
                     ListEmptyComponent={renderEmptyList}
-                    initialNumToRender={10}
-                    maxToRenderPerBatch={5}
-                    windowSize={5}
+                    initialNumToRender={settings.reduceMotion ? 8 : 10}
+                    maxToRenderPerBatch={settings.reduceMotion ? 4 : 5}
+                    windowSize={settings.reduceMotion ? 4 : 5}
+                    removeClippedSubviews={true}
+                    updateCellsBatchingPeriod={settings.reduceMotion ? 90 : 50}
                 />
 
                 {/* Menú contextual */}
                 {menuVisible && (
-                    <Modal transparent animationType="fade" onRequestClose={() => setMenuVisible(false)}>
+                    <Modal
+                        transparent
+                        animationType={settings.reduceMotion ? 'none' : 'fade'}
+                        onRequestClose={() => setMenuVisible(false)}
+                    >
                         <Pressable style={styles.menuOverlay} onPress={() => setMenuVisible(false)}>
                             <View style={[styles.menuContainer, { top: menuPosition.y, left: menuPosition.x, backgroundColor: theme.card, borderColor: theme.border }]}>
                                 <TouchableOpacity style={styles.menuItem} onPress={handleViewProfile}>
@@ -756,6 +771,27 @@ const styles = StyleSheet.create({
         fontSize: 12,
         fontWeight: 'bold',
         marginLeft: 6,
+        fontFamily: 'Roboto-Bold',
+    },
+    tabUnreadOrb: {
+        position: 'absolute',
+        top: 4,
+        right: 10,
+        minWidth: 18,
+        height: 18,
+        borderRadius: 9,
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: 4,
+        shadowOpacity: 0.4,
+        shadowRadius: 5,
+        shadowOffset: { width: 0, height: 2 },
+        elevation: 3,
+    },
+    tabUnreadText: {
+        color: '#FFF',
+        fontSize: 10,
+        fontWeight: '700',
         fontFamily: 'Roboto-Bold',
     },
     activeTabText: {

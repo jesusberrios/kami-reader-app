@@ -13,7 +13,6 @@ import {
     Dimensions,
     ScrollView,
     Modal,
-    SafeAreaView,
     Linking,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native/';
@@ -24,7 +23,7 @@ import { doc, getDoc, setDoc } from 'firebase/firestore';
 import AuthService from '../services/auth.service';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import UpdateRequiredModal from '../components/updateRequiredModal';
 import { getAppVersion } from '../utils/versionUtils';
 import { User } from 'firebase/auth';

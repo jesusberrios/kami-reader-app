@@ -116,6 +116,7 @@ const ASIAN_STICKERS = {
 
 const STICKER_CATEGORIES = Object.keys(ASIAN_STICKERS);
 const SUPPORT_EMAIL = 'sukisoft.soporte@gmail.com';
+const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send';
 
 // Componente para stickers
 const StickerItem = ({ sticker }: { sticker: string }) => {
@@ -204,7 +205,7 @@ const ChatScreen = () => {
 
     const currentUser = auth.currentUser;
     const { alertError, alertConfirm } = useAlertContext();
-    const { theme } = usePersonalization();
+    const { theme, settings } = usePersonalization();
 
     // Memoizar el ID del chat
     const chatId = useMemo(() => {
@@ -470,6 +471,35 @@ const ChatScreen = () => {
         };
     }, [handleAppStateChange]);
 
+    const notifyRecipient = useCallback(async (messagePreview: string) => {
+        const pushToken = String(recipientInfo?.fcmToken || '').trim();
+        if (!pushToken) return;
+
+        try {
+            await fetch(EXPO_PUSH_URL, {
+                method: 'POST',
+                headers: {
+                    Accept: 'application/json',
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    to: pushToken,
+                    title: currentUser?.displayName || 'Nuevo mensaje',
+                    body: messagePreview,
+                    sound: 'default',
+                    priority: 'high',
+                    data: {
+                        type: 'chat',
+                        senderId: currentUser?.uid,
+                        recipientId,
+                    },
+                }),
+            });
+        } catch {
+            // silently ignored
+        }
+    }, [currentUser?.displayName, currentUser?.uid, recipientId, recipientInfo?.fcmToken]);
+
     // Función optimizada para enviar mensajes
     const sendMessage = useCallback(async (text?: string, sticker?: string) => {
         const messageContent = text || newMessage.trim();
@@ -525,6 +555,7 @@ const ChatScreen = () => {
             }, { merge: true });
 
             await batch.commit();
+            notifyRecipient(sticker ? 'Te envio un sticker' : lastMessage);
 
             if (!sticker) {
                 setNewMessage('');
@@ -536,7 +567,7 @@ const ChatScreen = () => {
         } finally {
             setSending(false);
         }
-    }, [newMessage, currentUser, sending, chatId, recipientId, alertError, recipientInfo, recipientName]);
+    }, [newMessage, currentUser, sending, chatId, recipientId, alertError, recipientInfo, recipientName, notifyRecipient]);
 
     // Enviar sticker
     const sendSticker = useCallback((sticker: string) => {
@@ -624,7 +655,7 @@ const ChatScreen = () => {
     ), [recipientInfo, recipientName, theme.text, theme.textMuted]);
 
     const stickerPickerComponent = useMemo(() => (
-        <Modal transparent animationType="slide" visible={stickerPickerVisible} onRequestClose={() => setStickerPickerVisible(false)}>
+        <Modal transparent animationType={settings.reduceMotion ? 'none' : 'slide'} visible={stickerPickerVisible} onRequestClose={() => setStickerPickerVisible(false)}>
             <View style={styles.stickerPickerContainer}>
                 <Pressable style={{ flex: 1 }} onPress={() => setStickerPickerVisible(false)} />
 
@@ -671,7 +702,7 @@ const ChatScreen = () => {
                 </View>
             </View>
         </Modal>
-    ), [stickerPickerVisible, selectedStickerCategory, renderSticker]);
+    ), [stickerPickerVisible, selectedStickerCategory, renderSticker, settings.reduceMotion]);
 
     if (loading) {
         return (
@@ -722,10 +753,11 @@ const ChatScreen = () => {
                     keyExtractor={keyExtractor}
                     contentContainerStyle={styles.messagesList}
                     showsVerticalScrollIndicator={false}
-                    initialNumToRender={20}
-                    maxToRenderPerBatch={10}
-                    windowSize={5}
+                    initialNumToRender={settings.reduceMotion ? 12 : 20}
+                    maxToRenderPerBatch={settings.reduceMotion ? 6 : 10}
+                    windowSize={settings.reduceMotion ? 4 : 5}
                     removeClippedSubviews={true}
+                    updateCellsBatchingPeriod={settings.reduceMotion ? 80 : 50}
                     ListEmptyComponent={emptyComponent}
                 />
 
@@ -750,7 +782,7 @@ const ChatScreen = () => {
                             value={newMessage}
                             onChangeText={(text) => {
                                 setNewMessage(text);
-                                handleTyping();
+                                if (!settings.reduceMotion) handleTyping();
                             }}
                             multiline
                             maxLength={500}
@@ -780,7 +812,7 @@ const ChatScreen = () => {
                 {stickerPickerComponent}
 
                 {menuVisible && (
-                    <Modal transparent animationType="fade" onRequestClose={() => setMenuVisible(false)}>
+                    <Modal transparent animationType={settings.reduceMotion ? 'none' : 'fade'} onRequestClose={() => setMenuVisible(false)}>
                         <Pressable style={styles.menuOverlay} onPress={() => setMenuVisible(false)}>
                             <View style={styles.menuContainer}>
                                 <TouchableOpacity

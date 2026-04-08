@@ -121,7 +121,7 @@ export function PersonalizationProvider({ children }: { children: React.ReactNod
     useEffect(() => {
         let mounted = true;
 
-        const loadSettings = async () => {
+        const loadSettingsForUser = async (currentUser: typeof auth.currentUser) => {
             try {
                 const localRaw = await AsyncStorage.getItem(STORAGE_KEY);
                 const localSettings = localRaw ? normalizeSettings(JSON.parse(localRaw)) : defaultSettings;
@@ -129,7 +129,6 @@ export function PersonalizationProvider({ children }: { children: React.ReactNod
                 if (!mounted) return;
                 setSettings(localSettings);
 
-                const currentUser = auth.currentUser;
                 if (!currentUser) {
                     setLoading(false);
                     return;
@@ -137,11 +136,15 @@ export function PersonalizationProvider({ children }: { children: React.ReactNod
 
                 const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
                 if (!userDoc.exists()) {
+                    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(localSettings));
                     setLoading(false);
                     return;
                 }
 
-                const remote = normalizeSettings(userDoc.data());
+                const remote = normalizeSettings({
+                    ...localSettings,
+                    ...userDoc.data(),
+                });
                 if (!mounted) return;
                 setSettings(remote);
                 await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(remote));
@@ -152,10 +155,14 @@ export function PersonalizationProvider({ children }: { children: React.ReactNod
             }
         };
 
-        loadSettings();
+        const unsubscribe = auth.onAuthStateChanged((user) => {
+            setLoading(true);
+            loadSettingsForUser(user);
+        });
 
         return () => {
             mounted = false;
+            unsubscribe();
         };
     }, []);
 

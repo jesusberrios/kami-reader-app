@@ -7,12 +7,11 @@ import {
     ActivityIndicator,
     FlatList,
     RefreshControl,
-    SafeAreaView,
     StatusBar,
     Platform,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { collection, getDocs } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { LinearGradient } from 'expo-linear-gradient';

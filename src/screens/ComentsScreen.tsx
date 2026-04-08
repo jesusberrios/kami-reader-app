@@ -9,7 +9,6 @@ import {
     ActivityIndicator,
     KeyboardAvoidingView,
     Platform,
-    SafeAreaView,
     StatusBar,
     Image,
     ListRenderItem
@@ -30,7 +29,7 @@ import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { usePersonalization } from '../contexts/PersonalizationContext';
 import { useNavigation, useRoute } from '@react-navigation/native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAlertContext } from '../contexts/AlertContext';
 
 interface UserData {

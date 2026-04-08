@@ -353,6 +353,7 @@ const DetailsScreen: React.FC = () => {
 
     const updateInProgress = useCallback(async (chapter: Chapter) => {
         if (!currentUserUid || !manga) return;
+        const safeChapterId = String(chapter.chapterSlug || chapter.slug || '').trim();
         const inProgressDocRef = doc(db, 'users', currentUserUid, 'inProgressManga', manga.slug);
         await setDoc(inProgressDocRef, {
             mangaTitle: manga.title,
@@ -360,7 +361,7 @@ const DetailsScreen: React.FC = () => {
             slug: manga.slug,
             source: manga.source,
             lastReadChapterHid: chapter.slug,
-            lastReadChapterSlug: chapter.slug,
+            lastReadChapterSlug: safeChapterId,
             lastReadChapterNumber: chapter.number || '',
             lastUpdated: serverTimestamp(),
             startedAt: serverTimestamp(),

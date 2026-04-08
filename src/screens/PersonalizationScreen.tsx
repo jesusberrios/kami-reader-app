@@ -162,7 +162,7 @@ export default function PersonalizationScreen() {
 
                     <View style={[styles.noteCard, { backgroundColor: theme.accentSoft, borderColor: theme.border }]}> 
                         <MaterialCommunityIcons name="palette-outline" size={20} color={theme.accent} />
-                        <Text style={[styles.noteText, { color: theme.textMuted }]}>Los cambios de tema, reducción de movimiento y modo compacto ya se aplican en navegación y biblioteca para que la personalización sea visible en el uso diario.</Text>
+                        <Text style={[styles.noteText, { color: theme.textMuted }]}>El tema se refleja en la app. Reducir animaciones y tarjetas compactas ya impactan la experiencia de Biblioteca y sirven como base para extender la personalización al resto de vistas.</Text>
                     </View>
                 </ScrollView>
             </SafeAreaView>

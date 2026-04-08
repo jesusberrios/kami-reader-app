@@ -21,6 +21,7 @@ type GlobalBottomBarProps = {
     currentRouteName?: string;
     visible: boolean;
     settingsActive?: boolean;
+    socialPendingCount?: number;
     onNavigate: (routeName: BottomRoute) => void;
     onOpenDrawer: () => void;
 };
@@ -32,7 +33,7 @@ const items = [
     { key: 'Profile' as const, label: 'Perfil', icon: 'account-circle-outline' },
 ];
 
-function GlobalBottomBar({ currentRouteName, visible, settingsActive = false, onNavigate, onOpenDrawer }: GlobalBottomBarProps) {
+function GlobalBottomBar({ currentRouteName, visible, settingsActive = false, socialPendingCount = 0, onNavigate, onOpenDrawer }: GlobalBottomBarProps) {
     const insets = useSafeAreaInsets();
     const { theme } = usePersonalization();
 
@@ -102,6 +103,14 @@ function GlobalBottomBar({ currentRouteName, visible, settingsActive = false, on
                         >
                             <View style={styles.itemInner}>
                                 <View style={[styles.activeMarker, isActive && styles.activeMarkerVisible, isActive && { backgroundColor: theme.accent }]} />
+                                {item.key === 'AddFriends' && socialPendingCount > 0 && (
+                                    <View style={[styles.socialOrb, { backgroundColor: theme.accent, shadowColor: theme.accent }]}>
+                                        <View style={[styles.socialOrbInner, { backgroundColor: withAlpha(theme.backgroundSecondary, 0.9) }]} />
+                                        <View style={[styles.socialBadge, { borderColor: theme.backgroundSecondary, backgroundColor: theme.danger }]}>
+                                            <Text style={styles.socialBadgeText}>{socialPendingCount > 99 ? '99+' : socialPendingCount}</Text>
+                                        </View>
+                                    </View>
+                                )}
                                 <MaterialCommunityIcons
                                     name={item.icon as any}
                                     size={22}
@@ -179,6 +188,7 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
         gap: 2,
+        position: 'relative',
     },
     activeMarker: {
         width: 20,
@@ -196,6 +206,42 @@ const styles = StyleSheet.create({
         textAlign: 'center',
     },
     itemLabelActive: {},
+    socialOrb: {
+        position: 'absolute',
+        top: -2,
+        right: -8,
+        width: 11,
+        height: 11,
+        borderRadius: 999,
+        shadowOpacity: 0.65,
+        shadowRadius: 6,
+        shadowOffset: { width: 0, height: 0 },
+        elevation: 6,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    socialOrbInner: {
+        width: 5,
+        height: 5,
+        borderRadius: 999,
+    },
+    socialBadge: {
+        position: 'absolute',
+        top: -9,
+        right: -11,
+        minWidth: 16,
+        height: 16,
+        borderRadius: 999,
+        borderWidth: 1.5,
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: 3,
+    },
+    socialBadgeText: {
+        color: '#FFFFFF',
+        fontSize: 9,
+        fontWeight: '800',
+    },
     homeSlot: {
         flex: 1,
         alignItems: 'center',

@@ -62,6 +62,12 @@ export default function InProgressScreen() {
 
     const { alertError, alertSuccess, alertConfirm } = useAlertContext();
 
+    const handleAuthNavigation = useCallback(() => {
+        auth.signOut().catch(() => {
+            // ignore: auth state listener will redirect when needed
+        });
+    }, []);
+
     const summaryGradientColors = useMemo(
         () => [
             `rgba(${parseInt(theme.accent.slice(1, 3), 16)}, ${parseInt(theme.accent.slice(3, 5), 16)}, ${parseInt(theme.accent.slice(5, 7), 16)}, 0.2)`,
@@ -275,7 +281,7 @@ export default function InProgressScreen() {
                 <Text style={[styles.emptyStateText, { color: theme.text }]}>Inicia sesión para ver tus cómics en curso</Text>
                 <TouchableOpacity
                     style={[styles.loginButton, { backgroundColor: theme.accent, shadowColor: theme.accent }]}
-                    onPress={() => navigation.navigate('Auth')}
+                    onPress={handleAuthNavigation}
                     accessible
                     accessibilityLabel="Ir a la pantalla de inicio de sesión"
                 >

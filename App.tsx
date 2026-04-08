@@ -1,6 +1,6 @@
 import 'react-native-gesture-handler';
 import 'react-native-reanimated';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { StatusBar, View, ActivityIndicator, Text, Platform, AppState } from 'react-native';
 import { DrawerActions, NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
 import { createDrawerNavigator } from '@react-navigation/drawer';
@@ -10,10 +10,13 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as NavigationBar from 'expo-navigation-bar';
+import * as Notifications from 'expo-notifications';
+import * as Device from 'expo-device';
+import Constants from 'expo-constants';
 
 // Firebase imports
 import { auth, db } from './src/firebase/config';
-import { doc, getDoc, onSnapshot, collection, query, where, getDocs } from 'firebase/firestore';
+import { doc, getDoc, onSnapshot, collection, query, where, getDocs, setDoc } from 'firebase/firestore';
 import { User } from 'firebase/auth';
 
 // Screens
@@ -74,6 +77,14 @@ const Stack = createStackNavigator<RootStackParamList>();
 const Drawer = createDrawerNavigator<DrawerParamList>();
 const navigationRef = createNavigationContainerRef<RootStackParamList>();
 
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+  }),
+});
+
 const getActiveRouteName = (state: any): string | undefined => {
   if (!state?.routes?.length) return undefined;
   const route = state.routes[state.index ?? 0];
@@ -98,6 +109,7 @@ function ThemedNavigationShell({
   currentRouteName,
   settingsActive,
   shouldShowBottomBar,
+  socialPendingCount,
   navigateToMainRoute,
   openDrawerFromBottomBar,
 }: {
@@ -106,6 +118,7 @@ function ThemedNavigationShell({
   currentRouteName?: string;
   settingsActive: boolean;
   shouldShowBottomBar: boolean;
+  socialPendingCount: number;
   navigateToMainRoute: (routeName: 'Library' | 'AddFriends' | 'Home' | 'Profile') => void;
   openDrawerFromBottomBar: () => void;
 }) {
@@ -202,6 +215,7 @@ function ThemedNavigationShell({
           currentRouteName={currentRouteName}
           visible={shouldShowBottomBar}
           settingsActive={settingsActive}
+          socialPendingCount={socialPendingCount}
           onNavigate={navigateToMainRoute}
           onOpenDrawer={openDrawerFromBottomBar}
         />
@@ -421,6 +435,48 @@ export default function App() {
   const [loadingTutorial, setLoadingTutorial] = useState(true);
   const [needsTutorial, setNeedsTutorial] = useState(false);
   const [currentRouteName, setCurrentRouteName] = useState<string | undefined>();
+  const [socialPendingCount, setSocialPendingCount] = useState(0);
+
+  const registerPushTokenForUser = useCallback(async (userId: string) => {
+    if (!Device.isDevice) return;
+
+    try {
+      const permissions = await Notifications.getPermissionsAsync();
+      let finalStatus = permissions.status;
+      if (finalStatus !== 'granted') {
+        const requested = await Notifications.requestPermissionsAsync();
+        finalStatus = requested.status;
+      }
+      if (finalStatus !== 'granted') return;
+
+      if (Platform.OS === 'android') {
+        await Notifications.setNotificationChannelAsync('default', {
+          name: 'default',
+          importance: Notifications.AndroidImportance.HIGH,
+          vibrationPattern: [0, 250, 250, 250],
+          lightColor: '#FF5252',
+        });
+      }
+
+      const projectId =
+        Constants.expoConfig?.extra?.eas?.projectId ||
+        Constants.easConfig?.projectId;
+      if (!projectId) return;
+
+      const tokenResponse = await Notifications.getExpoPushTokenAsync({ projectId });
+      const pushToken = String(tokenResponse?.data || '').trim();
+      if (!pushToken) return;
+
+      const userRef = doc(db, 'users', userId);
+      await setDoc(userRef, {
+        fcmToken: pushToken,
+        pushToken,
+        notificationEnabled: true,
+      }, { merge: true });
+    } catch {
+      // silently ignored
+    }
+  }, []);
 
   useEffect(() => {
     if (Platform.OS !== 'android') return;
@@ -464,12 +520,51 @@ export default function App() {
   }, [currentRouteName]);
 
   useEffect(() => {
+    if (!user?.uid) {
+      setSocialPendingCount(0);
+      return;
+    }
+
+    const userRef = doc(db, 'users', user.uid);
+    const userChatsRef = doc(db, 'userChats', user.uid);
+
+    let pendingRequests = 0;
+    let unreadMessages = 0;
+
+    const recompute = () => {
+      setSocialPendingCount(Math.max(0, pendingRequests + unreadMessages));
+    };
+
+    const unsubscribeUser = onSnapshot(userRef, (snap) => {
+      const data = snap.data();
+      pendingRequests = Array.isArray(data?.pendingReceivedRequests) ? data.pendingReceivedRequests.length : 0;
+      recompute();
+    });
+
+    const unsubscribeChats = onSnapshot(userChatsRef, (snap) => {
+      unreadMessages = 0;
+      if (snap.exists()) {
+        Object.values(snap.data()).forEach((chat: any) => {
+          unreadMessages += Number(chat?.unreadCount || 0);
+        });
+      }
+      recompute();
+    });
+
+    return () => {
+      unsubscribeUser();
+      unsubscribeChats();
+    };
+  }, [user?.uid]);
+
+  useEffect(() => {
     const unsubscribe = auth.onAuthStateChanged(async (currentUser) => {
       if (currentUser) {
         try {
           const userDoc = await getDoc(doc(db, "users", currentUser.uid));
           if (userDoc.exists()) {
             setUser(currentUser);
+            registerPushTokenForUser(currentUser.uid);
             try {
               const tutorialKey = `tutorialSeen:${currentUser.uid}`;
               const tutorialSeen = await AsyncStorage.getItem(tutorialKey);
@@ -548,6 +643,7 @@ export default function App() {
               currentRouteName={currentRouteName}
               settingsActive={settingsActive}
               shouldShowBottomBar={shouldShowBottomBarFinal}
+              socialPendingCount={socialPendingCount}
               navigateToMainRoute={navigateToMainRoute}
               openDrawerFromBottomBar={openDrawerFromBottomBar}
             />

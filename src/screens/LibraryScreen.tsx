@@ -44,6 +44,7 @@ type Comic = {
     badges?: string[];
     normalizedTitle?: string;
     normalizedDescription?: string;
+    normalizedSlug?: string;
 };
 
 type SortKey = 'default' | 'title_asc' | 'title_desc' | 'score_desc';
@@ -59,7 +60,7 @@ type FilterOption = {
 const { width } = Dimensions.get('window');
 
 const SORT_OPTIONS: FilterOption[] = [
-    { label: 'Por defecto', value: 'default' },
+    { label: 'Más recientes', value: 'default' },
     { label: 'Título A-Z', value: 'title_asc' },
     { label: 'Título Z-A', value: 'title_desc' },
     { label: 'Mejor puntuados', value: 'score_desc' },
@@ -154,6 +155,7 @@ const mapApiComic = (item: any): Comic => {
         badges: Array.isArray(item.badges) ? item.badges : [],
         normalizedTitle: normalizeText(title),
         normalizedDescription: normalizeText(description),
+        normalizedSlug: normalizeText(String(item.slug || '').replace(/^[a-z0-9_]+__/, '').replace(/-/g, ' ')),
     };
 };
 
@@ -183,15 +185,25 @@ const applyRelevanceFilter = (list: Comic[], query: string): Comic[] => {
     const ranked = list.map((item) => {
         const title = item.normalizedTitle || normalizeText(item.title || '');
         const desc = item.normalizedDescription || normalizeText(item.description || '');
+        const slug = item.normalizedSlug || normalizeText(String(item.slug || '').replace(/^[a-z0-9_]+__/, '').replace(/-/g, ' '));
 
         let score = 0;
         let matched = 0;
 
-        if (title.includes(q)) score += 100;
+        if (title === q) score += 300;
+        else if (title.startsWith(q)) score += 180;
+        else if (title.includes(q)) score += 120;
+
+        if (slug === q) score += 240;
+        else if (slug.startsWith(q)) score += 140;
+        else if (slug.includes(q)) score += 80;
 
         for (const token of qTokens) {
             if (title.includes(token)) {
-                score += 16;
+                score += 20;
+                matched += 1;
+            } else if (slug.includes(token)) {
+                score += 12;
                 matched += 1;
             } else if (desc.includes(token)) {
                 score += 6;
@@ -202,12 +214,12 @@ const applyRelevanceFilter = (list: Comic[], query: string): Comic[] => {
         return { item, score, matched };
     });
 
-    const minMatches = Math.max(1, Math.ceil(qTokens.length * 0.6));
-
-    return ranked
-        .filter((x) => x.score >= 100 || x.matched >= minMatches)
+    const positives = ranked
+        .filter((x) => x.score > 0 || x.matched > 0)
         .sort((a, b) => b.score - a.score)
         .map((x) => x.item);
+
+    return positives.length > 0 ? positives : list;
 };
 
 const fetchJsonWithTimeout = async (url: string, timeoutMs = REQUEST_TIMEOUT_MS) => {
@@ -552,7 +564,7 @@ const LibraryScreen = ({ navigation }: any) => {
                 setCommittedSearchQuery(normalizedQuery);
                 searchComics({ page: 1, append: false, query: normalizedQuery });
             }
-        }, settings.reduceMotion ? 150 : 320);
+        }, settings.reduceMotion ? 120 : 220);
 
         return () => {
             if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);

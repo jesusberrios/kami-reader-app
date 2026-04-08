@@ -11,6 +11,7 @@ import {
     Animated,
     Easing,
 } from 'react-native';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -18,7 +19,7 @@ import { auth } from '../firebase/config';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { usePersonalization } from '../contexts/PersonalizationContext';
 
-const { width: screenWidth } = Dimensions.get('window');
+const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
 type TutorialStep = {
     tag: string;
@@ -80,6 +81,7 @@ const TUTORIAL_STEPS: TutorialStep[] = [
 
 const TutorialScreen = () => {
     const { theme } = usePersonalization();
+    const insets = useSafeAreaInsets();
     const navigation = useNavigation<any>();
     const route = useRoute<any>();
     const scrollRef = useRef<ScrollView>(null);
@@ -91,6 +93,7 @@ const TutorialScreen = () => {
     const progressAnim = useRef(new Animated.Value(0)).current;
 
     const isLast = useMemo(() => currentIndex === TUTORIAL_STEPS.length - 1, [currentIndex]);
+    const isSmallScreen = useMemo(() => screenHeight < 760, []);
     const currentStep = TUTORIAL_STEPS[currentIndex];
     const progressTrackWidth = useMemo(() => Math.min(220, screenWidth - 110), []);
     const progressThumbWidth = useMemo(
@@ -236,6 +239,7 @@ const TutorialScreen = () => {
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 1 }}
         >
+            <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
             <View pointerEvents="none" style={styles.bgLayer}>
                 <Animated.View
                     style={[
@@ -272,7 +276,7 @@ const TutorialScreen = () => {
                 />
             </View>
 
-            <View style={styles.header}>
+            <View style={[styles.header, { paddingTop: Math.max(8, insets.top * 0.2) }]}>
                 <View>
                     <Text style={[styles.headerTitle, { color: theme.text }]}>Tutorial interactivo</Text>
                     <Text style={[styles.headerSubtitle, { color: theme.textMuted }]}>Paso {currentIndex + 1} de {TUTORIAL_STEPS.length}</Text>
@@ -282,6 +286,7 @@ const TutorialScreen = () => {
                 </TouchableOpacity>
             </View>
 
+            <View style={styles.carouselContainer}>
             <ScrollView
                 ref={scrollRef}
                 horizontal
@@ -291,47 +296,57 @@ const TutorialScreen = () => {
                 bounces={false}
             >
                 {TUTORIAL_STEPS.map((step) => (
-                    <Animated.View
-                        key={step.title}
-                        style={[
-                            styles.slide,
-                            {
-                                opacity: stepOpacity,
-                                transform: [{ translateY: stepTranslateY }, { scale: stepScale }],
-                            },
-                        ]}
-                    >
-                        <View style={[styles.glassCard, { backgroundColor: theme.surface + 'CC', borderColor: theme.border }]}> 
-                            <View style={[styles.tagPill, { backgroundColor: theme.accentSoft, borderColor: theme.accent }]}> 
-                                <Text style={[styles.tagText, { color: theme.accent }]}>{step.tag}</Text>
-                            </View>
-
-                            <View style={[styles.iconWrapper, { backgroundColor: theme.accentSoft, borderColor: theme.accent }]}> 
-                                <MaterialCommunityIcons name={step.icon} size={60} color={theme.accent} />
-                            </View>
-
-                            <Text style={[styles.title, { color: theme.text }]}>{step.title}</Text>
-                            <Text style={[styles.subtitle, { color: theme.textMuted }]}>{step.subtitle}</Text>
-                            <Text style={[styles.description, { color: theme.textMuted }]}>{step.description}</Text>
-
-                            <View style={styles.highlightsRow}>
-                                {step.highlights.map((item) => (
-                                    <View key={item} style={[styles.highlightChip, { borderColor: theme.border, backgroundColor: theme.surface + 'AA' }]}> 
-                                        <Text style={[styles.highlightText, { color: theme.text }]}>{item}</Text>
+                    <View key={step.title} style={styles.slide}>
+                        <ScrollView
+                            style={styles.slideScroll}
+                            contentContainerStyle={styles.slideScrollContent}
+                            showsVerticalScrollIndicator={false}
+                            bounces={false}
+                            nestedScrollEnabled
+                        >
+                            <Animated.View
+                                style={[
+                                    styles.stepAnimatedWrap,
+                                    {
+                                        opacity: stepOpacity,
+                                        transform: [{ translateY: stepTranslateY }, { scale: stepScale }],
+                                    },
+                                ]}
+                            >
+                                <View style={[styles.glassCard, { backgroundColor: theme.surface + 'CC', borderColor: theme.border }]}> 
+                                    <View style={[styles.tagPill, { backgroundColor: theme.accentSoft, borderColor: theme.accent }]}> 
+                                        <Text style={[styles.tagText, { color: theme.accent }]}>{step.tag}</Text>
                                     </View>
-                                ))}
-                            </View>
-                        </View>
 
-                        <View style={[styles.useCaseCard, { backgroundColor: theme.surface + 'B3', borderColor: theme.border }]}> 
-                            <Text style={[styles.useCaseTitle, { color: theme.accent }]}>Para que sirve</Text>
-                            <Text style={[styles.useCaseValue, { color: theme.text }]}>{step.whereToUse}</Text>
-                        </View>
-                    </Animated.View>
+                                    <View style={[styles.iconWrapper, { backgroundColor: theme.accentSoft, borderColor: theme.accent }]}> 
+                                        <MaterialCommunityIcons name={step.icon} size={isSmallScreen ? 50 : 60} color={theme.accent} />
+                                    </View>
+
+                                    <Text style={[styles.title, { color: theme.text }, isSmallScreen && styles.titleSmall]}>{step.title}</Text>
+                                    <Text style={[styles.subtitle, { color: theme.textMuted }, isSmallScreen && styles.subtitleSmall]}>{step.subtitle}</Text>
+                                    <Text style={[styles.description, { color: theme.textMuted }, isSmallScreen && styles.descriptionSmall]}>{step.description}</Text>
+
+                                    <View style={styles.highlightsRow}>
+                                        {step.highlights.map((item) => (
+                                            <View key={item} style={[styles.highlightChip, { borderColor: theme.border, backgroundColor: theme.surface + 'AA' }]}> 
+                                                <Text style={[styles.highlightText, { color: theme.text }]}>{item}</Text>
+                                            </View>
+                                        ))}
+                                    </View>
+                                </View>
+
+                                <View style={[styles.useCaseCard, { backgroundColor: theme.surface + 'B3', borderColor: theme.border }]}> 
+                                    <Text style={[styles.useCaseTitle, { color: theme.accent }]}>Para que sirve</Text>
+                                    <Text style={[styles.useCaseValue, { color: theme.text }]}>{step.whereToUse}</Text>
+                                </View>
+                            </Animated.View>
+                        </ScrollView>
+                    </View>
                 ))}
             </ScrollView>
+            </View>
 
-            <View style={styles.footer}>
+            <View style={[styles.footer, { paddingBottom: Math.max(16, insets.bottom + 6) }]}>
                 <View style={styles.progressRow}>
                     <Text style={[styles.progressText, { color: theme.textMuted }]}>Progreso</Text>
                     <Text style={[styles.progressText, { color: theme.textMuted }]}>{currentIndex + 1}/{TUTORIAL_STEPS.length}</Text>
@@ -394,12 +409,16 @@ const TutorialScreen = () => {
                     </View>
                 )}
             </View>
+            </SafeAreaView>
         </LinearGradient>
     );
 };
 
 const styles = StyleSheet.create({
     container: {
+        flex: 1,
+    },
+    safeArea: {
         flex: 1,
     },
     bgLayer: {
@@ -428,12 +447,14 @@ const styles = StyleSheet.create({
         right: '16%',
     },
     header: {
-        paddingTop: 58,
         paddingHorizontal: 20,
-        paddingBottom: 8,
+        paddingBottom: 6,
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
+    },
+    carouselContainer: {
+        flex: 1,
     },
     headerTitle: {
         color: '#FFFFFF',
@@ -453,7 +474,19 @@ const styles = StyleSheet.create({
     slide: {
         width: screenWidth,
         paddingHorizontal: 22,
-        justifyContent: 'center',
+        justifyContent: 'flex-start',
+        alignItems: 'center',
+    },
+    slideScroll: {
+        width: '100%',
+    },
+    slideScrollContent: {
+        paddingTop: 4,
+        paddingBottom: 6,
+        alignItems: 'center',
+    },
+    stepAnimatedWrap: {
+        width: '100%',
         alignItems: 'center',
     },
     glassCard: {
@@ -509,6 +542,16 @@ const styles = StyleSheet.create({
         lineHeight: 22,
         maxWidth: 340,
     },
+    titleSmall: {
+        fontSize: 23,
+    },
+    subtitleSmall: {
+        fontSize: 14,
+    },
+    descriptionSmall: {
+        fontSize: 14,
+        lineHeight: 20,
+    },
     highlightsRow: {
         width: '100%',
         marginTop: 14,
@@ -548,7 +591,7 @@ const styles = StyleSheet.create({
     },
     footer: {
         paddingHorizontal: 20,
-        paddingBottom: 28,
+        paddingBottom: 18,
         paddingTop: 6,
         alignItems: 'center',
     },
