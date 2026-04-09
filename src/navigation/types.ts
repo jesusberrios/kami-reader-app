@@ -5,6 +5,7 @@ export type RootStackParamList = {
     Main: undefined;
     Tutorial: { manual?: boolean } | undefined;
     Personalization: undefined;
+    EventStore: undefined;
     Details: { slug: string };
     Reader: { hid: string; resumeFromProgress?: boolean };
     News: undefined;

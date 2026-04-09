@@ -352,7 +352,10 @@ const AuthScreen = () => {
                     reduceMotion: false,
                     compactCards: false,
                     totalReadingTime: 0,
+                    coins: 0,
                     achievementsUnlocked: [],
+                    purchasedItems: [],
+                    unlockedThemes: [],
                     createdAt: new Date(),
                     lastLogin: new Date(),
                     preferences: {

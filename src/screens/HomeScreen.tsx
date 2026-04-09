@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
     View,
     Text,
@@ -49,6 +50,7 @@ const APP_IDS = {
 };
 const DONATION_URL = process.env.EXPO_PUBLIC_DONATION_URL || 'https://ko-fi.com/sukisoft';
 const HOME_LATEST_AUTO_REFRESH_MS = 45 * 1000;
+const MAINTENANCE_ACK_STORAGE_KEY = 'kami.maintenance.dismissed.v1';
 
 const getStatusLabel = (value?: string, fallbackLabel?: string) => {
     const raw = String(value || '').toLowerCase();
@@ -119,6 +121,20 @@ type NewsItem = {
     isNew?: boolean;
 };
 
+type AppConfigSnapshot = {
+    maintenanceMode: boolean;
+    maintenanceMessage: string;
+    announcementEnabled: boolean;
+    announcementText: string;
+};
+
+const DEFAULT_APP_CONFIG: AppConfigSnapshot = {
+    maintenanceMode: false,
+    maintenanceMessage: 'Estamos realizando mantenimiento. Intenta de nuevo en unos minutos.',
+    announcementEnabled: false,
+    announcementText: '',
+};
+
 const HomeScreen = ({ navigation }: any) => {
     const { theme } = usePersonalization();
     // State
@@ -137,6 +153,10 @@ const HomeScreen = ({ navigation }: any) => {
     const [latestMangas, setLatestMangas] = useState<LatestManga[]>([]);
     const [latestLoading, setLatestLoading] = useState(true);
     const [homeNotice, setHomeNotice] = useState('');
+    const [announcementMessage, setAnnouncementMessage] = useState('');
+    const [maintenanceMessage, setMaintenanceMessage] = useState('');
+    const [maintenanceModalVisible, setMaintenanceModalVisible] = useState(false);
+    const [maintenanceAckSignature, setMaintenanceAckSignature] = useState('');
 
     // Refs and hooks
     const headerRef = useRef<View>(null);
@@ -283,6 +303,48 @@ const HomeScreen = ({ navigation }: any) => {
         }
     }, []);
 
+    const fetchAppConfigAlerts = useCallback(async () => {
+        try {
+            const liveConfigSnap = await getDoc(doc(db, 'parameters', 'liveConfig'));
+            const appConfigData = (liveConfigSnap.data()?.appConfig || {}) as Partial<AppConfigSnapshot>;
+            const appConfig = { ...DEFAULT_APP_CONFIG, ...appConfigData };
+
+            const announcement = appConfig.announcementEnabled
+                ? String(appConfig.announcementText || '').trim()
+                : '';
+            const maintenance = appConfig.maintenanceMode
+                ? String(appConfig.maintenanceMessage || DEFAULT_APP_CONFIG.maintenanceMessage).trim()
+                : '';
+            const maintenanceSignature = appConfig.maintenanceMode
+                ? `${appConfig.maintenanceMode}|${maintenance}`
+                : '';
+            const dismissedSignature = await AsyncStorage.getItem(MAINTENANCE_ACK_STORAGE_KEY);
+            const shouldShowMaintenance = Boolean(appConfig.maintenanceMode) && maintenanceSignature !== dismissedSignature;
+
+            if (isMounted.current) {
+                setAnnouncementMessage(announcement);
+                setMaintenanceMessage(maintenance);
+                setMaintenanceAckSignature(maintenanceSignature);
+                setMaintenanceModalVisible(shouldShowMaintenance);
+            }
+        } catch {
+            if (isMounted.current) {
+                setAnnouncementMessage('');
+                setMaintenanceAckSignature('');
+                setMaintenanceModalVisible(false);
+            }
+        }
+    }, []);
+
+    const handleMaintenanceAcknowledge = useCallback(async () => {
+        if (maintenanceAckSignature) {
+            await AsyncStorage.setItem(MAINTENANCE_ACK_STORAGE_KEY, maintenanceAckSignature);
+        }
+        if (isMounted.current) {
+            setMaintenanceModalVisible(false);
+        }
+    }, [maintenanceAckSignature]);
+
     const fetchContinueReadingComics = useCallback(async () => {
         try {
             const auth = getAuth();
@@ -397,13 +459,14 @@ const HomeScreen = ({ navigation }: any) => {
             fetchUserPlan(),
             fetchContinueReadingComics(),
             fetchLatestMangas(),
+            fetchAppConfigAlerts(),
         ]);
         await fetchTopComics();
 
         if (isMounted.current) {
             setLoading(false);
         }
-    }, [fetchNews, fetchUserPlan, fetchTopComics, fetchContinueReadingComics, fetchLatestMangas]);
+    }, [fetchNews, fetchUserPlan, fetchTopComics, fetchContinueReadingComics, fetchLatestMangas, fetchAppConfigAlerts]);
 
 
     // Effects
@@ -490,6 +553,7 @@ const HomeScreen = ({ navigation }: any) => {
             fetchUserPlan(),
             fetchContinueReadingComics(),
             fetchLatestMangas({ forceRefresh: true }),
+            fetchAppConfigAlerts(),
         ]);
         if (isMounted.current) {
             setRefreshing(false);
@@ -499,7 +563,7 @@ const HomeScreen = ({ navigation }: any) => {
                 }
             });
         }
-    }, [fetchTopComics, fetchNews, fetchUserPlan, fetchContinueReadingComics, fetchLatestMangas]);
+    }, [fetchTopComics, fetchNews, fetchUserPlan, fetchContinueReadingComics, fetchLatestMangas, fetchAppConfigAlerts]);
 
     const handleComicPress = useCallback((item: Chapter) => {
         if (item.lastReadChapterHid) {
@@ -708,6 +772,13 @@ const HomeScreen = ({ navigation }: any) => {
                         </View>
                     )}
 
+                    {!!announcementMessage && (
+                        <View style={[styles.announcementCard, { borderColor: theme.accent, backgroundColor: `${theme.accent}22` }]}>
+                            <MaterialCommunityIcons name="bullhorn-outline" size={18} color={theme.accent} />
+                            <Text style={styles.announcementText}>{announcementMessage}</Text>
+                        </View>
+                    )}
+
                     <TouchableOpacity style={styles.donationCard} onPress={handleOpenDonation} activeOpacity={0.85}>
                         <LinearGradient colors={['#F59E0B33', '#FB718533']} style={StyleSheet.absoluteFill} />
                         <View style={styles.donationTopRow}>
@@ -889,6 +960,21 @@ const HomeScreen = ({ navigation }: any) => {
                     iosAppId={APP_IDS.ios}
                     androidPackageName={APP_IDS.android}
                 />
+                {maintenanceModalVisible && (
+                    <View style={styles.maintenanceBackdrop}>
+                        <View style={styles.maintenanceCard}>
+                            <MaterialCommunityIcons name="alert-circle-outline" size={30} color={theme.warning} />
+                            <Text style={styles.maintenanceTitle}>Mantenimiento</Text>
+                            <Text style={styles.maintenanceText}>{maintenanceMessage || DEFAULT_APP_CONFIG.maintenanceMessage}</Text>
+                            <TouchableOpacity
+                                style={styles.maintenanceButton}
+                                onPress={handleMaintenanceAcknowledge}
+                            >
+                                <Text style={styles.maintenanceButtonText}>Entiendo</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                )}
             </SafeAreaView>
         </LinearGradient>
     );
@@ -1048,6 +1134,24 @@ const styles = StyleSheet.create({
         lineHeight: 17,
         fontFamily: 'Roboto-Medium',
     },
+    announcementCard: {
+        marginHorizontal: 20,
+        marginBottom: 16,
+        borderRadius: 12,
+        borderWidth: 1,
+        paddingHorizontal: 12,
+        paddingVertical: 10,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+    },
+    announcementText: {
+        flex: 1,
+        color: '#EAF0FF',
+        fontSize: 12,
+        lineHeight: 17,
+        fontFamily: 'Roboto-Medium',
+    },
     donationCard: {
         marginHorizontal: 20,
         marginBottom: 16,
@@ -1088,6 +1192,55 @@ const styles = StyleSheet.create({
         color: '#FFF3DD',
         fontSize: 12,
         fontFamily: 'Roboto-Medium',
+    },
+    maintenanceBackdrop: {
+        position: 'absolute',
+        top: 0,
+        right: 0,
+        bottom: 0,
+        left: 0,
+        backgroundColor: 'rgba(0, 0, 0, 0.55)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        paddingHorizontal: 22,
+    },
+    maintenanceCard: {
+        width: '100%',
+        maxWidth: 420,
+        borderRadius: 16,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.14)',
+        backgroundColor: '#151524',
+        padding: 18,
+        alignItems: 'center',
+    },
+    maintenanceTitle: {
+        marginTop: 8,
+        fontSize: 20,
+        color: '#FFF7E6',
+        fontFamily: 'Roboto-Bold',
+    },
+    maintenanceText: {
+        marginTop: 8,
+        textAlign: 'center',
+        color: '#DADAF2',
+        fontSize: 13,
+        lineHeight: 20,
+        fontFamily: 'Roboto-Regular',
+    },
+    maintenanceButton: {
+        marginTop: 14,
+        borderRadius: 999,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.2)',
+        paddingHorizontal: 14,
+        paddingVertical: 8,
+        backgroundColor: 'rgba(255,255,255,0.08)',
+    },
+    maintenanceButtonText: {
+        color: '#FFFFFF',
+        fontSize: 12,
+        fontFamily: 'Roboto-Bold',
     },
     sectionLoadingIndicator: {
         marginTop: 10,

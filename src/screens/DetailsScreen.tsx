@@ -711,7 +711,7 @@ const styles = StyleSheet.create({
     },
     headerContainer: {
         flexDirection: 'row',
-        alignItems: 'flex-start',
+        alignItems: 'stretch',
         gap: 12,
     },
     coverImage: {
@@ -724,7 +724,7 @@ const styles = StyleSheet.create({
     },
     infoCard: {
         flex: 1,
-        minHeight: COVER_HEIGHT,
+        minHeight: 0,
         padding: 2,
         justifyContent: 'flex-start',
     },
@@ -738,7 +738,8 @@ const styles = StyleSheet.create({
         marginTop: 10,
         flexDirection: 'row',
         flexWrap: 'wrap',
-        gap: 6,
+        rowGap: 6,
+        columnGap: 6,
     },
     quickMetaChip: {
         color: '#FFD8D8',
@@ -750,15 +751,18 @@ const styles = StyleSheet.create({
         paddingVertical: 4,
         fontSize: 11,
         fontWeight: '600',
+        maxWidth: '100%',
+        flexShrink: 1,
     },
     infoGrid: {
         marginTop: 10,
         flexDirection: 'row',
         flexWrap: 'wrap',
-        gap: 8,
+        rowGap: 8,
+        columnGap: 8,
     },
     infoPill: {
-        width: '48%',
+        width: '47.5%',
         backgroundColor: '#262633',
         borderRadius: 10,
         paddingVertical: 8,

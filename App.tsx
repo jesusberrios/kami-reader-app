@@ -1,6 +1,6 @@
 import 'react-native-gesture-handler';
 import 'react-native-reanimated';
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { StatusBar, View, ActivityIndicator, Text, Platform, AppState } from 'react-native';
 import { DrawerActions, NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
 import { createDrawerNavigator } from '@react-navigation/drawer';
@@ -16,7 +16,7 @@ import Constants from 'expo-constants';
 
 // Firebase imports
 import { auth, db } from './src/firebase/config';
-import { doc, getDoc, onSnapshot, collection, query, where, getDocs, setDoc } from 'firebase/firestore';
+import { doc, getDoc, onSnapshot, collection, query, where, getDocs, setDoc, serverTimestamp } from 'firebase/firestore';
 import { User } from 'firebase/auth';
 
 // Screens
@@ -37,15 +37,20 @@ import NewsScreen from './src/screens/NewsScreen';
 import NewsDetailScreen from './src/screens/NewsDetailScreen';
 import TutorialScreen from './src/screens/TutorialScreen';
 import PersonalizationScreen from './src/screens/PersonalizationScreen';
+import EventStoreScreen from './src/screens/EventStoreScreen';
+import EventCompanionPet from './src/components/eventCompanionPet';
+import EventThemeBackdrop from './src/components/EventThemeBackdrop';
 import { AlertProvider } from './src/contexts/AlertContext';
 import GlobalBottomBar from './src/components/GlobalBottomBar';
 import { PersonalizationProvider, usePersonalization } from './src/contexts/PersonalizationContext';
+import { applyEventFlagsFromAppSettings, applyLiveConfigFromFirestore, getCompanionStoreItems, EASTER_EVENT_ID, HALLOWEEN_EVENT_ID, XMAS_EVENT_ID, VALENTINES_EVENT_ID, isEventActive } from './src/config/liveEvents';
 // Navigation Types - Actualizado para v6+
 export type RootStackParamList = {
   Auth: undefined;
   Main: undefined;
   Tutorial: { manual?: boolean } | undefined;
   Personalization: undefined;
+  EventStore: undefined;
   Details: { slug: string };
   Reader: { hid: string };
   AddFriends: undefined;
@@ -79,7 +84,8 @@ const navigationRef = createNavigationContainerRef<RootStackParamList>();
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
-    shouldShowAlert: true,
+    shouldShowBanner: true,
+    shouldShowList: true,
     shouldPlaySound: true,
     shouldSetBadge: false,
   }),
@@ -112,6 +118,7 @@ function ThemedNavigationShell({
   socialPendingCount,
   navigateToMainRoute,
   openDrawerFromBottomBar,
+  showEventCompanion,
 }: {
   user: User | null;
   needsTutorial: boolean;
@@ -121,8 +128,20 @@ function ThemedNavigationShell({
   socialPendingCount: number;
   navigateToMainRoute: (routeName: 'Library' | 'AddFriends' | 'Home' | 'Profile') => void;
   openDrawerFromBottomBar: () => void;
+  showEventCompanion: boolean;
 }) {
   const { theme, settings } = usePersonalization();
+
+  const THEME_TO_EVENT: Record<string, string> = {
+    'easter-matsuri': EASTER_EVENT_ID,
+    'halloween-night': HALLOWEEN_EVENT_ID,
+    'navidad-glow': XMAS_EVENT_ID,
+    'san-valentin': VALENTINES_EVENT_ID,
+  };
+  const backdropEventId: string | null = (() => {
+    const eid = THEME_TO_EVENT[settings.appTheme];
+    return eid && isEventActive(eid) ? eid : null;
+  })();
 
   useEffect(() => {
     if (Platform.OS !== 'android') return;
@@ -194,6 +213,7 @@ function ThemedNavigationShell({
             />
           )}
           <Stack.Screen name="Personalization" component={PersonalizationScreen} />
+          <Stack.Screen name="EventStore" component={EventStoreScreen} />
           <Stack.Screen name="Details" component={DetailsScreen} />
           <Stack.Screen name="Payment" component={PaymentScreen} />
           <Stack.Screen name="Profile" component={ProfileScreen} />
@@ -211,6 +231,8 @@ function ThemedNavigationShell({
           />
         </Stack.Navigator>
 
+        <EventThemeBackdrop activeEventId={currentRouteName === 'Reader' ? null : backdropEventId} />
+
         <GlobalBottomBar
           currentRouteName={currentRouteName}
           visible={shouldShowBottomBar}
@@ -218,6 +240,11 @@ function ThemedNavigationShell({
           socialPendingCount={socialPendingCount}
           onNavigate={navigateToMainRoute}
           onOpenDrawer={openDrawerFromBottomBar}
+        />
+
+        <EventCompanionPet
+          visible={showEventCompanion && !!settings.selectedCompanionKey && currentRouteName !== 'Reader'}
+          bottomOffset={shouldShowBottomBar ? 98 : 18}
         />
       </View>
     </>
@@ -287,7 +314,7 @@ function MainDrawerNavigator() {
 
   return (
     <Drawer.Navigator
-      drawerContent={(props) => (
+      drawerContent={(props: any) => (
         <CustomDrawerContent
           {...props}
           pendingRequests={pendingRequests}
@@ -328,7 +355,7 @@ function MainDrawerNavigator() {
         options={{
           drawerLabel: 'Inicio',
           drawerItemStyle: { display: 'none' },
-          drawerIcon: ({ color, size }) => (
+          drawerIcon: ({ color, size }: { color: string; size: number }) => (
             <MaterialCommunityIcons name="home" size={size} color={color} />
           ),
         }}
@@ -339,7 +366,7 @@ function MainDrawerNavigator() {
         options={{
           drawerLabel: 'Biblioteca',
           drawerItemStyle: { display: 'none' },
-          drawerIcon: ({ color, size }) => (
+          drawerIcon: ({ color, size }: { color: string; size: number }) => (
             <MaterialCommunityIcons name="bookshelf" size={size} color={color} />
           ),
         }}
@@ -350,7 +377,7 @@ function MainDrawerNavigator() {
           component={FavoritesScreen}
           options={{
             drawerLabel: 'Favoritos',
-            drawerIcon: ({ color, size }) => (
+            drawerIcon: ({ color, size }: { color: string; size: number }) => (
               <MaterialCommunityIcons name="heart" size={size} color={color} />
             ),
           }}
@@ -362,7 +389,7 @@ function MainDrawerNavigator() {
         options={{
           drawerLabel: 'Social',
           drawerItemStyle: { display: 'none' },
-          drawerIcon: ({ color, size }) => (
+          drawerIcon: ({ color, size }: { color: string; size: number }) => (
             <View style={{ position: 'relative' }}>
               <MaterialCommunityIcons name="account-group-outline" size={size} color={color} />
               {(pendingRequests > 0 || unreadMessages > 0) && (
@@ -397,7 +424,7 @@ function MainDrawerNavigator() {
         component={InProgressScreen}
         options={{
           drawerLabel: 'En Curso',
-          drawerIcon: ({ color, size }) => (
+          drawerIcon: ({ color, size }: { color: string; size: number }) => (
             <MaterialCommunityIcons name="book-open-outline" size={size} color={color} />
           ),
         }}
@@ -408,7 +435,7 @@ function MainDrawerNavigator() {
         options={{
           drawerLabel: 'Perfil',
           drawerItemStyle: { display: 'none' },
-          drawerIcon: ({ color, size }) => (
+          drawerIcon: ({ color, size }: { color: string; size: number }) => (
             <MaterialCommunityIcons name="head" size={size} color={color} />
           ),
         }}
@@ -419,7 +446,7 @@ function MainDrawerNavigator() {
           component={PaymentScreen}
           options={{
             drawerLabel: 'Premium',
-            drawerIcon: ({ color, size }) => (
+            drawerIcon: ({ color, size }: { color: string; size: number }) => (
               <MaterialCommunityIcons name="crown" size={size} color={color} />
             ),
           }}
@@ -436,9 +463,23 @@ export default function App() {
   const [needsTutorial, setNeedsTutorial] = useState(false);
   const [currentRouteName, setCurrentRouteName] = useState<string | undefined>();
   const [socialPendingCount, setSocialPendingCount] = useState(0);
+  const [showEventCompanion, setShowEventCompanion] = useState(false);
+  const appStateRef = useRef(AppState.currentState);
+  const lastKnownUserRef = useRef<string | null>(null);
 
   const registerPushTokenForUser = useCallback(async (userId: string) => {
-    if (!Device.isDevice) return;
+    const userRef = doc(db, 'users', userId);
+
+    if (!Device.isDevice) {
+      await setDoc(userRef, {
+        pushDebug: {
+          status: 'skipped_non_physical_device',
+          platform: Platform.OS,
+          updatedAt: serverTimestamp(),
+        },
+      }, { merge: true });
+      return;
+    }
 
     try {
       const permissions = await Notifications.getPermissionsAsync();
@@ -447,7 +488,17 @@ export default function App() {
         const requested = await Notifications.requestPermissionsAsync();
         finalStatus = requested.status;
       }
-      if (finalStatus !== 'granted') return;
+      if (finalStatus !== 'granted') {
+        await setDoc(userRef, {
+          pushDebug: {
+            status: 'permission_not_granted',
+            permission: finalStatus,
+            platform: Platform.OS,
+            updatedAt: serverTimestamp(),
+          },
+        }, { merge: true });
+        return;
+      }
 
       if (Platform.OS === 'android') {
         await Notifications.setNotificationChannelAsync('default', {
@@ -460,19 +511,92 @@ export default function App() {
 
       const projectId =
         Constants.expoConfig?.extra?.eas?.projectId ||
-        Constants.easConfig?.projectId;
-      if (!projectId) return;
+        Constants.easConfig?.projectId ||
+        '5cd6ecff-6004-4696-b780-172ff5ca8a22';
+      if (!projectId) {
+        await setDoc(userRef, {
+          pushDebug: {
+            status: 'missing_project_id',
+            platform: Platform.OS,
+            updatedAt: serverTimestamp(),
+          },
+        }, { merge: true });
+        return;
+      }
 
       const tokenResponse = await Notifications.getExpoPushTokenAsync({ projectId });
       const pushToken = String(tokenResponse?.data || '').trim();
-      if (!pushToken) return;
+      if (!pushToken) {
+        await setDoc(userRef, {
+          pushDebug: {
+            status: 'empty_push_token',
+            projectId,
+            platform: Platform.OS,
+            updatedAt: serverTimestamp(),
+          },
+        }, { merge: true });
+        return;
+      }
 
-      const userRef = doc(db, 'users', userId);
       await setDoc(userRef, {
         fcmToken: pushToken,
         pushToken,
         notificationEnabled: true,
+        pushDebug: {
+          status: 'ok',
+          message: null,
+          projectId,
+          permission: finalStatus,
+          platform: Platform.OS,
+          updatedAt: serverTimestamp(),
+        },
       }, { merge: true });
+    } catch (error: any) {
+      await setDoc(userRef, {
+        pushDebug: {
+          status: 'error',
+          message: String(error?.message || error || 'unknown_error').slice(0, 500),
+          platform: Platform.OS,
+          updatedAt: serverTimestamp(),
+        },
+      }, { merge: true });
+    }
+  }, []);
+
+  const updatePresence = useCallback(async (userId: string, state: 'online' | 'offline') => {
+    try {
+      const isOnline = state === 'online';
+      const statusRef = doc(db, 'status', userId);
+      const userRef = doc(db, 'users', userId);
+      const lastSeenValue = isOnline ? null : serverTimestamp();
+
+      await Promise.all([
+        setDoc(statusRef, {
+          state,
+          lastSeen: lastSeenValue,
+          updatedAt: serverTimestamp(),
+        }, { merge: true }),
+        setDoc(userRef, {
+          isOnline,
+          lastSeen: lastSeenValue,
+        }, { merge: true }),
+      ]);
+    } catch {
+      // silently ignored
+    }
+  }, []);
+
+  const scheduleLocalNotification = useCallback(async (title: string, body: string, data?: Record<string, any>) => {
+    try {
+      await Notifications.scheduleNotificationAsync({
+        content: {
+          title,
+          body,
+          sound: true,
+          data,
+        },
+        trigger: null,
+      });
     } catch {
       // silently ignored
     }
@@ -506,6 +630,86 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      appStateRef.current = nextState;
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, []);
+
+  useEffect(() => {
+    const uid = user?.uid;
+    if (!uid) return;
+
+    const syncPresence = (nextState: string) => {
+      const isActive = nextState === 'active';
+      updatePresence(uid, isActive ? 'online' : 'offline');
+    };
+
+    syncPresence(appStateRef.current);
+    const subscription = AppState.addEventListener('change', syncPresence);
+
+    return () => {
+      subscription.remove();
+      updatePresence(uid, 'offline');
+    };
+  }, [user?.uid, updatePresence]);
+
+  useEffect(() => {
+    if (!user?.uid) return;
+
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') {
+        registerPushTokenForUser(user.uid);
+      }
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, [user?.uid, registerPushTokenForUser]);
+
+  useEffect(() => {
+    if (!user?.uid) return;
+
+    let initialized = false;
+    const previousUnreadByChat = new Map<string, number>();
+    const userChatsRef = doc(db, 'userChats', user.uid);
+
+    const unsubscribe = onSnapshot(userChatsRef, (snap) => {
+      if (!snap.exists()) return;
+      const chatsData = snap.data() as Record<string, any>;
+
+      if (!initialized) {
+        Object.entries(chatsData).forEach(([chatKey, chat]) => {
+          previousUnreadByChat.set(chatKey, Number(chat?.unreadCount || 0));
+        });
+        initialized = true;
+        return;
+      }
+
+      Object.entries(chatsData).forEach(([chatKey, chat]) => {
+        const nextUnread = Number(chat?.unreadCount || 0);
+        const prevUnread = Number(previousUnreadByChat.get(chatKey) || 0);
+
+        if (nextUnread > prevUnread) {
+          const sender = String(chat?.recipientName || 'Nuevo mensaje');
+          const preview = String(chat?.lastMessage || 'Tienes un nuevo mensaje.');
+          scheduleLocalNotification(sender, preview, { type: 'chat', chatKey });
+        }
+
+        previousUnreadByChat.set(chatKey, nextUnread);
+      });
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [user?.uid, scheduleLocalNotification]);
+
+  useEffect(() => {
     if (Platform.OS !== 'android') return;
 
     const ensureNavigationBarHidden = async () => {
@@ -520,8 +724,25 @@ export default function App() {
   }, [currentRouteName]);
 
   useEffect(() => {
+    const appSettingsRef = doc(db, 'parameters', 'appSettings');
+    const unsubscribeFlags = onSnapshot(
+      appSettingsRef,
+      (snap) => { applyEventFlagsFromAppSettings(snap.exists() ? snap.data() : {}); },
+      () => { applyEventFlagsFromAppSettings({}); }
+    );
+    const liveConfigRef = doc(db, 'parameters', 'liveConfig');
+    const unsubscribeConfig = onSnapshot(
+      liveConfigRef,
+      (snap) => { if (snap.exists()) applyLiveConfigFromFirestore(snap.data()); },
+      () => { /* silently ignored — hardcoded defaults remain active */ }
+    );
+    return () => { unsubscribeFlags(); unsubscribeConfig(); };
+  }, []);
+
+  useEffect(() => {
     if (!user?.uid) {
       setSocialPendingCount(0);
+      setShowEventCompanion(false);
       return;
     }
 
@@ -538,6 +759,9 @@ export default function App() {
     const unsubscribeUser = onSnapshot(userRef, (snap) => {
       const data = snap.data();
       pendingRequests = Array.isArray(data?.pendingReceivedRequests) ? data.pendingReceivedRequests.length : 0;
+      const purchasedItems = Array.isArray(data?.purchasedItems) ? data.purchasedItems : [];
+      const companionIds = getCompanionStoreItems().map((it) => it.id);
+      setShowEventCompanion(companionIds.some((id) => purchasedItems.includes(id)));
       recompute();
     });
 
@@ -564,6 +788,7 @@ export default function App() {
           const userDoc = await getDoc(doc(db, "users", currentUser.uid));
           if (userDoc.exists()) {
             setUser(currentUser);
+            lastKnownUserRef.current = currentUser.uid;
             registerPushTokenForUser(currentUser.uid);
             try {
               const tutorialKey = `tutorialSeen:${currentUser.uid}`;
@@ -583,6 +808,11 @@ export default function App() {
           setNeedsTutorial(false);
         }
       } else {
+        const lastUid = lastKnownUserRef.current;
+        if (lastUid) {
+          updatePresence(lastUid, 'offline');
+        }
+        lastKnownUserRef.current = null;
         setUser(null);
         setNeedsTutorial(false);
       }
@@ -626,7 +856,13 @@ export default function App() {
     navigationRef.dispatch(DrawerActions.openDrawer());
   };
 
-  const shouldShowBottomBar = !!user && currentRouteName !== 'Auth' && currentRouteName !== 'Reader' && currentRouteName !== 'Tutorial' && currentRouteName !== 'Personalization';
+  const shouldShowBottomBar = !!user
+    && currentRouteName !== 'Auth'
+    && currentRouteName !== 'Reader'
+    && currentRouteName !== 'Tutorial'
+    && currentRouteName !== 'Personalization'
+    && currentRouteName !== 'Chat'
+    && currentRouteName !== 'Comments';
   const settingsActive = navigationRef.isReady() ? isDrawerOpenInState(navigationRef.getRootState()) : false;
 
   // Oculta el BottomBar si el drawer de ajustes está abierto
@@ -646,6 +882,7 @@ export default function App() {
               socialPendingCount={socialPendingCount}
               navigateToMainRoute={navigateToMainRoute}
               openDrawerFromBottomBar={openDrawerFromBottomBar}
+              showEventCompanion={showEventCompanion}
             />
           </NavigationContainer>
         </SafeAreaProvider>

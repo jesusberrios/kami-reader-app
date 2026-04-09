@@ -4,6 +4,7 @@
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>
     <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
     <uses-permission android:name="android.permission.VIBRATE"/>
     <uses-permission android:name="com.android.vending.BILLING" />
@@ -40,7 +41,7 @@
         <activity android:name=".MainActivity"
                   android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|uiMode"
                   android:launchMode="singleTask"
-                  android:windowSoftInputMode="adjustPan"
+                  android:windowSoftInputMode="adjustResize"
                   android:theme="@style/Theme.App.SplashScreen"
                   android:exported="true"
                   android:screenOrientation="portrait">

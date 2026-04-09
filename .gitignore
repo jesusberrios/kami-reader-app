@@ -40,7 +40,8 @@ yarn-error.*
 google-services.json
 GoogleService-Info.plist
 android/local.properties
-
+habits-44ab9-firebase-adminsdk-fbsvc-f4e5c46ebc.json
+*firebase-adminsdk*.json
 # typescript
 *.tsbuildinfo
 

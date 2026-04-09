@@ -1,5 +1,6 @@
 import { collection, deleteDoc, doc, getDoc, getDocs, increment, query, setDoc, updateDoc, where } from 'firebase/firestore';
 import { db } from '../firebase/config';
+import { EVENT_ACHIEVEMENTS } from '../config/eventCatalog';
 
 type ReadComicMetadata = {
     comicTitle: string;
@@ -13,7 +14,8 @@ export type ReaderAchievement = {
     icon: string;
     description: string;
     target: number;
-    valueType: 'totalRead' | 'hoursSpent' | 'favorites';
+    valueType: 'totalRead' | 'hoursSpent' | 'favorites' | 'coinsEarned';
+    minHoursSpent?: number;
 };
 
 export type ReadingStats = {
@@ -21,6 +23,7 @@ export type ReadingStats = {
     totalReadingTimeMs: number;
     hoursSpent: number;
     favorites: number;
+    coinsEarned: number;
 };
 
 export const READER_ACHIEVEMENTS: ReaderAchievement[] = [
@@ -64,6 +67,7 @@ export const READER_ACHIEVEMENTS: ReaderAchievement[] = [
         target: 10,
         valueType: 'favorites',
     },
+    ...EVENT_ACHIEVEMENTS,
 ];
 
 export const formatReadingTime = (milliseconds: number): string => {
@@ -89,16 +93,22 @@ export const getUserReadingStats = async (userId: string): Promise<ReadingStats>
     ]);
 
     const totalReadingTimeMs = Number(userDocSnap.data()?.totalReadingTime || 0);
+    const coinsEarned = Number(userDocSnap.data()?.coins || 0);
 
     return {
         totalRead: readComicsSnap.size,
         totalReadingTimeMs,
         hoursSpent: totalReadingTimeMs / (1000 * 60 * 60),
         favorites: favoritesSnap.size,
+        coinsEarned,
     };
 };
 
 export const getAchievementProgress = (achievement: ReaderAchievement, stats: ReadingStats): number => {
+    if (achievement.minHoursSpent && stats.hoursSpent < achievement.minHoursSpent) {
+        return 0;
+    }
+
     const value = achievement.valueType === 'hoursSpent'
         ? stats.hoursSpent
         : stats[achievement.valueType];
@@ -120,13 +130,15 @@ export const syncUserAchievements = async (userId: string, unlockedIds: string[]
         ? userSnap.data()?.achievementsUnlocked
         : [];
 
+    const mergedUnlocked = Array.from(new Set([...currentUnlocked, ...unlockedIds]));
+
     const normalizedCurrent = [...currentUnlocked].sort().join(',');
-    const normalizedNext = [...unlockedIds].sort().join(',');
+    const normalizedNext = [...mergedUnlocked].sort().join(',');
 
     if (normalizedCurrent === normalizedNext) return;
 
     await updateDoc(userDocRef, {
-        achievementsUnlocked: unlockedIds,
+        achievementsUnlocked: mergedUnlocked,
     });
 };
 
@@ -142,6 +154,20 @@ export const recordReadingTime = async (userId: string, durationMs: number) => {
 
 export const recordReadingTimeAndSyncAchievements = async (userId: string, durationMs: number) => {
     await recordReadingTime(userId, durationMs);
+    const stats = await getUserReadingStats(userId);
+    const unlockedIds = getUnlockedAchievementIds(stats);
+    await syncUserAchievements(userId, unlockedIds);
+};
+
+export const awardReadingCoinAndSyncAchievements = async (userId: string, amount = 1) => {
+    const normalizedAmount = Math.max(0, Math.floor(amount));
+    if (!normalizedAmount) return;
+
+    const userDocRef = doc(db, 'users', userId);
+    await updateDoc(userDocRef, {
+        coins: increment(normalizedAmount),
+    });
+
     const stats = await getUserReadingStats(userId);
     const unlockedIds = getUnlockedAchievementIds(stats);
     await syncUserAchievements(userId, unlockedIds);

@@ -14,9 +14,7 @@
     "production": {
       "autoIncrement": true,
       "android": {
-        // Add this Android configuration block
-        "flavor": "play",
-        "buildType": "apk" // This tells EAS to build an APK instead of an AAB
+        "buildType": "apk"
       }
     }
   },

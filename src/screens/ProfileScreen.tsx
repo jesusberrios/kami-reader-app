@@ -50,10 +50,44 @@ interface UserProfile {
     email: string;
     avatar: string;
     accountType: 'free' | 'premium';
+    subscriptionEndDate?: number | null;
     chapterChangeMode?: 'horizontal' | 'vertical';
     readingStats: ReadingStats;
     isFriend?: boolean;
 }
+
+const ONE_HOUR_MS = 1000 * 60 * 60;
+const ONE_DAY_MS = ONE_HOUR_MS * 24;
+
+const getFriendlyPremiumRemaining = (subscriptionEndDate?: number | null) => {
+    if (!subscriptionEndDate || Number.isNaN(Number(subscriptionEndDate))) {
+        return 'Tu plan Premium esta activo. Gracias por apoyar Kami Reader.';
+    }
+
+    const diff = Number(subscriptionEndDate) - Date.now();
+    if (diff <= 0) {
+        return 'Tu Premium vencio, pero tu perfil sigue intacto. Puedes renovarlo cuando quieras.';
+    }
+
+    const days = Math.floor(diff / ONE_DAY_MS);
+    if (days >= 45) {
+        const months = Math.floor(days / 30);
+        return `Te quedan aproximadamente ${months} ${months === 1 ? 'mes' : 'meses'} de Premium.`;
+    }
+    if (days >= 2) {
+        return `Te quedan ${days} dias de Premium. Disfrutalo a tu ritmo.`;
+    }
+    if (days === 1) {
+        return 'Te queda 1 dia de Premium.';
+    }
+
+    const hours = Math.floor(diff / ONE_HOUR_MS);
+    if (hours >= 1) {
+        return `Te quedan ${hours} ${hours === 1 ? 'hora' : 'horas'} de Premium.`;
+    }
+
+    return 'Te queda menos de 1 hora de Premium.';
+};
 
 const ProfileScreen = () => {
     const { theme } = usePersonalization();
@@ -138,12 +172,15 @@ const ProfileScreen = () => {
                     email: data.email || '',
                     avatar: data.avatar || '',
                     accountType: data.accountType || 'free',
+                    subscriptionEndDate: Number(data.subscriptionEndDate || 0) || null,
                     chapterChangeMode: data.chapterChangeMode === 'vertical' ? 'vertical' : 'horizontal',
                     readingStats,
                     isFriend
                 });
 
-                const unlocked = getUnlockedAchievementIds(readingStats);
+                const derivedUnlocked = getUnlockedAchievementIds(readingStats);
+                const persistedUnlocked = Array.isArray(data.achievementsUnlocked) ? data.achievementsUnlocked : [];
+                const unlocked = Array.from(new Set([...persistedUnlocked, ...derivedUnlocked]));
                 setUnlockedAchievements(unlocked);
                 if (isOwnProfile && currentUser?.uid === targetUserId) {
                     syncUserAchievements(targetUserId, unlocked).catch(() => {
@@ -383,6 +420,15 @@ const ProfileScreen = () => {
                                         </View>
                                     )}
                                 </View>
+
+                                {isOwnProfile && userProfile.accountType === 'premium' && (
+                                    <View style={styles.premiumHintCard}>
+                                        <Ionicons name="time-outline" size={14} color={theme.warning} />
+                                        <Text style={styles.premiumHintText}>
+                                            {getFriendlyPremiumRemaining(userProfile.subscriptionEndDate)}
+                                        </Text>
+                                    </View>
+                                )}
 
                                 {/* Action Buttons for other profiles */}
                                 {!isOwnProfile && (
@@ -700,6 +746,24 @@ const styles = StyleSheet.create({
     badgeContainer: {
         flexDirection: 'row',
         marginTop: 10,
+    },
+    premiumHintCard: {
+        marginTop: 12,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+        borderRadius: 12,
+        backgroundColor: 'rgba(255, 255, 255, 0.06)',
+        borderWidth: 1,
+        borderColor: 'rgba(255, 255, 255, 0.1)',
+    },
+    premiumHintText: {
+        color: '#DDE3EA',
+        fontSize: 12,
+        lineHeight: 17,
+        fontFamily: 'Roboto-Regular',
     },
     accountBadge: {
         paddingHorizontal: 15,

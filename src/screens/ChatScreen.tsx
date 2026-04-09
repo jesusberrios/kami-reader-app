@@ -17,10 +17,11 @@ import {
     AppState,
     AppStateStatus,
     Alert,
-    Dimensions
+    Dimensions,
+    Keyboard,
+    KeyboardEvent
 } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
-import type { RouteProp } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { usePersonalization } from '../contexts/PersonalizationContext';
 import { MaterialCommunityIcons, Ionicons, Feather } from '@expo/vector-icons';
@@ -63,14 +64,13 @@ type User = {
     isOnline?: boolean;
     lastSeen?: any;
     fcmToken?: string;
+    pushToken?: string;
 };
 
-type ChatScreenRouteProp = RouteProp<{
-    Chat: {
-        recipientId: string;
-        recipientName: string;
-    };
-}, 'Chat'>;
+type ChatRouteParams = {
+    recipientId: string;
+    recipientName: string;
+};
 
 // Convertir enlaces de Google Drive
 const convertGoogleDriveLink = (driveLink: string): string => {
@@ -181,13 +181,13 @@ const { width } = Dimensions.get('window');
 
 const ChatScreen = () => {
     const navigation = useNavigation();
-    const route = useRoute<ChatScreenRouteProp>();
+    const route = useRoute();
     const insets = useSafeAreaInsets();
     const flatListRef = useRef<FlatList>(null);
     const inputRef = useRef<TextInput>(null);
     const stickerFlatListRef = useRef<FlatList>(null);
 
-    const { recipientId, recipientName } = route.params;
+    const { recipientId, recipientName } = route.params as ChatRouteParams;
 
     const [messages, setMessages] = useState<Message[]>([]);
     const [newMessage, setNewMessage] = useState('');
@@ -200,7 +200,8 @@ const ChatScreen = () => {
     const [isRecipientTyping, setIsRecipientTyping] = useState(false);
     const [stickerPickerVisible, setStickerPickerVisible] = useState(false);
     const [selectedStickerCategory, setSelectedStickerCategory] = useState(STICKER_CATEGORIES[0]);
-    const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+    const [keyboardHeight, setKeyboardHeight] = useState(0);
+    const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const appStateRef = useRef(AppState.currentState);
 
     const currentUser = auth.currentUser;
@@ -224,7 +225,7 @@ const ChatScreen = () => {
 
     // Función throttle para typing
     const throttle = useCallback((func: Function, delay: number) => {
-        let timeoutId: NodeJS.Timeout | null = null;
+        let timeoutId: ReturnType<typeof setTimeout> | null = null;
         let lastExecTime = 0;
 
         return function (this: any, ...args: any[]) {
@@ -249,27 +250,24 @@ const ChatScreen = () => {
 
     // Cargar información del destinatario
     useEffect(() => {
-        const loadRecipientInfo = async () => {
-            try {
-                const recipientRef = doc(db, 'users', recipientId);
-                const recipientSnap = await getDoc(recipientRef);
-                if (recipientSnap.exists()) {
-                    const userData = recipientSnap.data();
-                    setRecipientInfo({
-                        uid: recipientId,
-                        username: userData.username || recipientName,
-                        avatar: userData.avatar || 'https://via.placeholder.com/150',
-                        isOnline: userData.isOnline || false,
-                        lastSeen: userData.lastSeen || null,
-                        fcmToken: userData.fcmToken || null,
-                    });
-                }
-            } catch (error) {
-                alertError('No se pudo cargar la información del destinatario');
-            }
-        };
+        const recipientRef = doc(db, 'users', recipientId);
+        const unsubscribe = onSnapshot(recipientRef, (recipientSnap) => {
+            if (!recipientSnap.exists()) return;
+            const userData = recipientSnap.data();
+            setRecipientInfo({
+                uid: recipientId,
+                username: userData.username || recipientName,
+                avatar: userData.avatar || 'https://via.placeholder.com/150',
+                isOnline: userData.isOnline || false,
+                lastSeen: userData.lastSeen || null,
+                fcmToken: userData.fcmToken || null,
+                pushToken: userData.pushToken || null,
+            });
+        }, () => {
+            alertError('No se pudo cargar la información del destinatario');
+        });
 
-        loadRecipientInfo();
+        return () => unsubscribe();
     }, [recipientId, recipientName, alertError]);
 
     // Estado de conexión del destinatario
@@ -471,9 +469,32 @@ const ChatScreen = () => {
         };
     }, [handleAppStateChange]);
 
+    useEffect(() => {
+        const onKeyboardShow = (event: KeyboardEvent) => {
+            const nextHeight = Number(event?.endCoordinates?.height || 0);
+            setKeyboardHeight(nextHeight);
+        };
+
+        const onKeyboardHide = () => {
+            setKeyboardHeight(0);
+        };
+
+        const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+        const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+
+        const showSub = Keyboard.addListener(showEvent, onKeyboardShow);
+        const hideSub = Keyboard.addListener(hideEvent, onKeyboardHide);
+
+        return () => {
+            showSub.remove();
+            hideSub.remove();
+        };
+    }, []);
+
     const notifyRecipient = useCallback(async (messagePreview: string) => {
-        const pushToken = String(recipientInfo?.fcmToken || '').trim();
+        const pushToken = String(recipientInfo?.fcmToken || recipientInfo?.pushToken || '').trim();
         if (!pushToken) return;
+        if (!pushToken.startsWith('ExponentPushToken[') && !pushToken.startsWith('ExpoPushToken[')) return;
 
         try {
             await fetch(EXPO_PUSH_URL, {
@@ -498,7 +519,26 @@ const ChatScreen = () => {
         } catch {
             // silently ignored
         }
-    }, [currentUser?.displayName, currentUser?.uid, recipientId, recipientInfo?.fcmToken]);
+    }, [currentUser?.displayName, currentUser?.uid, recipientId, recipientInfo?.fcmToken, recipientInfo?.pushToken]);
+
+    const recipientLastSeenText = useMemo(() => {
+        const lastSeenValue = recipientInfo?.lastSeen;
+        if (!lastSeenValue) return 'Desconectado';
+
+        try {
+            const date = typeof lastSeenValue?.toDate === 'function'
+                ? lastSeenValue.toDate()
+                : new Date(lastSeenValue);
+
+            if (!(date instanceof Date) || Number.isNaN(date.getTime())) {
+                return 'Desconectado';
+            }
+
+            return `Visto ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+        } catch {
+            return 'Desconectado';
+        }
+    }, [recipientInfo?.lastSeen]);
 
     // Función optimizada para enviar mensajes
     const sendMessage = useCallback(async (text?: string, sticker?: string) => {
@@ -627,9 +667,7 @@ const ChatScreen = () => {
                     <Text style={styles.statusText}>
                         {isRecipientOnline
                             ? 'En línea'
-                            : recipientInfo?.lastSeen
-                                ? `Visto ${new Date(recipientInfo.lastSeen.toDate()).toLocaleTimeString()}`
-                                : 'Desconectado'
+                            : recipientLastSeenText
                         }
                     </Text>
                 </View>
@@ -642,7 +680,7 @@ const ChatScreen = () => {
                 <MaterialCommunityIcons name="dots-vertical" size={24} color={theme.text} />
             </TouchableOpacity>
         </View>
-    ), [navigation, recipientInfo, recipientName, isRecipientOnline, theme.text]);
+    ), [navigation, recipientInfo, recipientName, isRecipientOnline, recipientLastSeenText, theme.text]);
 
     const emptyComponent = useMemo(() => (
         <View style={styles.emptyContainer}>
@@ -708,7 +746,7 @@ const ChatScreen = () => {
         return (
             <LinearGradient colors={[theme.background, theme.backgroundSecondary]} style={styles.container}>
                 <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
-                <SafeAreaView style={[styles.safeArea, { paddingTop: insets.top, paddingBottom: insets.bottom }]} edges={['left', 'right']}>
+                <SafeAreaView style={[styles.safeArea, { paddingTop: insets.top, paddingBottom: 0 }]} edges={['left', 'right']}>
                     <View style={styles.loadingContainer}>
                         <ActivityIndicator size="large" color={theme.accent} />
                         <Text style={styles.loadingText}>Cargando mensajes...</Text>
@@ -721,7 +759,7 @@ const ChatScreen = () => {
     return (
         <LinearGradient colors={[theme.background, theme.backgroundSecondary]} style={styles.container}>
             <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
-            <SafeAreaView style={[styles.safeArea, { paddingTop: insets.top, paddingBottom: insets.bottom }]} edges={['left', 'right']}>
+            <SafeAreaView style={[styles.safeArea, { paddingTop: insets.top, paddingBottom: 0 }]} edges={['left', 'right']}>
 
                 {headerComponent}
 
@@ -762,9 +800,15 @@ const ChatScreen = () => {
                 />
 
                 <KeyboardAvoidingView
-                    behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+                    behavior={Platform.OS === 'ios' ? 'padding' : undefined}
                     keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
-                    style={[styles.inputContainer, { paddingBottom: Math.max(insets.bottom, 12) }]}
+                    style={[
+                        styles.inputContainer,
+                        {
+                            paddingBottom: Math.max(insets.bottom, 12) + 8,
+                            marginBottom: Platform.OS === 'android' ? Math.max(0, keyboardHeight - insets.bottom) : 0,
+                        },
+                    ]}
                 >
                     <View style={styles.messageInputContainer}>
                         <TouchableOpacity
@@ -776,7 +820,7 @@ const ChatScreen = () => {
 
                         <TextInput
                             ref={inputRef}
-                            style={[styles.messageInput, { color: theme.text, backgroundColor: theme.card }]}
+                            style={[styles.messageInput, { color: theme.text, backgroundColor: 'transparent' }]}
                             placeholder="Escribe un mensaje..."
                             placeholderTextColor={theme.textMuted}
                             value={newMessage}
@@ -914,6 +958,7 @@ const styles = StyleSheet.create({
     messagesList: {
         flexGrow: 1,
         padding: 16,
+        paddingBottom: 12,
     },
     messageContainer: {
         marginBottom: 12,
@@ -978,13 +1023,16 @@ const styles = StyleSheet.create({
         borderTopWidth: 1,
         borderTopColor: 'rgba(255,255,255,0.1)',
         backgroundColor: 'rgba(26,26,36,0.8)',
+        marginTop: 6,
     },
     messageInputContainer: {
         flexDirection: 'row',
         alignItems: 'center',
         backgroundColor: 'rgba(255,255,255,0.1)',
-        borderRadius: 25,
-        paddingHorizontal: 16,
+        borderRadius: 24,
+        paddingHorizontal: 14,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.12)',
     },
     messageInput: {
         flex: 1,
@@ -992,7 +1040,8 @@ const styles = StyleSheet.create({
         fontSize: 16,
         fontFamily: 'Roboto-Regular',
         maxHeight: 100,
-        paddingVertical: 12,
+        minHeight: 44,
+        paddingVertical: 10,
     },
     sendButton: {
         padding: 8,

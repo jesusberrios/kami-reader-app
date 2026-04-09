@@ -28,6 +28,7 @@ import { collection, doc, getDoc, serverTimestamp, setDoc, writeBatch } from 'fi
 import { useAlertContext } from '../contexts/AlertContext';
 import { backendUrl } from '../config/backend';
 import {
+    awardReadingCoinAndSyncAchievements,
     recordReadingTime,
     recordReadingTimeAndSyncAchievements,
     syncFullMangaReadState,
@@ -655,7 +656,7 @@ const ReaderScreen = () => {
                 resumePosition = sessionProgress;
             }
 
-            if (plan === 'premium' && bundle.currentChapter?.slug) {
+            if (bundle.currentChapter?.slug) {
                 const user = auth.currentUser;
                 if (user) {
                     const mangaInfo = mangaData?.manga || {};
@@ -666,6 +667,8 @@ const ReaderScreen = () => {
                     }
                     const chapterReadDocRef = doc(collection(comicReadDocRef, 'chaptersRead'), safeChapterId);
                     const inProgressDocRef = doc(db, 'users', user.uid, 'inProgressManga', parsed.mangaSlug);
+                    const chapterReadSnap = await getDoc(chapterReadDocRef);
+                    const isFirstChapterRead = !chapterReadSnap.exists();
 
                     await Promise.all([
                         setDoc(chapterReadDocRef, {
@@ -700,6 +703,10 @@ const ReaderScreen = () => {
                             startedAt: serverTimestamp(),
                         }, { merge: true }),
                     ]);
+
+                    if (isFirstChapterRead) {
+                        await awardReadingCoinAndSyncAchievements(user.uid, 1);
+                    }
 
                     await syncFullMangaReadState(
                         user.uid,
