@@ -7,6 +7,7 @@ import { createDrawerNavigator } from '@react-navigation/drawer';
 import { createStackNavigator } from '@react-navigation/stack';
 import { CardStyleInterpolators, TransitionSpecs } from '@react-navigation/stack';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as NavigationBar from 'expo-navigation-bar';
@@ -131,6 +132,7 @@ function ThemedNavigationShell({
   showEventCompanion: boolean;
 }) {
   const { theme, settings } = usePersonalization();
+  const { bottom } = useSafeAreaInsets();
 
   const THEME_TO_EVENT: Record<string, string> = {
     'easter-matsuri': EASTER_EVENT_ID,
@@ -142,6 +144,7 @@ function ThemedNavigationShell({
     const eid = THEME_TO_EVENT[settings.appTheme];
     return eid && isEventActive(eid) ? eid : null;
   })();
+  const companionBottomOffset = (shouldShowBottomBar ? 98 : 18) + Math.max(0, bottom) + (Platform.OS === 'android' ? -6 : 0);
 
   useEffect(() => {
     if (Platform.OS !== 'android') return;
@@ -243,8 +246,8 @@ function ThemedNavigationShell({
         />
 
         <EventCompanionPet
-          visible={showEventCompanion && !!settings.selectedCompanionKey && currentRouteName !== 'Reader'}
-          bottomOffset={shouldShowBottomBar ? 98 : 18}
+          visible={showEventCompanion && !!settings.selectedCompanionKey && currentRouteName !== 'Reader' && currentRouteName !== 'Chat'}
+          bottomOffset={companionBottomOffset}
         />
       </View>
     </>
@@ -605,29 +608,37 @@ export default function App() {
   useEffect(() => {
     if (Platform.OS !== 'android') return;
 
-    const configureSystemNavigation = async () => {
+    const applySystemNavigationByRoute = async (routeName?: string) => {
+      const isReader = routeName === 'Reader';
       try {
-        await NavigationBar.setPositionAsync('absolute');
-        await NavigationBar.setBackgroundColorAsync('#00000000');
-        await NavigationBar.setBehaviorAsync('overlay-swipe');
-        await NavigationBar.setVisibilityAsync('hidden');
+        if (isReader) {
+          await NavigationBar.setPositionAsync('absolute');
+          await NavigationBar.setBackgroundColorAsync('#00000000');
+          await NavigationBar.setBehaviorAsync('overlay-swipe');
+          await NavigationBar.setVisibilityAsync('hidden');
+          return;
+        }
+
+        await NavigationBar.setPositionAsync('relative');
+        await NavigationBar.setBehaviorAsync('inset-touch');
+        await NavigationBar.setVisibilityAsync('visible');
       } catch {
         // silently ignored
       }
     };
 
-    configureSystemNavigation();
+    applySystemNavigationByRoute(currentRouteName);
 
     const appStateSubscription = AppState.addEventListener('change', (nextState) => {
       if (nextState === 'active') {
-        configureSystemNavigation();
+        applySystemNavigationByRoute(currentRouteName);
       }
     });
 
     return () => {
       appStateSubscription.remove();
     };
-  }, []);
+  }, [currentRouteName]);
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (nextState) => {
@@ -708,20 +719,6 @@ export default function App() {
       unsubscribe();
     };
   }, [user?.uid, scheduleLocalNotification]);
-
-  useEffect(() => {
-    if (Platform.OS !== 'android') return;
-
-    const ensureNavigationBarHidden = async () => {
-      try {
-        await NavigationBar.setVisibilityAsync('hidden');
-      } catch {
-        // silently ignored
-      }
-    };
-
-    ensureNavigationBarHidden();
-  }, [currentRouteName]);
 
   useEffect(() => {
     const appSettingsRef = doc(db, 'parameters', 'appSettings');

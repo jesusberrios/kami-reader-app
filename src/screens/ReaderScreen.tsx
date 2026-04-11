@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
     AppState,
     AppStateStatus,
+    Platform,
     View,
     Text,
     Image as RNImage,
@@ -26,7 +27,7 @@ import { FlingGestureHandler, Directions, State } from 'react-native-gesture-han
 import { auth, db } from '../firebase/config';
 import { collection, doc, getDoc, serverTimestamp, setDoc, writeBatch } from 'firebase/firestore';
 import { useAlertContext } from '../contexts/AlertContext';
-import { backendUrl } from '../config/backend';
+import { BACKEND_URL, backendUrl } from '../config/backend';
 import {
     awardReadingCoinAndSyncAchievements,
     recordReadingTime,
@@ -46,7 +47,39 @@ const VERTICAL_END_THRESHOLD_PX = 48;
 const MIN_VERTICAL_SCROLL_TO_ARM_ADVANCE_PX = 72;
 const HUGE_BITMAP_PIXEL_THRESHOLD = 18_000_000;
 const MAX_CHAPTER_BUNDLE_CACHE = 18;
-const WEB_READER_BASE_URL = 'https://suki-s-soft.github.io/sukisoft-web/reader';
+const PREFETCH_INITIAL_PAGES = 5;
+const PREFETCH_AHEAD_PAGES = 6;
+const PREFETCH_NEIGHBOR_CHAPTER_PAGES = 8;
+const PREFETCH_URL_SET_MAX = 4000;
+const PROD_WEB_READER_BASE_URL = 'https://suki-s-soft.github.io/sukisoft-web/reader';
+const FORCED_WEB_READER_BASE_URL = process.env.EXPO_PUBLIC_WEB_READER_URL || '';
+const LOCAL_WEB_READER_BASE_URL = process.env.EXPO_PUBLIC_WEB_READER_LOCAL_URL || '';
+
+const resolveDevWebReaderBaseUrl = () => {
+    const explicitLocal = String(LOCAL_WEB_READER_BASE_URL || '').trim();
+    if (explicitLocal) return explicitLocal;
+
+    try {
+        const backend = new URL(String(BACKEND_URL || '').trim());
+        const backendHost = String(backend.hostname || '').trim();
+        if (backendHost) {
+            return `http://${backendHost}:55355/reader`;
+        }
+    } catch {
+        // Ignore and fallback to platform defaults.
+    }
+
+    if (Platform.OS === 'android') {
+        return 'http://10.0.2.2:55355/reader';
+    }
+
+    return 'http://localhost:55355/reader';
+};
+
+const WEB_READER_BASE_URL = (
+    FORCED_WEB_READER_BASE_URL ||
+    (__DEV__ ? resolveDevWebReaderBaseUrl() : PROD_WEB_READER_BASE_URL)
+).trim();
 
 const AD_UNIT_ID = __DEV__ ? TestIds.BANNER : 'ca-app-pub-6584977537844104/1888694522';
 MobileAds().initialize();
@@ -259,10 +292,11 @@ const ReaderImageItem = React.memo(({ item }: { item: ReaderImage; index: number
     return (
         <View style={styles.imageContainer}>
             <RNImage
-                source={{ uri: item.url }}
+                source={{ uri: item.url, cache: 'force-cache' }}
                 style={{ width: screenWidth, height }}
                 resizeMode="contain"
                 resizeMethod={shouldForceResize ? 'resize' : 'none'}
+                progressiveRenderingEnabled={true}
                 fadeDuration={0}
                 onLoad={handleLoad}
             />
@@ -320,8 +354,21 @@ const ReaderScreen = () => {
     const sessionChapterProgressRef = useRef<Map<string, SavedReadingPosition>>(new Map());
     const verticalAdvanceTriggeredRef = useRef(false);
     const verticalAutoAdvanceArmedRef = useRef(false);
+    const prefetchedImageUrlsRef = useRef<Set<string>>(new Set());
+    const lastPrefetchAnchorRef = useRef(-1);
+    const chapterBundlePrefetchInFlightRef = useRef<Set<string>>(new Set());
 
     const parsed = useMemo(() => parseComposite(currentCompositeSlug), [currentCompositeSlug]);
+
+    const enterReaderImmersiveMode = useCallback(() => {
+        NativeModules.ImmersiveModule?.hideNavigationBar?.();
+        StatusBar.setHidden(true, 'slide');
+    }, []);
+
+    const exitReaderImmersiveMode = useCallback(() => {
+        NativeModules.ImmersiveModule?.showNavigationBar?.();
+        StatusBar.setHidden(false, 'slide');
+    }, []);
 
     const handleWebViewShouldStart = useCallback((request: any) => {
         const current = String(webViewUrl || '').replace(/\/+$/, '');
@@ -330,9 +377,46 @@ const ReaderScreen = () => {
         return next === current;
     }, [webViewUrl]);
 
+    const handleWebViewLoadError = useCallback((event: any) => {
+        const description = String(event?.nativeEvent?.description || '').trim();
+        const code = Number(event?.nativeEvent?.code);
+        const failingUrl = String(event?.nativeEvent?.url || '').trim();
+        console.warn('Reader WebView load error', { code, description, url: failingUrl });
+        setUseWebView(false);
+        setWebViewUrl(null);
+    }, []);
+
     useEffect(() => {
         imagesRef.current = images;
     }, [images]);
+
+    const prefetchImageWindow = useCallback((list: ReaderImage[], startIndex: number, count: number) => {
+        if (!Array.isArray(list) || !list.length || count <= 0) return;
+
+        const start = Math.max(0, Number.isFinite(startIndex) ? Math.floor(startIndex) : 0);
+        const end = Math.min(list.length, start + Math.max(1, Math.floor(count)));
+        const toPrefetch: string[] = [];
+
+        for (let i = start; i < end; i += 1) {
+            const url = String(list[i]?.url || '').trim();
+            if (!url) continue;
+            if (prefetchedImageUrlsRef.current.has(url)) continue;
+
+            if (prefetchedImageUrlsRef.current.size >= PREFETCH_URL_SET_MAX) {
+                prefetchedImageUrlsRef.current.clear();
+            }
+
+            prefetchedImageUrlsRef.current.add(url);
+            toPrefetch.push(url);
+        }
+
+        if (!toPrefetch.length) return;
+        Promise.all(
+            toPrefetch.map((url) => RNImage.prefetch(url).catch(() => false)),
+        ).catch(() => {
+            // Best effort: failed prefetch should not block reading.
+        });
+    }, []);
 
     const getMangaData = useCallback(async () => {
         if (mangaDataCacheRef.current) {
@@ -415,6 +499,33 @@ const ReaderScreen = () => {
         trimChapterBundleCache(chapterBundleCacheRef.current);
         return bundle;
     }, [buildChapterBundle, getMangaData]);
+
+    const prefetchChapterBundleInBackground = useCallback((targetCompositeSlug: string | null) => {
+        const normalizedTarget = normalizeCompositeSlug(String(targetCompositeSlug || ''));
+        if (!normalizedTarget || normalizedTarget === currentCompositeSlug) return;
+
+        const cached = chapterBundleCacheRef.current.get(normalizedTarget);
+        if (cached) {
+            prefetchImageWindow(cached.images, 0, PREFETCH_NEIGHBOR_CHAPTER_PAGES);
+            return;
+        }
+
+        if (chapterBundlePrefetchInFlightRef.current.has(normalizedTarget)) {
+            return;
+        }
+
+        chapterBundlePrefetchInFlightRef.current.add(normalizedTarget);
+        fetchChapterBundle(normalizedTarget)
+            .then((bundle) => {
+                prefetchImageWindow(bundle.images, 0, PREFETCH_NEIGHBOR_CHAPTER_PAGES);
+            })
+            .catch(() => {
+                // Silent prefetch failure; user-facing load flow keeps normal error handling.
+            })
+            .then(() => {
+                chapterBundlePrefetchInFlightRef.current.delete(normalizedTarget);
+            });
+    }, [currentCompositeSlug, fetchChapterBundle, prefetchImageWindow]);
 
     const persistReadingPosition = useCallback(async (imageIndex?: number) => {
         const user = auth.currentUser;
@@ -526,8 +637,7 @@ const ReaderScreen = () => {
     useFocusEffect(
         useCallback(() => {
             isReaderFocusedRef.current = true;
-            NativeModules.ImmersiveModule?.hideNavigationBar?.();
-            StatusBar.setHidden(true, 'slide');
+            enterReaderImmersiveMode();
 
             resumeReadingSession();
             readingSyncIntervalRef.current = setInterval(() => {
@@ -548,11 +658,17 @@ const ReaderScreen = () => {
                     });
                 }
                 readingSessionStartedAtRef.current = null;
-                NativeModules.ImmersiveModule?.showNavigationBar?.();
-                StatusBar.setHidden(false, 'slide');
+                exitReaderImmersiveMode();
             };
-        }, [flushReadingTime, resumeReadingSession])
+        }, [enterReaderImmersiveMode, exitReaderImmersiveMode, flushReadingTime, resumeReadingSession])
     );
+
+    useEffect(() => {
+        return () => {
+            // Fail-safe: always restore bars if the screen is unmounted abruptly.
+            exitReaderImmersiveMode();
+        };
+    }, [exitReaderImmersiveMode]);
 
     useEffect(() => {
         const subscription = AppState.addEventListener('change', (nextAppState) => {
@@ -740,6 +856,11 @@ const ReaderScreen = () => {
                 : 0;
             currentMaxVisibleImageIndexRef.current = currentVisibleImageIndexRef.current;
             currentScrollOffsetRef.current = resumePosition?.scrollOffset || 0;
+            prefetchImageWindow(
+                imgs,
+                currentVisibleImageIndexRef.current,
+                PREFETCH_INITIAL_PAGES,
+            );
             const candidateWebViewUrl = buildWebReaderUrl(
                 parsed.mangaSlug,
                 parsed.chapterSlug,
@@ -771,7 +892,7 @@ const ReaderScreen = () => {
                 setLoadingChapter(false);
             }
         }
-    }, [alertError, chapterChangeMode, currentCompositeSlug, fetchChapterBundle, getMangaData, parsed.chapterSlug, parsed.mangaSlug, plan]);
+    }, [alertError, chapterChangeMode, currentCompositeSlug, fetchChapterBundle, getMangaData, parsed.chapterSlug, parsed.mangaSlug, plan, prefetchImageWindow]);
 
     useEffect(() => {
         loadChapterData();
@@ -780,6 +901,21 @@ const ReaderScreen = () => {
             loadRequestIdRef.current += 1;
         };
     }, [loadChapterData]);
+
+    useEffect(() => {
+        if (loadingChapter) return;
+
+        prefetchChapterBundleInBackground(nextCompositeSlug);
+        if (chapterChangeMode === 'vertical') {
+            prefetchChapterBundleInBackground(prevCompositeSlug);
+        }
+    }, [
+        chapterChangeMode,
+        loadingChapter,
+        nextCompositeSlug,
+        prefetchChapterBundleInBackground,
+        prevCompositeSlug,
+    ]);
 
     const resetAutoHide = useCallback(() => {
         if (useWebView) return;
@@ -1044,6 +1180,7 @@ const ReaderScreen = () => {
         chapterSwitchInProgressRef.current = false;
         setPrevChapterRefreshing(false);
         verticalAutoAdvanceArmedRef.current = false;
+        lastPrefetchAnchorRef.current = -1;
         setUseWebView(false);
         setWebViewUrl(null);
     }, [currentCompositeSlug]);
@@ -1080,6 +1217,12 @@ const ReaderScreen = () => {
 
         if (maxVisibleIndex >= 0) {
             currentMaxVisibleImageIndexRef.current = maxVisibleIndex;
+
+            const nextAnchor = maxVisibleIndex + 1;
+            if (nextAnchor > lastPrefetchAnchorRef.current) {
+                lastPrefetchAnchorRef.current = nextAnchor;
+                prefetchImageWindow(imagesRef.current, nextAnchor, PREFETCH_AHEAD_PAGES);
+            }
         }
     }).current;
 
@@ -1155,6 +1298,8 @@ const ReaderScreen = () => {
                                     source={{ uri: webViewUrl }}
                                     style={{ flex: 1 }}
                                     onLoad={showAndResetControls}
+                                    onError={handleWebViewLoadError}
+                                    onHttpError={handleWebViewLoadError}
                                     onMessage={handleWebViewMessage}
                                     onShouldStartLoadWithRequest={handleWebViewShouldStart}
                                     setSupportMultipleWindows={false}
@@ -1196,6 +1341,8 @@ const ReaderScreen = () => {
                             source={{ uri: webViewUrl }}
                             style={{ flex: 1 }}
                             onLoad={showAndResetControls}
+                            onError={handleWebViewLoadError}
+                            onHttpError={handleWebViewLoadError}
                             onMessage={handleWebViewMessage}
                             onShouldStartLoadWithRequest={handleWebViewShouldStart}
                             setSupportMultipleWindows={false}

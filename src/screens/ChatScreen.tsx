@@ -19,7 +19,7 @@ import {
     Alert,
     Dimensions,
     Keyboard,
-    KeyboardEvent
+    KeyboardEvent,
 } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -757,9 +757,15 @@ const ChatScreen = () => {
     }
 
     return (
-        <LinearGradient colors={[theme.background, theme.backgroundSecondary]} style={styles.container}>
-            <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
-            <SafeAreaView style={[styles.safeArea, { paddingTop: insets.top, paddingBottom: 0 }]} edges={['left', 'right']}>
+        <KeyboardAvoidingView
+            style={styles.container}
+            enabled={Platform.OS === 'ios'}
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + 8 : 0}
+        >
+            <LinearGradient colors={[theme.background, theme.backgroundSecondary]} style={styles.container}>
+                <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
+                <SafeAreaView style={[styles.safeArea, { paddingTop: insets.top, paddingBottom: 0 }]} edges={['left', 'right', 'bottom']}>
 
                 {headerComponent}
 
@@ -786,11 +792,13 @@ const ChatScreen = () => {
 
                 <FlatList
                     ref={flatListRef}
+                    style={styles.messagesListContainer}
                     data={messages}
                     renderItem={renderMessage}
                     keyExtractor={keyExtractor}
                     contentContainerStyle={styles.messagesList}
                     showsVerticalScrollIndicator={false}
+                    keyboardShouldPersistTaps="handled"
                     initialNumToRender={settings.reduceMotion ? 12 : 20}
                     maxToRenderPerBatch={settings.reduceMotion ? 6 : 10}
                     windowSize={settings.reduceMotion ? 4 : 5}
@@ -799,17 +807,13 @@ const ChatScreen = () => {
                     ListEmptyComponent={emptyComponent}
                 />
 
-                <KeyboardAvoidingView
-                    behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-                    keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
-                    style={[
-                        styles.inputContainer,
-                        {
-                            paddingBottom: Math.max(insets.bottom, 12) + 8,
-                            marginBottom: Platform.OS === 'android' ? Math.max(0, keyboardHeight - insets.bottom) : 0,
-                        },
-                    ]}
-                >
+                <View style={[
+                    styles.inputContainer,
+                    {
+                        paddingBottom: Platform.OS === 'ios' ? Math.max(insets.bottom, 12) + 8 : 10,
+                        marginBottom: Platform.OS === 'android' ? Math.max(0, keyboardHeight - Math.max(insets.bottom, 0) + 48) : 0,
+                    },
+                ]}>
                     <View style={styles.messageInputContainer}>
                         <TouchableOpacity
                             onPress={() => setStickerPickerVisible(true)}
@@ -851,7 +855,7 @@ const ChatScreen = () => {
                             )}
                         </TouchableOpacity>
                     </View>
-                </KeyboardAvoidingView>
+                </View>
 
                 {stickerPickerComponent}
 
@@ -889,8 +893,9 @@ const ChatScreen = () => {
                         </Pressable>
                     </Modal>
                 )}
-            </SafeAreaView>
-        </LinearGradient>
+                </SafeAreaView>
+            </LinearGradient>
+        </KeyboardAvoidingView>
     );
 };
 
@@ -959,6 +964,9 @@ const styles = StyleSheet.create({
         flexGrow: 1,
         padding: 16,
         paddingBottom: 12,
+    },
+    messagesListContainer: {
+        flex: 1,
     },
     messageContainer: {
         marginBottom: 12,

@@ -263,7 +263,6 @@ export default function EventThemeBackdrop({ activeEventId }: Props) {
                 <Animated.View style={[styles.band, { transform: [{ translateX: bandShift }],    top: 64,  left: -40,  width: 220, height: 36, backgroundColor: 'rgba(198,235,255,0.20)' }]} />
                 <Animated.View style={[styles.band, { transform: [{ translateX: bandShiftNeg }], top: 112, right: -30, width: 180, height: 30, backgroundColor: 'rgba(255,210,156,0.18)' }]} />
                 {!reduce && STAGGER_6.map((s, i) => <FallingEgg key={i} stagger={s} />)}
-                <View style={styles.grassLine} />
                 <View style={[styles.bottomMist, { backgroundColor: 'rgba(200,240,200,0.25)' }]} />
             </View>
         );
@@ -304,7 +303,6 @@ export default function EventThemeBackdrop({ activeEventId }: Props) {
                 <Animated.View style={[styles.band, { transform: [{ translateX: bandShift }],    top: 70,  left: -40,  width: 220, height: 34, backgroundColor: 'rgba(255,80,120,0.20)' }]} />
                 <Animated.View style={[styles.band, { transform: [{ translateX: bandShiftNeg }], top: 128, right: -20, width: 180, height: 28, backgroundColor: 'rgba(255,60,80,0.17)' }]} />
                 {!reduce && STAGGER_6.map((s, i) => <FloatingHeart key={i} stagger={s} />)}
-                <View style={[styles.grassLine, { backgroundColor: 'rgba(255,80,120,0.42)' }]} />
                 <View style={[styles.bottomMist, { backgroundColor: 'rgba(255,80,120,0.22)' }]} />
             </View>
         );
@@ -330,14 +328,6 @@ const styles = StyleSheet.create({
     band: {
         position: 'absolute',
         borderRadius: 18,
-    },
-    grassLine: {
-        position: 'absolute',
-        bottom: 78,
-        left: 0,
-        right: 0,
-        height: 3,
-        backgroundColor: 'rgba(160,222,134,0.55)',
     },
     bottomMist: {
         position: 'absolute',
