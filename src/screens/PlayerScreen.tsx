@@ -9,10 +9,14 @@ import { WebView } from 'react-native-webview';
 import { Picker } from '@react-native-picker/picker';
 import { usePersonalization } from '../contexts/PersonalizationContext';
 import { useAlertContext } from '../contexts/AlertContext';
-import { getEpisodeStreams } from '../services/backendApi';
+import { getAnimeEpisodes, getEpisodeStreams } from '../services/backendApi';
+import { auth, db } from '../firebase/config';
+import { doc, serverTimestamp, setDoc } from 'firebase/firestore';
 
 const ENABLE_WEBVIEW_FALLBACK = false;
 const FORCE_WEBVIEW_MODE = false;
+const PLAYER_EPISODES_PAGE_SIZE = 120;
+const PLAYER_EPISODES_MAX_PAGES = 12;
 
 const isNativePlayableUrl = (value: unknown) => {
     const raw = String(value || '').trim();
@@ -133,6 +137,20 @@ const pickStreamUrl = (stream: any) => {
         if (url) return url;
     }
     return '';
+};
+
+const extractEpisodeNumber = (item: any) => {
+    const direct = Number(item?.number);
+    if (Number.isFinite(direct) && direct > 0) return direct;
+
+    const raw = String(item?.episodeSlug || item?.slug || item?.title || '');
+    const match = raw.match(/(\d+(?:\.\d+)?)/);
+    if (match) {
+        const parsed = Number(match[1]);
+        if (Number.isFinite(parsed) && parsed > 0) return parsed;
+    }
+
+    return 0;
 };
 
 const hasUsableStreamUrl = (stream: any) => {
@@ -438,6 +456,9 @@ const PlayerScreen: React.FC = () => {
     const [playerLoading, setPlayerLoading] = useState(true);
     const [lastErrorMessage, setLastErrorMessage] = useState<string>('');
     const [playbackMode, setPlaybackMode] = useState<'webview' | 'native'>('native');
+    const [episodeCatalog, setEpisodeCatalog] = useState<any[]>([]);
+    const [currentEpisodeIndex, setCurrentEpisodeIndex] = useState<number>(-1);
+    const [episodeNavLoading, setEpisodeNavLoading] = useState(false);
     const webViewLoadTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const webViewNavLoopRef = useRef<{ url: string; ts: number; count: number }>({ url: '', ts: 0, count: 0 });
     const webViewLoadLoopRef = useRef<{ host: string; ts: number; count: number }>({ host: '', ts: 0, count: 0 });
@@ -497,6 +518,153 @@ const PlayerScreen: React.FC = () => {
     useEffect(() => {
         loadStreams();
     }, [loadStreams]);
+
+    useEffect(() => {
+        let cancelled = false;
+
+        const resolveEpisodeCatalog = async () => {
+            if (!animeSlug || !episodeSlug) {
+                setEpisodeCatalog([]);
+                setCurrentEpisodeIndex(-1);
+                return;
+            }
+
+            setEpisodeNavLoading(true);
+            try {
+                const allEpisodes: any[] = [];
+
+                for (let page = 1; page <= PLAYER_EPISODES_MAX_PAGES; page += 1) {
+                    const payload = await getAnimeEpisodes(animeSlug, { page, limit: PLAYER_EPISODES_PAGE_SIZE });
+                    const batch = Array.isArray(payload?.episodes) ? payload.episodes : [];
+                    if (!batch.length) break;
+
+                    allEpisodes.push(...batch);
+                    if (batch.length < PLAYER_EPISODES_PAGE_SIZE) break;
+                }
+
+                const dedupe = new Map<string, any>();
+                for (const item of allEpisodes) {
+                    const key = String(item?.episodeSlug || item?.slug || '').trim();
+                    if (!key) continue;
+                    if (!dedupe.has(key)) dedupe.set(key, item);
+                }
+
+                const ordered = Array.from(dedupe.values()).sort((a, b) => {
+                    const aNum = extractEpisodeNumber(a);
+                    const bNum = extractEpisodeNumber(b);
+                    if (aNum !== bNum) return aNum - bNum;
+
+                    const aKey = String(a?.episodeSlug || a?.slug || '').toLowerCase();
+                    const bKey = String(b?.episodeSlug || b?.slug || '').toLowerCase();
+                    return aKey.localeCompare(bKey);
+                });
+
+                const currentIdx = ordered.findIndex((item) => {
+                    const candidate = String(item?.episodeSlug || item?.slug || '').trim();
+                    return candidate === episodeSlug;
+                });
+
+                if (!cancelled) {
+                    setEpisodeCatalog(ordered);
+                    setCurrentEpisodeIndex(currentIdx);
+                }
+            } catch (_) {
+                if (!cancelled) {
+                    setEpisodeCatalog([]);
+                    setCurrentEpisodeIndex(-1);
+                }
+            } finally {
+                if (!cancelled) {
+                    setEpisodeNavLoading(false);
+                }
+            }
+        };
+
+        resolveEpisodeCatalog();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [animeSlug, episodeSlug]);
+
+    const currentEpisode = useMemo(() => {
+        if (currentEpisodeIndex < 0 || currentEpisodeIndex >= episodeCatalog.length) return null;
+        return episodeCatalog[currentEpisodeIndex] || null;
+    }, [currentEpisodeIndex, episodeCatalog]);
+
+    const prevEpisode = useMemo(() => {
+        if (currentEpisodeIndex <= 0) return null;
+        return episodeCatalog[currentEpisodeIndex - 1] || null;
+    }, [currentEpisodeIndex, episodeCatalog]);
+
+    const nextEpisode = useMemo(() => {
+        if (currentEpisodeIndex < 0) return null;
+        return episodeCatalog[currentEpisodeIndex + 1] || null;
+    }, [currentEpisodeIndex, episodeCatalog]);
+
+    const currentEpisodeTitle = useMemo(() => {
+        const number = extractEpisodeNumber(currentEpisode);
+        const title = String(currentEpisode?.title || '').trim();
+
+        if (title && number > 0) return `Episodio ${number} · ${title}`;
+        if (title) return title;
+        if (number > 0) return `Episodio ${number}`;
+        if (episodeSlug) return `Episodio ${episodeSlug}`;
+        return 'Episodio';
+    }, [currentEpisode, episodeSlug]);
+
+    const markEpisodeAsWatched = useCallback(async (episode: any) => {
+        const currentUserUid = String(auth.currentUser?.uid || '').trim();
+        if (!currentUserUid || !animeSlug || !episode) return;
+
+        const targetSlug = String(episode?.episodeSlug || episode?.slug || '').trim();
+        if (!targetSlug) return;
+
+        const sourceToken = String(animeSlug || '').includes('__')
+            ? String(animeSlug).split('__')[0]
+            : 'jkanime';
+
+        const watchedId = `${animeSlug}__${targetSlug}`;
+        const watchedRef = doc(db, 'users', currentUserUid, 'watchedAnime', watchedId);
+        const inProgressRef = doc(db, 'users', currentUserUid, 'inProgressAnime', animeSlug);
+
+        await Promise.all([
+            setDoc(watchedRef, {
+                animeSlug,
+                episodeSlug: targetSlug,
+                episodeTitle: String(episode?.title || '').trim() || `Episodio ${extractEpisodeNumber(episode) || ''}`,
+                watchedAt: serverTimestamp(),
+                isCompleted: true,
+                source: sourceToken,
+            }, { merge: true }),
+            setDoc(inProgressRef, {
+                animeSlug,
+                animeTitle: String(route.params?.animeTitle || animeSlug).trim(),
+                coverUrl: String(route.params?.cover || '').trim(),
+                lastEpisodeSlug: targetSlug,
+                lastEpisodeNumber: Number(extractEpisodeNumber(episode) || 0),
+                updatedAt: serverTimestamp(),
+                source: sourceToken,
+            }, { merge: true }),
+        ]);
+    }, [animeSlug, route.params?.animeTitle, route.params?.cover]);
+
+    const navigateToEpisode = useCallback(async (episode: any) => {
+        const targetSlug = String(episode?.episodeSlug || episode?.slug || '').trim();
+        if (!targetSlug || targetSlug === episodeSlug) return;
+
+        try {
+            await markEpisodeAsWatched(episode);
+        } catch (_) {
+            // Keep episode switch responsive even if tracking fails.
+        }
+
+        navigation.replace('Player', {
+            animeSlug,
+            episodeSlug: targetSlug,
+            startAtMs: 0,
+        });
+    }, [animeSlug, episodeSlug, markEpisodeAsWatched, navigation]);
 
     const selectedStream = useMemo(() => {
         if (!selectedStreamId) return null;
@@ -854,10 +1022,27 @@ const PlayerScreen: React.FC = () => {
                     <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
                         <Ionicons name="arrow-back" size={26} color={theme.text} />
                     </TouchableOpacity>
-                    <View>
-                        <Text style={[styles.title, { color: theme.text }]}>Player</Text>
+                    <View style={styles.topBarTitleWrap}>
+                        <Text style={[styles.title, { color: theme.text }]} numberOfLines={1}>{currentEpisodeTitle}</Text>
                         <Text style={[styles.topBarSubtitle, { color: theme.textMuted }]}>Reproduccion inteligente por servidor</Text>
                     </View>
+                    <TouchableOpacity
+                        style={[
+                            styles.nextEpisodeButton,
+                            { backgroundColor: nextEpisode ? theme.accentSoft : 'rgba(255,255,255,0.08)' },
+                        ]}
+                        onPress={() => navigateToEpisode(nextEpisode)}
+                        disabled={!nextEpisode || episodeNavLoading}
+                    >
+                        {episodeNavLoading ? (
+                            <ActivityIndicator size="small" color={theme.accent} />
+                        ) : (
+                            <>
+                                <Text style={[styles.nextEpisodeButtonText, { color: nextEpisode ? theme.text : theme.textMuted }]}>Siguiente</Text>
+                                <Ionicons name="play-forward" size={16} color={nextEpisode ? theme.accent : theme.textMuted} />
+                            </>
+                        )}
+                    </TouchableOpacity>
                 </View>
 
                 {loading ? (
@@ -964,6 +1149,34 @@ const PlayerScreen: React.FC = () => {
                                 </View>
                             )}
                         </View>
+
+                        {!useWebViewMode && (
+                            <View style={styles.episodeNavRow}>
+                                <TouchableOpacity
+                                    style={[
+                                        styles.episodeNavButton,
+                                        { borderColor: theme.border, backgroundColor: prevEpisode ? theme.surface : 'rgba(255,255,255,0.05)' },
+                                    ]}
+                                    onPress={() => navigateToEpisode(prevEpisode)}
+                                    disabled={!prevEpisode || episodeNavLoading}
+                                >
+                                    <Ionicons name="play-back" size={16} color={prevEpisode ? theme.accent : theme.textMuted} />
+                                    <Text style={[styles.episodeNavButtonText, { color: prevEpisode ? theme.text : theme.textMuted }]}>Anterior</Text>
+                                </TouchableOpacity>
+
+                                <TouchableOpacity
+                                    style={[
+                                        styles.episodeNavButton,
+                                        { borderColor: theme.border, backgroundColor: nextEpisode ? theme.surface : 'rgba(255,255,255,0.05)' },
+                                    ]}
+                                    onPress={() => navigateToEpisode(nextEpisode)}
+                                    disabled={!nextEpisode || episodeNavLoading}
+                                >
+                                    <Text style={[styles.episodeNavButtonText, { color: nextEpisode ? theme.text : theme.textMuted }]}>Siguiente</Text>
+                                    <Ionicons name="play-forward" size={16} color={nextEpisode ? theme.accent : theme.textMuted} />
+                                </TouchableOpacity>
+                            </View>
+                        )}
 
                         {!!selectedStream && (
                             <View style={[styles.nowPlayingCard, { backgroundColor: theme.surface, borderColor: theme.border }]}>
@@ -1076,8 +1289,14 @@ const styles = StyleSheet.create({
     safeArea: { flex: 1 },
     topBar: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 8 },
     backButton: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.08)' },
+    topBarTitleWrap: { flex: 1, minWidth: 0 },
     title: { marginLeft: 12, fontSize: 22, fontFamily: 'Roboto-Bold' },
     topBarSubtitle: { marginLeft: 12, marginTop: 2, fontSize: 12, fontFamily: 'Roboto-Regular' },
+    nextEpisodeButton: { minWidth: 108, height: 40, borderRadius: 20, paddingHorizontal: 12, marginLeft: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 },
+    nextEpisodeButtonText: { fontSize: 12, fontFamily: 'Roboto-Bold' },
+    episodeNavRow: { flexDirection: 'row', gap: 10, marginBottom: 14 },
+    episodeNavButton: { flex: 1, borderWidth: 1, borderRadius: 12, paddingVertical: 10, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
+    episodeNavButtonText: { fontSize: 13, fontFamily: 'Roboto-Bold' },
     loadingWrap: { flex: 1, alignItems: 'center', justifyContent: 'center' },
     loadingText: { marginTop: 10, fontSize: 14, fontFamily: 'Roboto-Regular' },
     scrollContent: { paddingHorizontal: 16, paddingBottom: 24 },

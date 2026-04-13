@@ -6,7 +6,6 @@ import {
     StyleSheet,
     ActivityIndicator,
     TouchableOpacity,
-    Image,
     StatusBar,
     Platform,
 } from 'react-native';
@@ -19,6 +18,7 @@ import { collection, onSnapshot, deleteDoc, doc } from 'firebase/firestore';
 import { useAlertContext } from '../contexts/AlertContext';
 import { usePersonalization } from '../contexts/PersonalizationContext';
 import { getProviderAliasLabel } from '../utils/providerBranding';
+import { Image as ExpoImage } from 'expo-image';
 
 // Define the type for an in-progress item
 type InProgressItem = {
@@ -52,6 +52,30 @@ const formatRelativeDate = (date?: Date | null) => {
     if (diffDays < 7) return `Hace ${diffDays} d`;
 
     return date.toLocaleDateString();
+};
+
+const normalizeAnimeSavedTitle = (value: string) =>
+    String(value || '')
+        .replace(/^([a-z0-9_-]+)__+/i, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+const buildAnimeCoverSource = (coverUrl: string, source?: string) => {
+    const uri = String(coverUrl || '').trim();
+    if (!uri) return { uri };
+
+    if (String(source || '').toLowerCase() !== 'jkanime') {
+        return { uri };
+    }
+
+    return {
+        uri,
+        headers: {
+            Referer: 'https://jkanime.net/',
+            Origin: 'https://jkanime.net',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        },
+    };
 };
 
 export default function InProgressScreen() {
@@ -150,10 +174,10 @@ export default function InProgressScreen() {
                     const animeSlug = String(data.animeSlug || data.slug || document.id).trim();
                     next.push({
                         id: document.id,
-                        title: String(data.animeTitle || data.title || animeSlug || 'Anime'),
+                        title: normalizeAnimeSavedTitle(String(data.animeTitle || data.title || animeSlug || 'Anime')),
                         coverUrl: String(data.coverUrl || ''),
                         slug: animeSlug,
-                        source: String(data.source || 'animeflv').toLowerCase(),
+                        source: String(data.source || 'jkanime').toLowerCase(),
                         contentType: 'anime',
                         lastEpisodeSlug: String(data.lastEpisodeSlug || '').trim() || undefined,
                         lastEpisodeNumber: Number.isFinite(Number(data.lastEpisodeNumber)) ? Number(data.lastEpisodeNumber) : undefined,
@@ -183,6 +207,8 @@ export default function InProgressScreen() {
                 navigation.navigate('Player', {
                     animeSlug: item.slug,
                     episodeSlug: item.lastEpisodeSlug,
+                    animeTitle: item.title,
+                    cover: item.coverUrl,
                     startAtMs: 0,
                 });
                 return;
@@ -271,10 +297,13 @@ export default function InProgressScreen() {
                     accessibilityLabel={`Continuar ${item.title}`}
             >
                 {item.coverUrl && (
-                    <Image
-                        source={{ uri: item.coverUrl }}
+                    <ExpoImage
+                        source={buildAnimeCoverSource(item.coverUrl, item.source)}
                         style={styles.coverImage}
-                        resizeMode="cover"
+                        contentFit="cover"
+                        cachePolicy="memory-disk"
+                        placeholder={require('../../assets/auth-bg.png')}
+                        transition={120}
                     />
                 )}
                 <LinearGradient

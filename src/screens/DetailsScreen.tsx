@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
     View,
     Text,
-    Image,
     ScrollView,
     ActivityIndicator,
     StyleSheet,
@@ -17,6 +16,7 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import { Image as ExpoImage } from 'expo-image';
 import { db, auth } from '../firebase/config';
 import { doc, setDoc, deleteDoc, onSnapshot, collection, getDoc, serverTimestamp } from 'firebase/firestore';
 import { RootStackParamList } from '../navigation/types';
@@ -95,22 +95,81 @@ const normalizeStatus = (value?: string) => {
 };
 
 const buildCoverImageSource = (cover: string, source?: string) => {
-    const uri = String(cover || '').trim();
+    let uri = String(cover || '')
+        .replace(/&amp;/g, '&')
+        .replace(/\s+/g, '')
+        .trim();
     if (!uri) return { uri };
 
-    const normalizedSource = String(source || '').toLowerCase().trim();
-    if (normalizedSource !== 'zonatmoorg') {
-        return { uri };
+    if (/^https?:\/\/zonatmo\.org\/img\?/i.test(uri)) {
+        try {
+            const parsed = new URL(uri);
+            const rawU = String(parsed.searchParams.get('u') || '').trim();
+            if (rawU) {
+                const decoded = decodeURIComponent(rawU);
+                if (/^https?:\/\//i.test(decoded)) {
+                    uri = decoded;
+                } else if (/^[A-Za-z0-9_-]+$/.test(rawU)) {
+                    const b64 = rawU.replace(/-/g, '+').replace(/_/g, '/');
+                    const padded = b64 + '='.repeat((4 - (b64.length % 4)) % 4);
+                    const direct = typeof atob === 'function' ? atob(padded) : '';
+                    uri = /^https?:\/\//i.test(direct) ? direct : parsed.toString();
+                } else {
+                    parsed.searchParams.set('u', encodeURIComponent(decoded));
+                    uri = parsed.toString();
+                }
+            }
+        } catch (_) {
+            // Keep original URL when parsing fails.
+        }
     }
 
-    return {
-        uri,
-        headers: {
-            Referer: 'https://zonatmo.org/',
-            Origin: 'https://zonatmo.org',
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        },
-    };
+    const normalizedSource = String(source || '').toLowerCase().trim();
+    const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+
+    if (normalizedSource === 'zonatmoorg') {
+        return {
+            uri,
+            headers: {
+                Referer: 'https://zonatmo.org/',
+                Origin: 'https://zonatmo.org',
+                'User-Agent': UA,
+            },
+        };
+    }
+
+    if (normalizedSource === 'visormanga') {
+        // ALL visormanga URLs need proxy for hotlink protection
+        const needsProxy = /^https?:\/\/([a-z0-9.-]*)?visormanga\.com/i.test(uri);
+        const proxyUri = needsProxy
+            ? `${backendUrl}/cover-proxy?u=${encodeURIComponent(uri)}`
+            : uri;
+        return { uri: proxyUri };
+    }
+
+    if (normalizedSource === 'manhwaweb') {
+        return {
+            uri,
+            headers: {
+                Referer: 'https://manhwaweb.com/',
+                Origin: 'https://manhwaweb.com',
+                'User-Agent': UA,
+            },
+        };
+    }
+
+    if (normalizedSource === 'zonaikigai') {
+        return {
+            uri,
+            headers: {
+                Referer: 'https://zonaikigai.sakanamenu.online/',
+                Origin: 'https://zonaikigai.sakanamenu.online',
+                'User-Agent': UA,
+            },
+        };
+    }
+
+    return { uri };
 };
 
 const DetailsScreen: React.FC = () => {
@@ -549,7 +608,14 @@ const DetailsScreen: React.FC = () => {
                 >
                     <View style={[styles.heroCard, { backgroundColor: theme.surface, borderColor: theme.border }]}>
                         <View style={styles.headerContainer}>
-                            <Image source={buildCoverImageSource(manga.cover, manga.source)} style={[styles.coverImage, { borderColor: theme.border }]} resizeMode="cover" />
+                            <ExpoImage
+                                source={buildCoverImageSource(manga.cover, manga.source)}
+                                style={[styles.coverImage, { borderColor: theme.border }]}
+                                contentFit="cover"
+                                cachePolicy="memory-disk"
+                                placeholder={require('../../assets/auth-bg.png')}
+                                transition={120}
+                            />
                             <View style={styles.infoCard}>
                                 <Text style={[styles.title, { color: theme.text }]} numberOfLines={2}>{manga.title}</Text>
 

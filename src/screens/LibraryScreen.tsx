@@ -22,14 +22,17 @@ import { Image } from 'expo-image';
 import { useAlertContext } from '../contexts/AlertContext';
 import { usePersonalization } from '../contexts/PersonalizationContext';
 import { backendUrl } from '../config/backend';
-import { getLatestAnime, searchAnime } from '../services/backendApi';
+import { getAnimeDetails, getLatestAnime, searchAnime } from '../services/backendApi';
 import { getProviderAliasLabel, normalizeProviderSource } from '../utils/providerBranding';
 
 const REQUEST_TIMEOUT_MS = 8000;
 const PAGE_LIMIT = 30;
+const ANIME_PAGE_LIMIT = 60;
 const SEARCH_CACHE_TTL_MS = 5 * 60 * 1000;
 const LIBRARY_CACHE_TTL_MS = 2 * 60 * 1000;
 const AUTO_PREFETCH_MIN_RESULTS = 60;
+const AUTO_PREFETCH_MIN_RESULTS_ANIME = 140;
+const PREFETCH_BATCH_SIZE = 80;
 
 type Comic = {
     slug: string;
@@ -53,7 +56,7 @@ type Comic = {
 
 type SortKey = 'default' | 'title_asc' | 'title_desc' | 'score_desc';
 type ContentMode = 'manga' | 'anime';
-type SourceKey = 'all' | 'zonatmo' | 'zonatmoorg' | 'visormanga' | 'manhwaweb' | 'zonaikigai' | 'animeflv' | 'jkanime' | 'animeytx';
+type SourceKey = 'all' | 'zonatmo' | 'zonatmoorg' | 'visormanga' | 'manhwaweb' | 'zonaikigai' | 'jkanime' | 'animeytx';
 type StatusKey = 'all' | 'ongoing' | 'completed' | 'hiatus' | 'cancelled' | 'unknown';
 type RatingKey = 'all' | 'safe' | 'suggestive' | 'erotica';
 type TagKey = 'all' | 'boyslove';
@@ -84,7 +87,6 @@ const MANGA_SOURCE_OPTIONS: FilterOption[] = [
 const ANIME_SOURCE_OPTIONS: FilterOption[] = [
     { label: 'Todas', value: 'all' },
     { label: 'Kitsune Stream (Recomendado)', value: 'jkanime' },
-    { label: 'Hoshi Play', value: 'animeflv' },
     { label: 'Astra Wave', value: 'animeytx' },
 ];
 
@@ -157,13 +159,15 @@ const tokenize = (value: string) =>
         .filter((x) => x.length > 1 && !STOP_WORDS.has(x));
 
 const normalizeAnimeDisplayTitle = (value: string, source?: string) => {
-    const raw = String(value || '').replace(/\s+/g, ' ').trim();
+    const raw = String(value || '')
+        .replace(/^([a-z0-9_-]+)__+/i, '')
+        .replace(/\s+/g, ' ')
+        .trim();
     const sourceKey = String(source || '').toLowerCase().trim();
-    if (!raw || (sourceKey !== 'animeflv' && sourceKey !== 'jkanime')) return raw;
+    if (!raw || sourceKey !== 'jkanime') return raw;
 
     return raw
         .replace(/^anime\s+/i, '')
-        .replace(/\s*[-|]\s*animeflv(?:\.net|\.com)?\b.*$/i, '')
         .replace(/\s*[-|]\s*anime\s+online\b.*$/i, '')
         .replace(/\s*[-|]\s*ver\s+anime\s+online\b.*$/i, '')
         .replace(/\bver\s+anime\s+online\b.*$/i, '')
@@ -175,7 +179,7 @@ const mapApiComic = (item: any): Comic => {
     const title = normalizeAnimeDisplayTitle(item.title || 'Sin título', item.source);
     const description = item.description || '';
     const sourceKey = String(item.source || '').toLowerCase();
-    const contentType = item.contentType || (sourceKey === 'animeflv' || sourceKey === 'jkanime' || sourceKey === 'animeytx' ? 'anime' : 'manga');
+    const contentType = item.contentType || (sourceKey === 'jkanime' || sourceKey === 'animeytx' ? 'anime' : 'manga');
     return {
         slug: item.slug,
         title,
@@ -335,11 +339,102 @@ const mergeUniqueComics = (base: Comic[], incoming: Comic[]) => {
     return Array.from(map.values());
 };
 
+const normalizeCoverUri = (value?: string) => {
+    let uri = String(value || '')
+        .replace(/&amp;/g, '&')
+        .replace(/\s+/g, '')
+        .trim();
+
+    if (!uri) return '';
+
+    if (/^https?:\/\/zonatmo\.org\/img\?/i.test(uri)) {
+        try {
+            const parsed = new URL(uri);
+            const rawU = String(parsed.searchParams.get('u') || '').trim();
+            if (rawU) {
+                const decoded = decodeURIComponent(rawU);
+                if (/^https?:\/\//i.test(decoded)) {
+                    uri = decoded;
+                } else if (/^[A-Za-z0-9_-]+$/.test(rawU)) {
+                    const b64 = rawU.replace(/-/g, '+').replace(/_/g, '/');
+                    const padded = b64 + '='.repeat((4 - (b64.length % 4)) % 4);
+                    const direct = typeof atob === 'function' ? atob(padded) : '';
+                    uri = /^https?:\/\//i.test(direct) ? direct : parsed.toString();
+                } else {
+                    parsed.searchParams.set('u', encodeURIComponent(decoded));
+                    uri = parsed.toString();
+                }
+            }
+        } catch (_) {
+            // Keep original URL when parsing fails.
+        }
+    }
+
+    return uri;
+};
+
 const buildCardImageSource = (item: Comic) => {
-    const uri = String(item?.cover || '').trim();
+    const uri = normalizeCoverUri(item?.cover);
     if (!uri) return { uri };
 
-    if (String(item?.source || '').toLowerCase() !== 'zonatmoorg') {
+    const source = String(item?.source || '').toLowerCase().trim();
+    if (source === 'jkanime') {
+        return {
+            uri,
+            headers: {
+                Referer: 'https://jkanime.net/',
+                Origin: 'https://jkanime.net',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+            },
+        };
+    }
+
+    if (source === 'animeytx') {
+        return {
+            uri,
+            headers: {
+                Referer: 'https://animeytx.net/',
+                Origin: 'https://animeytx.net',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+            },
+        };
+    }
+
+    if (source === 'visormanga') {
+        // ALL visormanga URLs need to go through proxy for hotlink protection
+        // because the CDN requires proper Referer headers
+        const needsProxy = /^https?:\/\/([a-z0-9.-]*)?visormanga\.com/i.test(uri);
+        const proxyUri = needsProxy
+            ? `${backendUrl}/cover-proxy?u=${encodeURIComponent(uri)}`
+            : uri;
+        return {
+            uri: proxyUri,
+        };
+    }
+
+    if (source === 'manhwaweb') {
+        return {
+            uri,
+            headers: {
+                Referer: 'https://manhwaweb.com/',
+                Origin: 'https://manhwaweb.com',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+            },
+        };
+    }
+
+    if (source === 'zonaikigai') {
+        return {
+            uri,
+            headers: {
+                Referer: 'https://zonaikigai.sakanamenu.online/',
+                Origin: 'https://zonaikigai.sakanamenu.online',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+            },
+        };
+    }
+
+    if (source !== 'zonatmoorg') {
         return { uri };
     }
 
@@ -378,6 +473,7 @@ const LibraryScreen = ({ navigation }: any) => {
     const [hasMore, setHasMore] = useState(true);
     const [isFetchingMore, setIsFetchingMore] = useState(false);
     const [showScrollTop, setShowScrollTop] = useState(false);
+    const [coverOverrides, setCoverOverrides] = useState<Record<string, string>>({});
     const isMounted = useRef(true);
     const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const requestIdRef = useRef(0);
@@ -388,6 +484,8 @@ const LibraryScreen = ({ navigation }: any) => {
     const didMountContentModeRef = useRef(false);
     const searchCacheRef = useRef<Map<string, { timestamp: number; results: Comic[]; totalPages?: number }>>(new Map());
     const libraryCacheRef = useRef<Map<string, { timestamp: number; results: Comic[]; hasMore: boolean }>>(new Map());
+    const resolvingCoverKeysRef = useRef<Set<string>>(new Set());
+    const attemptedMissingCoverKeysRef = useRef<Set<string>>(new Set());
 
     const { alertError } = useAlertContext();
 
@@ -418,6 +516,94 @@ const LibraryScreen = ({ navigation }: any) => {
         const baseWidth = (width / 2) - (settings.compactCards ? 18 : 20);
         return settings.compactCards ? baseWidth * 1.25 : baseWidth * 1.5;
     }, [settings.compactCards]);
+
+    const sanitizeCoverUrl = useCallback((value: string) => String(value || '')
+        .replace(/&amp;/g, '&')
+        .replace(/\s+/g, '')
+        .trim(), []);
+
+    const itemKey = useCallback((item: Comic) => `${item.source}:${item.slug}`, []);
+
+    const resolveFallbackCover = useCallback(async (item: Comic) => {
+        const key = itemKey(item);
+        if (!key || resolvingCoverKeysRef.current.has(key)) return;
+
+        resolvingCoverKeysRef.current.add(key);
+        try {
+            const isAnime = String(item?.contentType || '').toLowerCase() === 'anime'
+                || ['jkanime', 'animeytx'].includes(String(item?.source || '').toLowerCase());
+
+            let nextCover = '';
+            if (isAnime) {
+                const details = await getAnimeDetails(item.slug, { timeoutMs: REQUEST_TIMEOUT_MS, ttlMs: 30 * 1000, forceRefresh: true });
+                nextCover = sanitizeCoverUrl(String(details?.anime?.cover || ''));
+            } else {
+                const details = await fetchJsonWithTimeout(backendUrl(`/manga/${encodeURIComponent(item.slug)}`));
+                nextCover = sanitizeCoverUrl(String(details?.manga?.cover || ''));
+                
+                const source = String(item?.source || '').toLowerCase().trim();
+                if (source === 'visormanga' && nextCover && /^https?:\/\/thumbs\.visormanga\.com/i.test(nextCover)) {
+                    nextCover = backendUrl(`/cover-proxy?u=${encodeURIComponent(nextCover)}`);
+                }
+            }
+
+            const current = sanitizeCoverUrl(String(item.cover || ''));
+            if (!nextCover || nextCover === current) return;
+
+            if (isMounted.current) {
+                setCoverOverrides((prev) => ({
+                    ...prev,
+                    [key]: nextCover,
+                }));
+            }
+        } catch (_) {
+            // Keep current placeholder/cover when fallback lookup fails.
+        } finally {
+            resolvingCoverKeysRef.current.delete(key);
+        }
+    }, [itemKey, sanitizeCoverUrl]);
+
+    useEffect(() => {
+        // Prefetch visible covers immediately
+        const visibleCount = contentMode === 'anime' ? 24 : 28;
+        let coverUris = comics
+            .slice(0, visibleCount)
+            .map((item) => {
+                const source = buildCardImageSource(item);
+                return source?.uri ? String(source.uri) : null;
+            })
+            .filter((uri): uri is string => !!uri && /^https?:\/\//i.test(uri));
+
+        // Add more from batch for preload
+        if (comics.length > visibleCount) {
+            const extraUris = comics
+                .slice(visibleCount, PREFETCH_BATCH_SIZE)
+                .map((item) => {
+                    const source = buildCardImageSource(item);
+                    return source?.uri ? String(source.uri) : null;
+                })
+                .filter((uri): uri is string => !!uri && /^https?:\/\//i.test(uri));
+            coverUris = coverUris.concat(extraUris);
+        }
+
+        if (coverUris.length > 0) {
+            Image.prefetch(coverUris, 'memory-disk').catch(() => {});
+        }
+    }, [comics, contentMode]);
+
+    useEffect(() => {
+        const visibleItems = comics.slice(0, contentMode === 'anime' ? 24 : 28);
+        for (const item of visibleItems) {
+            const key = itemKey(item);
+            if (!key || attemptedMissingCoverKeysRef.current.has(key)) continue;
+
+            const effectiveCover = sanitizeCoverUrl(String(coverOverrides[key] || item.cover || ''));
+            if (effectiveCover) continue;
+
+            attemptedMissingCoverKeysRef.current.add(key);
+            resolveFallbackCover(item);
+        }
+    }, [comics, contentMode, coverOverrides, itemKey, resolveFallbackCover, sanitizeCoverUrl]);
 
     useEffect(() => {
         isMounted.current = true;
@@ -450,6 +636,8 @@ const LibraryScreen = ({ navigation }: any) => {
         setPendingRating('all');
         setSelectedTag('all');
         setPendingTag('all');
+        setCoverOverrides({});
+        attemptedMissingCoverKeysRef.current.clear();
         allComicsRef.current = [];
         setAllComics([]);
         setComics([]);
@@ -498,6 +686,7 @@ const LibraryScreen = ({ navigation }: any) => {
 
         setError(null);
         try {
+            const effectiveLimit = mode === 'anime' ? ANIME_PAGE_LIMIT : PAGE_LIMIT;
             const query = new URLSearchParams();
             if (selectedSource !== 'all') query.append('source', selectedSource);
             if (selectedStatus !== 'all') query.append('status', selectedStatus);
@@ -505,7 +694,7 @@ const LibraryScreen = ({ navigation }: any) => {
             if (selectedTag === 'boyslove') query.append('genre', 'boyslove');
             if (selectedSort !== 'default') query.append('sort', selectedSort);
             query.append('page', String(page));
-            query.append('limit', String(PAGE_LIMIT));
+            query.append('limit', String(effectiveLimit));
 
             const endpoint = mode === 'anime' ? '/anime/latest' : '/library';
             const data = mode === 'anime'
@@ -524,10 +713,14 @@ const LibraryScreen = ({ navigation }: any) => {
                 : Number.isFinite(totalPagesRaw)
                     ? page < totalPagesRaw
                     : append
-                        ? (appendedUniqueCount > 0 && (hasActiveServerFilters ? list.length > 0 : list.length >= PAGE_LIMIT))
-                        : (hasActiveServerFilters ? list.length > 0 : list.length >= PAGE_LIMIT);
+                        ? (appendedUniqueCount > 0 && (hasActiveServerFilters ? list.length > 0 : list.length >= effectiveLimit))
+                        : (hasActiveServerFilters ? list.length > 0 : list.length >= effectiveLimit);
 
             if (isMounted.current) {
+                if (!append) {
+                    setCoverOverrides({});
+                    attemptedMissingCoverKeysRef.current.clear();
+                }
                 allComicsRef.current = merged;
                 setAllComics(merged);
                 applyFiltersAndSort(merged, selectedSort, selectedSource, selectedStatus, selectedRating, selectedTag);
@@ -555,7 +748,7 @@ const LibraryScreen = ({ navigation }: any) => {
                     if (selectedTag === 'boyslove') nextQuery.append('genre', 'boyslove');
                     if (selectedSort !== 'default') nextQuery.append('sort', selectedSort);
                     nextQuery.append('page', String(nextPage));
-                    nextQuery.append('limit', String(PAGE_LIMIT));
+                    nextQuery.append('limit', String(effectiveLimit));
 
                     const nextEndpoint = mode === 'anime' ? '/anime/latest' : '/library';
                     const nextFetch = mode === 'anime'
@@ -567,7 +760,7 @@ const LibraryScreen = ({ navigation }: any) => {
                             const nextList: Comic[] = (nextData.results || []).map(mapApiComic);
                             const hasMoreValue = typeof nextData?.pagination?.hasMore === 'boolean'
                                 ? nextData.pagination.hasMore
-                                : nextList.length >= PAGE_LIMIT;
+                                : nextList.length >= effectiveLimit;
                             libraryCacheRef.current.set(nextKey, {
                                 timestamp: Date.now(),
                                 results: nextList,
@@ -617,6 +810,7 @@ const LibraryScreen = ({ navigation }: any) => {
 
         setError(null);
         try {
+            const effectiveLimit = contentMode === 'anime' ? ANIME_PAGE_LIMIT : PAGE_LIMIT;
             const cacheKey = buildSearchCacheKey(contentMode, q, page, selectedSource, selectedStatus, selectedRating, selectedSort, selectedTag);
             const cached = searchCacheRef.current.get(cacheKey);
             const isCacheFresh = !!cached && (Date.now() - cached.timestamp) <= SEARCH_CACHE_TTL_MS;
@@ -624,7 +818,7 @@ const LibraryScreen = ({ navigation }: any) => {
             if (isCacheFresh && cached) {
                 const nextHasMoreFromCache = typeof cached.totalPages === 'number'
                     ? page < cached.totalPages
-                    : cached.results.length >= PAGE_LIMIT;
+                    : cached.results.length >= effectiveLimit;
 
                 if (isMounted.current && requestId === requestIdRef.current) {
                     const merged = append ? mergeUniqueComics(allComicsRef.current, cached.results) : cached.results;
@@ -649,7 +843,7 @@ const LibraryScreen = ({ navigation }: any) => {
             if (selectedTag === 'boyslove') query.append('genre', 'boyslove');
             if (selectedSort !== 'default') query.append('sort', selectedSort);
             query.append('page', String(page));
-            query.append('limit', String(PAGE_LIMIT));
+            query.append('limit', String(effectiveLimit));
 
             const data = contentMode === 'anime'
                 ? await searchAnime(Object.fromEntries(query.entries()), { ttlMs: SEARCH_CACHE_TTL_MS })
@@ -660,7 +854,7 @@ const LibraryScreen = ({ navigation }: any) => {
             const totalPagesRaw = Number(data?.pagination?.totalPages);
             const nextHasMore = Number.isFinite(totalPagesRaw)
                 ? page < totalPagesRaw
-                : list.length >= PAGE_LIMIT;
+                : list.length >= effectiveLimit;
 
             if (isMounted.current && requestId === requestIdRef.current) {
                 searchCacheRef.current.set(cacheKey, {
@@ -670,6 +864,10 @@ const LibraryScreen = ({ navigation }: any) => {
                 });
 
                 const merged = append ? mergeUniqueComics(allComicsRef.current, relevant) : relevant;
+                if (!append) {
+                    setCoverOverrides({});
+                    attemptedMissingCoverKeysRef.current.clear();
+                }
                 allComicsRef.current = merged;
                 setAllComics(merged);
                 applyFiltersAndSort(merged, selectedSort, selectedSource, selectedStatus, selectedRating, selectedTag);
@@ -740,12 +938,13 @@ const LibraryScreen = ({ navigation }: any) => {
     useEffect(() => {
         // If filtered results are too short to scroll, fetch the next page automatically.
         if (loading || isFetchingMore || !hasMore) return;
-        if (comics.length === 0 || comics.length >= AUTO_PREFETCH_MIN_RESULTS) return;
+        const targetMin = contentMode === 'anime' ? AUTO_PREFETCH_MIN_RESULTS_ANIME : AUTO_PREFETCH_MIN_RESULTS;
+        if (comics.length === 0 || comics.length >= targetMin) return;
         if (autoPrefetchPageRef.current === currentPage) return;
 
         autoPrefetchPageRef.current = currentPage;
         handleLoadMore();
-    }, [comics.length, hasMore, loading, isFetchingMore, currentPage, handleLoadMore]);
+    }, [comics.length, contentMode, hasMore, loading, isFetchingMore, currentPage, handleLoadMore]);
 
     const handleListScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
         const nextOffset = Math.max(0, Number(event.nativeEvent.contentOffset.y || 0));
@@ -776,6 +975,7 @@ const LibraryScreen = ({ navigation }: any) => {
         setError(null);
 
         try {
+            const effectiveLimit = contentMode === 'anime' ? ANIME_PAGE_LIMIT : PAGE_LIMIT;
             const params = new URLSearchParams();
             if (trimmedQuery) params.append('title', trimmedQuery);
             if (source !== 'all') params.append('source', source);
@@ -784,7 +984,7 @@ const LibraryScreen = ({ navigation }: any) => {
             if (tag === 'boyslove') params.append('genre', 'boyslove');
             if (sort !== 'default') params.append('sort', sort);
             params.append('page', '1');
-            params.append('limit', String(PAGE_LIMIT));
+            params.append('limit', String(effectiveLimit));
 
             const endpoint = contentMode === 'anime'
                 ? (trimmedQuery ? '/anime/search' : '/anime/latest')
@@ -806,7 +1006,7 @@ const LibraryScreen = ({ navigation }: any) => {
                 ? hasMoreRaw
                 : Number.isFinite(totalPagesRaw)
                     ? 1 < totalPagesRaw
-                    : (hasActiveServerFilters ? list.length > 0 : list.length >= PAGE_LIMIT);
+                    : (hasActiveServerFilters ? list.length > 0 : list.length >= effectiveLimit);
 
             if (!isMounted.current) return;
             allComicsRef.current = merged;
@@ -1081,11 +1281,18 @@ const LibraryScreen = ({ navigation }: any) => {
                             onPress={() => navigation.navigate(contentMode === 'anime' ? 'AnimeDetails' : 'Details', { slug: item.slug })}
                         >
                             <Image
-                                source={buildCardImageSource(item)}
+                                source={buildCardImageSource({
+                                    ...item,
+                                    cover: coverOverrides[itemKey(item)] || item.cover,
+                                })}
                                 style={[styles.comicCover, { height: compactCoverHeight, backgroundColor: theme.surfaceMuted }]}
                                 contentFit="cover"
                                 cachePolicy="memory-disk"
                                 placeholder={require('../../assets/auth-bg.png')}
+                                recyclingKey={itemKey(item)}
+                                onError={() => {
+                                    resolveFallbackCover(item);
+                                }}
                             />
                             <LinearGradient
                                 colors={['transparent', 'rgba(0,0,0,0.85)']}

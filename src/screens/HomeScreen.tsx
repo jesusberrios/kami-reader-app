@@ -27,6 +27,7 @@ import { getAppVersion } from '../utils/versionUtils';
 import UpdateRequiredModal from '../components/updateRequiredModal';
 import FloatingChatBubble from '../components/floatingChatBubble';
 import { usePersonalization } from '../contexts/PersonalizationContext';
+import { backendUrl } from '../config/backend';
 import { getLatestManga, getLatestAnime } from '../services/backendApi';
 import { Image as ExpoImage } from 'expo-image';
 
@@ -52,8 +53,42 @@ const DONATION_URL = process.env.EXPO_PUBLIC_DONATION_URL || 'https://ko-fi.com/
 const HOME_LATEST_AUTO_REFRESH_MS = 45 * 1000;
 const MAINTENANCE_ACK_STORAGE_KEY = 'kami.maintenance.dismissed.v1';
 
+const normalizeCoverUri = (value?: string) => {
+    let uri = String(value || '')
+        .replace(/&amp;/g, '&')
+        .replace(/\s+/g, '')
+        .trim();
+
+    if (!uri) return '';
+
+    if (/^https?:\/\/zonatmo\.org\/img\?/i.test(uri)) {
+        try {
+            const parsed = new URL(uri);
+            const rawU = String(parsed.searchParams.get('u') || '').trim();
+            if (rawU) {
+                const decoded = decodeURIComponent(rawU);
+                if (/^https?:\/\//i.test(decoded)) {
+                    uri = decoded;
+                } else if (/^[A-Za-z0-9_-]+$/.test(rawU)) {
+                    const b64 = rawU.replace(/-/g, '+').replace(/_/g, '/');
+                    const padded = b64 + '='.repeat((4 - (b64.length % 4)) % 4);
+                    const direct = typeof atob === 'function' ? atob(padded) : '';
+                    uri = /^https?:\/\//i.test(direct) ? direct : parsed.toString();
+                } else {
+                    parsed.searchParams.set('u', encodeURIComponent(decoded));
+                    uri = parsed.toString();
+                }
+            }
+        } catch (_) {
+            // Keep original URL when parsing fails.
+        }
+    }
+
+    return uri;
+};
+
 const zonatmoorgImageSource = (item: { cover?: string; source?: string }) => {
-    const uri = String(item?.cover || '').trim();
+    const uri = normalizeCoverUri(item?.cover);
     if (!uri) return { uri };
 
     const source = String(item?.source || '').toLowerCase();
@@ -69,14 +104,72 @@ const zonatmoorgImageSource = (item: { cover?: string; source?: string }) => {
     };
 };
 
+const mangaCoverSource = (item: { cover?: string; source?: string }) => {
+    const uri = normalizeCoverUri(item?.cover);
+    if (!uri) return { uri };
+
+    const source = String(item?.source || '').toLowerCase();
+    if (source === 'visormanga') {
+        // ALL visormanga URLs need proxy for hotlink protection
+        const needsProxy = /^https?:\/\/([a-z0-9.-]*)?visormanga\.com/i.test(uri);
+        const proxyUri = needsProxy
+            ? `${backendUrl}/cover-proxy?u=${encodeURIComponent(uri)}`
+            : uri;
+        return { uri: proxyUri };
+    }
+
+    if (source === 'zonatmoorg') {
+        return {
+            uri,
+            headers: {
+                Referer: 'https://zonatmo.org/',
+                Origin: 'https://zonatmo.org',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+            },
+        };
+    }
+
+    return { uri };
+};
+
+const animeCoverSource = (item: { cover?: string; source?: string }) => {
+    const uri = normalizeCoverUri(item?.cover);
+    if (!uri) return { uri };
+
+    const source = String(item?.source || '').toLowerCase();
+    if (source === 'animeytx') {
+        return {
+            uri,
+            headers: {
+                Referer: 'https://animeytx.net/',
+                Origin: 'https://animeytx.net',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+            },
+        };
+    }
+
+    if (source !== 'jkanime') return zonatmoorgImageSource(item);
+
+    return {
+        uri,
+        headers: {
+            Referer: 'https://jkanime.net/',
+            Origin: 'https://jkanime.net',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        },
+    };
+};
+
 const normalizeAnimeDisplayTitle = (value: string, source?: string) => {
-    const raw = String(value || '').replace(/\s+/g, ' ').trim();
+    const raw = String(value || '')
+        .replace(/^([a-z0-9_-]+)__+/i, '')
+        .replace(/\s+/g, ' ')
+        .trim();
     const sourceKey = String(source || '').toLowerCase().trim();
-    if (!raw || (sourceKey !== 'animeflv' && sourceKey !== 'jkanime')) return raw;
+    if (!raw || sourceKey !== 'jkanime') return raw;
 
     return raw
         .replace(/^anime\s+/i, '')
-        .replace(/\s*[-|]\s*animeflv(?:\.net|\.com)?\b.*$/i, '')
         .replace(/\s*[-|]\s*anime\s+online\b.*$/i, '')
         .replace(/\s*[-|]\s*ver\s+anime\s+online\b.*$/i, '')
         .replace(/\bver\s+anime\s+online\b.*$/i, '')
@@ -280,7 +373,7 @@ const HomeScreen = ({ navigation }: any) => {
                     title: normalizeAnimeDisplayTitle(item.title || 'Sin título', item.source),
                     source: normalizeProviderSource(item.source),
                     contentType: String(item.contentType || '').toLowerCase() === 'anime'
-                        || ['animeflv', 'jkanime', 'animeytx'].includes(String(item.source || '').toLowerCase())
+                        || ['jkanime', 'animeytx'].includes(String(item.source || '').toLowerCase())
                         ? 'anime'
                         : 'manga',
                     lang: item.language || 'es-419',
@@ -465,11 +558,11 @@ const HomeScreen = ({ navigation }: any) => {
             const episodeNumber = Number.isFinite(Number(data.lastEpisodeNumber)) ? Number(data.lastEpisodeNumber) : undefined;
 
             readingProgressData.push({
-                hid: `${normalizeProviderSource(data.source || 'animeflv')}:${animeSlug}`,
-                title: String(data.animeTitle || data.title || animeSlug).trim(),
+                hid: `${normalizeProviderSource(data.source || 'jkanime')}:${animeSlug}`,
+                title: normalizeAnimeDisplayTitle(String(data.animeTitle || data.title || animeSlug).trim(), data.source),
                 cover: data.coverUrl || 'https://via.placeholder.com/150x200?text=No+Cover',
                 slug: animeSlug,
-                source: normalizeProviderSource(data.source || 'animeflv'),
+                source: normalizeProviderSource(data.source || 'jkanime'),
                 contentType: 'anime',
                 content_rating: 'safe',
                 lang: 'es-419',
@@ -707,6 +800,60 @@ const HomeScreen = ({ navigation }: any) => {
     }, [refreshLatestInBackground]);
 
     useEffect(() => {
+        // Prefetch manga covers
+        let mangaCoverUris = latestMangas
+            .slice(0, 16)
+            .map((item) => {
+                const source = mangaCoverSource(item);
+                return source?.uri ? String(source.uri) : null;
+            })
+            .filter((uri): uri is string => !!uri && /^https?:\/\//i.test(uri));
+
+        // Add more for preload
+        if (latestMangas.length > 16) {
+            const extraUris = latestMangas
+                .slice(16, 40)
+                .map((item) => {
+                    const source = mangaCoverSource(item);
+                    return source?.uri ? String(source.uri) : null;
+                })
+                .filter((uri): uri is string => !!uri && /^https?:\/\//i.test(uri));
+            mangaCoverUris = mangaCoverUris.concat(extraUris);
+        }
+
+        if (mangaCoverUris.length > 0) {
+            ExpoImage.prefetch(mangaCoverUris, 'memory-disk').catch(() => {});
+        }
+    }, [latestMangas]);
+
+    useEffect(() => {
+        // Prefetch anime covers with improved batch
+        let animeCoverUris = latestAnime
+            .slice(0, 18)
+            .map((item) => {
+                const source = animeCoverSource(item);
+                return source?.uri ? String(source.uri) : null;
+            })
+            .filter((uri): uri is string => !!uri && /^https?:\/\//i.test(uri));
+
+        // Add more for preload
+        if (latestAnime.length > 18) {
+            const extraUris = latestAnime
+                .slice(18, 45)
+                .map((item) => {
+                    const source = animeCoverSource(item);
+                    return source?.uri ? String(source.uri) : null;
+                })
+                .filter((uri): uri is string => !!uri && /^https?:\/\//i.test(uri));
+            animeCoverUris = animeCoverUris.concat(extraUris);
+        }
+
+        if (animeCoverUris.length > 0) {
+            ExpoImage.prefetch(animeCoverUris, 'memory-disk').catch(() => {});
+        }
+    }, [latestAnime]);
+
+    useEffect(() => {
         if (!loading && isMounted.current) {
             const announceContentLoaded = () => {
                 AccessibilityInfo.isScreenReaderEnabled().then((isEnabled) => {
@@ -757,6 +904,8 @@ const HomeScreen = ({ navigation }: any) => {
                 navigation.navigate('Player', {
                     animeSlug: item.slug,
                     episodeSlug: item.lastEpisodeSlug,
+                    animeTitle: item.title,
+                    cover: item.cover,
                     startAtMs: 0,
                 });
                 return;
@@ -818,7 +967,7 @@ const HomeScreen = ({ navigation }: any) => {
             accessibilityLabel={item.lastReadChapterHid ? `Continuar leyendo ${item.title}` : `Ver detalles de ${item.title}`}
         >
             <ExpoImage
-                source={zonatmoorgImageSource(item)}
+                source={animeCoverSource(item)}
                 style={styles.cover}
                 contentFit="cover"
                 placeholder={require('../../assets/auth-bg.png')}
@@ -873,7 +1022,7 @@ const HomeScreen = ({ navigation }: any) => {
             accessibilityLabel={`Ver detalles de ${item.title}`}
         >
             <ExpoImage
-                source={zonatmoorgImageSource(item)}
+                source={mangaCoverSource(item)}
                 style={styles.cover}
                 contentFit="cover"
                 placeholder={require('../../assets/auth-bg.png')}
@@ -923,7 +1072,7 @@ const HomeScreen = ({ navigation }: any) => {
             accessibilityLabel={`Ver anime ${item.title}`}
         >
             <ExpoImage
-                source={zonatmoorgImageSource(item)}
+                source={animeCoverSource(item)}
                 style={styles.cover}
                 contentFit="cover"
                 placeholder={require('../../assets/auth-bg.png')}
@@ -1094,7 +1243,7 @@ const HomeScreen = ({ navigation }: any) => {
                         ) : (
                             <FlatList
                                 data={latestAnime}
-                                keyExtractor={(item) => `${item.source || 'animeflv'}:${item.slug}`}
+                                keyExtractor={(item) => `${item.source || 'jkanime'}:${item.slug}`}
                                 renderItem={renderLatestAnimeItem}
                                 horizontal
                                 showsHorizontalScrollIndicator={false}

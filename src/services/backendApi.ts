@@ -153,8 +153,8 @@ export const getLatestAnime = (query?: Query, options?: FetchOptions) =>
 export const getAnimeDetails = (slug: string, options?: FetchOptions) =>
     fetchJson<{ anime?: any }>(`/anime/${encodeURIComponent(slug)}`, undefined, options);
 
-export const getAnimeEpisodes = (slug: string, options?: FetchOptions) =>
-    fetchJson<{ episodes?: any[] }>(`/anime/${encodeURIComponent(slug)}/episodes`, undefined, options);
+export const getAnimeEpisodes = (slug: string, query?: Query, options?: FetchOptions) =>
+    fetchJson<{ episodes?: any[] }>(`/anime/${encodeURIComponent(slug)}/episodes`, query, options);
 
 export const getEpisodeStreams = (animeSlug: string, episodeSlug: string, options?: FetchOptions) =>
     fetchJson<{ streams?: any[] }>(

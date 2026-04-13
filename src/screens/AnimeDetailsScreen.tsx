@@ -1,14 +1,37 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, ActivityIndicator, StyleSheet, Image, Linking, Share, StatusBar } from 'react-native';
+import { View, Text, FlatList, TouchableOpacity, ActivityIndicator, StyleSheet, Linking, Share, StatusBar, Platform } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import { Image as ExpoImage } from 'expo-image';
 import { usePersonalization } from '../contexts/PersonalizationContext';
 import { useAlertContext } from '../contexts/AlertContext';
 import { getAnimeDetails, getAnimeEpisodes } from '../services/backendApi';
 import { auth, db } from '../firebase/config';
 import { collection, deleteDoc, doc, getDoc, getDocs, query, serverTimestamp, setDoc, where } from 'firebase/firestore';
+
+const ANIME_EPISODES_PAGE_SIZE = 500;
+const ANIME_EPISODES_MAX_PAGES = 30;
+type EpisodeOrder = 'asc' | 'desc';
+
+const buildAnimeCoverSource = (coverUrl: string, source?: string) => {
+    const uri = String(coverUrl || '').trim();
+    if (!uri) return { uri };
+
+    if (String(source || '').toLowerCase() !== 'jkanime') {
+        return { uri };
+    }
+
+    return {
+        uri,
+        headers: {
+            Referer: 'https://jkanime.net/',
+            Origin: 'https://jkanime.net',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        },
+    };
+};
 
 const AnimeDetailsScreen: React.FC = () => {
     const { theme } = usePersonalization();
@@ -21,10 +44,17 @@ const AnimeDetailsScreen: React.FC = () => {
     const [anime, setAnime] = useState<any | null>(null);
     const [episodes, setEpisodes] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
+    const [episodeOrder, setEpisodeOrder] = useState<EpisodeOrder>('desc');
     const [isFavorite, setIsFavorite] = useState(false);
     const [favoriteLoading, setFavoriteLoading] = useState(false);
     const [watchedEpisodeIds, setWatchedEpisodeIds] = useState<Set<string>>(new Set());
     const currentUserUid = String(auth.currentUser?.uid || '').trim();
+
+    useEffect(() => {
+        const cover = String(anime?.cover || '').trim();
+        if (!cover) return;
+        ExpoImage.prefetch([cover], 'memory-disk').catch(() => {});
+    }, [anime?.cover]);
 
     const loadAnime = useCallback(async () => {
         if (!slug) {
@@ -33,12 +63,40 @@ const AnimeDetailsScreen: React.FC = () => {
         }
         setLoading(true);
         try {
-            const [detailsRes, episodesRes] = await Promise.all([
-                getAnimeDetails(slug),
-                getAnimeEpisodes(slug),
+            const detailsPromise = getAnimeDetails(slug);
+            const loadAllEpisodes = async () => {
+                const acc: any[] = [];
+                for (let page = 1; page <= ANIME_EPISODES_MAX_PAGES; page += 1) {
+                    const payload = await getAnimeEpisodes(
+                        slug,
+                        { page, limit: ANIME_EPISODES_PAGE_SIZE },
+                        { forceRefresh: page === 1 }
+                    );
+
+                    const pageItems = Array.isArray(payload?.episodes) ? payload.episodes : [];
+                    if (!pageItems.length) break;
+
+                    acc.push(...pageItems);
+
+                    if (pageItems.length < ANIME_EPISODES_PAGE_SIZE) break;
+                }
+
+                const dedupe = new Map<string, any>();
+                for (const ep of acc) {
+                    const key = String(ep?.episodeSlug || ep?.slug || ep?.id || '').trim();
+                    if (!key) continue;
+                    if (!dedupe.has(key)) dedupe.set(key, ep);
+                }
+
+                return Array.from(dedupe.values());
+            };
+
+            const [detailsRes, episodes] = await Promise.all([
+                detailsPromise,
+                loadAllEpisodes(),
             ]);
             setAnime(detailsRes?.anime || null);
-            setEpisodes(Array.isArray(episodesRes?.episodes) ? episodesRes.episodes : []);
+            setEpisodes(episodes);
         } catch (error: any) {
             alertError(error?.message || 'No se pudo cargar el anime.');
         } finally {
@@ -176,7 +234,14 @@ const AnimeDetailsScreen: React.FC = () => {
         return (
             <LinearGradient colors={[theme.accentSoft, theme.backgroundSecondary]} style={styles.heroCard}>
                 {anime.cover ? (
-                    <Image source={{ uri: anime.cover }} style={styles.cover} resizeMode="cover" />
+                    <ExpoImage
+                        source={buildAnimeCoverSource(anime.cover, anime.source)}
+                        style={styles.cover}
+                        contentFit="cover"
+                        placeholder={require('../../assets/auth-bg.png')}
+                        cachePolicy="memory-disk"
+                        transition={140}
+                    />
                 ) : (
                     <View style={[styles.cover, { backgroundColor: theme.surface }]} />
                 )}
@@ -205,6 +270,38 @@ const AnimeDetailsScreen: React.FC = () => {
         );
     }, [anime, episodes.length, isFavorite, favoriteLoading, onShare, theme.accent, theme.accentSoft, theme.backgroundSecondary, theme.surface, theme.text, theme.textMuted, toggleFavorite]);
 
+    const orderedEpisodes = useMemo(() => {
+        const parseEpisodeNumber = (episode: any) => {
+            const direct = Number(episode?.number);
+            if (Number.isFinite(direct) && direct > 0) return direct;
+
+            const raw = String(episode?.episodeSlug || episode?.slug || episode?.title || '');
+            const match = raw.match(/(\d+(?:\.\d+)?)/);
+            if (match) {
+                const parsed = Number(match[1]);
+                if (Number.isFinite(parsed) && parsed > 0) return parsed;
+            }
+
+            return 0;
+        };
+
+        const list = [...episodes].sort((a, b) => {
+            const aNum = parseEpisodeNumber(a);
+            const bNum = parseEpisodeNumber(b);
+            if (aNum !== bNum) {
+                return episodeOrder === 'asc' ? aNum - bNum : bNum - aNum;
+            }
+
+            const aKey = String(a?.episodeSlug || a?.slug || '').toLowerCase();
+            const bKey = String(b?.episodeSlug || b?.slug || '').toLowerCase();
+            return episodeOrder === 'asc'
+                ? aKey.localeCompare(bKey)
+                : bKey.localeCompare(aKey);
+        });
+
+        return list;
+    }, [episodeOrder, episodes]);
+
     return (
         <LinearGradient colors={[theme.background, theme.backgroundSecondary]} style={styles.container}>
             <StatusBar barStyle="light-content" backgroundColor={theme.background} />
@@ -222,15 +319,41 @@ const AnimeDetailsScreen: React.FC = () => {
                         <Text style={[styles.loadingText, { color: theme.textMuted }]}>Cargando anime...</Text>
                     </View>
                 ) : (
-                    <ScrollView contentContainerStyle={styles.scrollContent}>
-                        {header}
-                        <View style={styles.sectionHeader}>
-                            <Text style={[styles.sectionTitle, { color: theme.text }]}>Episodios</Text>
-                            <Text style={[styles.sectionSubtitle, { color: theme.textMuted }]}>Toca uno para abrir el reproductor</Text>
-                        </View>
-                        {episodes.map((episode) => (
+                    <FlatList
+                        data={orderedEpisodes}
+                        keyExtractor={(episode, index) => String(episode.id || episode.episodeSlug || episode.slug || index)}
+                        contentContainerStyle={styles.scrollContent}
+                        initialNumToRender={12}
+                        maxToRenderPerBatch={12}
+                        windowSize={8}
+                        updateCellsBatchingPeriod={45}
+                        removeClippedSubviews={Platform.OS === 'android'}
+                        ListHeaderComponent={
+                            <>
+                                {header}
+                                <View style={styles.sectionHeader}>
+                                    <View>
+                                        <Text style={[styles.sectionTitle, { color: theme.text }]}>Episodios</Text>
+                                        <Text style={[styles.sectionSubtitle, { color: theme.textMuted }]}>Toca uno para abrir el reproductor</Text>
+                                    </View>
+                                    <TouchableOpacity
+                                        style={[styles.orderButton, { backgroundColor: theme.surface, borderColor: theme.border }]}
+                                        onPress={() => setEpisodeOrder((prev) => (prev === 'asc' ? 'desc' : 'asc'))}
+                                    >
+                                        <Ionicons
+                                            name={episodeOrder === 'asc' ? 'arrow-up' : 'arrow-down'}
+                                            size={16}
+                                            color={theme.accent}
+                                        />
+                                        <Text style={[styles.orderButtonText, { color: theme.text }]}>
+                                            {episodeOrder === 'asc' ? 'Ascendente' : 'Descendente'}
+                                        </Text>
+                                    </TouchableOpacity>
+                                </View>
+                            </>
+                        }
+                        renderItem={({ item: episode }) => (
                             <TouchableOpacity
-                                key={episode.id || episode.episodeSlug || episode.slug}
                                 style={[styles.episodeRow, { backgroundColor: theme.surface, borderColor: theme.border }]}
                                 onPress={async () => {
                                     try {
@@ -242,6 +365,8 @@ const AnimeDetailsScreen: React.FC = () => {
                                     navigation.navigate('Player', {
                                         animeSlug: slug,
                                         episodeSlug: episode.episodeSlug || episode.slug,
+                                        animeTitle: anime?.title || '',
+                                        cover: anime?.cover || '',
                                         startAtMs: 0,
                                     });
                                 }}
@@ -262,13 +387,13 @@ const AnimeDetailsScreen: React.FC = () => {
                                 )}
                                 <Ionicons name="play-circle-outline" size={22} color={theme.accent} />
                             </TouchableOpacity>
-                        ))}
-                        {episodes.length === 0 && (
+                        )}
+                        ListEmptyComponent={
                             <View style={styles.emptyWrap}>
                                 <Text style={[styles.emptyText, { color: theme.textMuted }]}>No se encontraron episodios.</Text>
                             </View>
-                        )}
-                    </ScrollView>
+                        }
+                    />
                 )}
             </SafeAreaView>
         </LinearGradient>
@@ -303,9 +428,11 @@ const styles = StyleSheet.create({
         gap: 6,
     },
     actionButtonText: { fontSize: 12, fontFamily: 'Roboto-Bold' },
-    sectionHeader: { marginTop: 6, marginBottom: 12 },
+    sectionHeader: { marginTop: 6, marginBottom: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
     sectionTitle: { fontSize: 18, fontFamily: 'Roboto-Bold' },
     sectionSubtitle: { marginTop: 4, fontSize: 12, fontFamily: 'Roboto-Regular' },
+    orderButton: { borderWidth: 1, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6, flexDirection: 'row', alignItems: 'center', gap: 6 },
+    orderButtonText: { fontSize: 11, fontFamily: 'Roboto-Bold' },
     episodeRow: { flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderRadius: 16, padding: 12, marginBottom: 10 },
     episodeIndex: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center', marginRight: 12 },
     episodeIndexText: { fontSize: 14, fontFamily: 'Roboto-Bold' },
