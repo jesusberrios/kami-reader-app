@@ -7,6 +7,7 @@ import {
     ActivityIndicator,
     TouchableOpacity,
     Image,
+    Share,
     StatusBar,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
@@ -26,6 +27,7 @@ type FavoriteItem = {
     slug: string;
     content_rating?: string;
     source?: string;
+    contentType: 'manga' | 'anime';
 };
 
 export default function FavoritesScreen() {
@@ -55,10 +57,22 @@ export default function FavoritesScreen() {
             return;
         }
 
-        const favoritesCollectionRef = collection(db, 'users', currentUserUid, 'favorites');
-        const favoritesQuery = query(favoritesCollectionRef, orderBy('favoritedAt', 'desc'));
-        const unsubscribe = onSnapshot(
-            favoritesQuery,
+        const mangaFavoritesRef = collection(db, 'users', currentUserUid, 'favorites');
+        const animeFavoritesRef = collection(db, 'users', currentUserUid, 'animeFavorites');
+        const mangaFavoritesQuery = query(mangaFavoritesRef, orderBy('favoritedAt', 'desc'));
+        const animeFavoritesQuery = query(animeFavoritesRef, orderBy('favoritedAt', 'desc'));
+
+        let mangaItems: FavoriteItem[] = [];
+        let animeItems: FavoriteItem[] = [];
+
+        const flush = () => {
+            const merged = [...mangaItems, ...animeItems];
+            setFavorites(merged);
+            setLoading(false);
+        };
+
+        const unsubscribeManga = onSnapshot(
+            mangaFavoritesQuery,
             (querySnapshot) => {
                 const favs: FavoriteItem[] = [];
                 querySnapshot.forEach((document) => {
@@ -70,23 +84,57 @@ export default function FavoritesScreen() {
                         slug: data.slug,
                         content_rating: data.content_rating,
                         source: data.source,
+                        contentType: 'manga',
                     });
                 });
-                setFavorites(favs);
-                setLoading(false);
+                mangaItems = favs;
+                flush();
             },
-            (error) => {
-                alertError("No se pudieron cargar los favoritos.");
+            () => {
+                alertError('No se pudieron cargar los favoritos manga.');
                 setLoading(false);
             }
         );
 
-        return () => unsubscribe();
+        const unsubscribeAnime = onSnapshot(
+            animeFavoritesQuery,
+            (querySnapshot) => {
+                const favs: FavoriteItem[] = [];
+                querySnapshot.forEach((document) => {
+                    const data = document.data();
+                    const animeSlug = String(data.animeSlug || data.slug || document.id || '').trim();
+                    favs.push({
+                        id: document.id,
+                        comicTitle: String(data.animeTitle || data.title || animeSlug || 'Anime'),
+                        coverUrl: String(data.coverUrl || ''),
+                        slug: animeSlug,
+                        content_rating: 'safe',
+                        source: data.source,
+                        contentType: 'anime',
+                    });
+                });
+                animeItems = favs;
+                flush();
+            },
+            () => {
+                alertError('No se pudieron cargar los favoritos anime.');
+                setLoading(false);
+            }
+        );
+
+        return () => {
+            unsubscribeManga();
+            unsubscribeAnime();
+        };
     }, [currentUserUid, alertError]);
 
     // Handlers memoizados
-    const handleFavoritePress = useCallback((slug: string) => {
-        navigation.navigate('Details', { slug });
+    const handleFavoritePress = useCallback((item: FavoriteItem) => {
+        if (item.contentType === 'anime') {
+            navigation.navigate('AnimeDetails', { slug: item.slug });
+            return;
+        }
+        navigation.navigate('Details', { slug: item.slug });
     }, [navigation]);
 
     const handleRemoveFavorite = useCallback((item: FavoriteItem) => {
@@ -100,8 +148,9 @@ export default function FavoritesScreen() {
             async () => {
                 try {
                     setRemovingId(item.id);
-                    await deleteDoc(doc(db, 'users', currentUserUid, 'favorites', item.id));
-                    alertSuccess('Manga eliminado de favoritos.');
+                    const collectionName = item.contentType === 'anime' ? 'animeFavorites' : 'favorites';
+                    await deleteDoc(doc(db, 'users', currentUserUid, collectionName, item.id));
+                    alertSuccess(item.contentType === 'anime' ? 'Anime eliminado de favoritos.' : 'Manga eliminado de favoritos.');
                 } catch {
                     alertError('No se pudo eliminar el favorito.');
                 } finally {
@@ -133,12 +182,31 @@ export default function FavoritesScreen() {
         navigation.navigate('Library');
     }, [navigation]);
 
+    const handleShareFavorites = useCallback(async () => {
+        if (favorites.length === 0) {
+            alertError('No tienes favoritos para compartir.');
+            return;
+        }
+
+        try {
+            const preview = favorites.slice(0, 12).map((item, idx) => `${idx + 1}. ${item.comicTitle}`).join('\n');
+            const extra = favorites.length > 12 ? `\n... y ${favorites.length - 12} más` : '';
+            const message = `Mis favoritos en Kami Reader:\n\n${preview}${extra}`;
+            await Share.share({
+                title: 'Mis Favoritos',
+                message,
+            });
+        } catch {
+            alertError('No se pudo compartir la lista de favoritos.');
+        }
+    }, [alertError, favorites]);
+
     // Componentes memoizados
     const renderFavoriteItem = useCallback(({ item }: { item: FavoriteItem }) => (
         <View style={styles.item}>
             <TouchableOpacity
                 style={styles.itemPressable}
-                onPress={() => handleFavoritePress(item.slug)}
+                onPress={() => handleFavoritePress(item)}
                 activeOpacity={0.82}
             >
                 <Image
@@ -155,6 +223,9 @@ export default function FavoritesScreen() {
                         <View style={styles.sourcePill}>
                             <Text style={styles.sourcePillText}>{getProviderAliasLabel(item.source)}</Text>
                         </View>
+                        <View style={styles.sourcePill}>
+                            <Text style={styles.sourcePillText}>{item.contentType === 'anime' ? 'ANIME' : 'MANGA'}</Text>
+                        </View>
                         {item.content_rating === 'erotica' && (
                             <View style={styles.eroticBadge}>
                                 <Text style={styles.eroticBadgeText}>18+</Text>
@@ -162,7 +233,7 @@ export default function FavoritesScreen() {
                         )}
                     </View>
                     <Text style={styles.title} numberOfLines={2}>{item.comicTitle}</Text>
-                    <Text style={styles.itemHint}>Toca para abrir detalles</Text>
+                    <Text style={styles.itemHint}>{item.contentType === 'anime' ? 'Toca para abrir anime' : 'Toca para abrir detalles'}</Text>
                 </View>
                     <Ionicons name="chevron-forward" size={22} color={theme.accent} />
             </TouchableOpacity>
@@ -245,8 +316,16 @@ export default function FavoritesScreen() {
                 <Ionicons name="arrow-back" size={28} color={theme.accent} />
             </TouchableOpacity>
             <Text style={styles.topBarTitle}>Mis Favoritos</Text>
+            <TouchableOpacity
+                onPress={handleShareFavorites}
+                style={styles.shareButton}
+                accessible
+                accessibilityLabel="Compartir favoritos"
+            >
+                <Ionicons name="share-social-outline" size={22} color={theme.accent} />
+            </TouchableOpacity>
         </View>
-    ), [handleGoBack, theme.accent]);
+    ), [handleGoBack, handleShareFavorites, theme.accent]);
 
     // Estados de carga y contenido
     if (loading) {
@@ -396,6 +475,14 @@ const styles = StyleSheet.create({
         fontFamily: 'Roboto-Bold',
         flex: 1,
         textAlign: 'center',
+    },
+    shareButton: {
+        width: 42,
+        height: 42,
+        borderRadius: 21,
+        justifyContent: 'center',
+        alignItems: 'center',
+        backgroundColor: 'rgba(255,255,255,0.06)',
     },
     flatListContent: {
         paddingHorizontal: 20,

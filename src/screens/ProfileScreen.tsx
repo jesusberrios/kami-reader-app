@@ -464,20 +464,28 @@ const ProfileScreen = () => {
                                         <View style={styles.statCard}>
                                             <Ionicons name="book" size={24} color={theme.accent} />
                                             <Text style={styles.statValue}>{userProfile.readingStats.totalRead}</Text>
-                                            <Text style={styles.statLabel}>Lecturas</Text>
+                                            <Text style={styles.statLabel}>Series</Text>
                                         </View>
                                         <View style={styles.statCard}>
                                             <Ionicons name="time" size={24} color={theme.accent} />
                                             <Text style={styles.statValue}>
-                                                {formatReadingTime(userProfile.readingStats.totalReadingTimeMs || 0)}
+                                                {formatReadingTime(userProfile.readingStats.totalTimeSpentMs || 0)}
                                             </Text>
-                                            <Text style={styles.statLabel}>Tiempo</Text>
+                                            <Text style={styles.statLabel}>Tiempo total</Text>
                                         </View>
                                         <View style={styles.statCard}>
                                             <Ionicons name="heart" size={24} color={theme.accent} />
                                             <Text style={styles.statValue}>{userProfile.readingStats.favorites}</Text>
                                             <Text style={styles.statLabel}>Favoritos</Text>
                                         </View>
+                                    </View>
+                                    <View style={styles.statsBreakdownRow}>
+                                        <Text style={styles.statsBreakdownText}>
+                                            Manga: {userProfile.readingStats.mangaCompleted} series, {userProfile.readingStats.mangaFavorites} favoritos
+                                        </Text>
+                                        <Text style={styles.statsBreakdownText}>
+                                            Anime: {userProfile.readingStats.animeCompleted} series, {userProfile.readingStats.animeFavorites} favoritos
+                                        </Text>
                                     </View>
                                     {isOwnProfile && (
                                         <TouchableOpacity
@@ -858,6 +866,16 @@ const styles = StyleSheet.create({
         fontWeight: '700',
         fontFamily: 'Roboto-Bold',
         textTransform: 'uppercase',
+    },
+    statsBreakdownRow: {
+        marginTop: 4,
+        marginBottom: 2,
+        gap: 2,
+    },
+    statsBreakdownText: {
+        color: '#B8C1CC',
+        fontSize: 12,
+        fontFamily: 'Roboto-Regular',
     },
     settingCard: {
         backgroundColor: 'rgba(30, 30, 45, 0.6)',

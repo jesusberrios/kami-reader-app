@@ -3,7 +3,7 @@
     "name": "KamiReader",
     "slug": "kami-reader-app",
     "scheme": "kami-reader-app",
-    "version": "1.1.5",
+    "version": "1.2.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -21,11 +21,11 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.yourusername.kamireader",
-      "buildNumber": "15"
+      "buildNumber": "16"
     },
     "android": {
       "package": "com.yourusername.kamireader",
-      "versionCode": 15,
+      "versionCode": 16,
       "adaptiveIcon": {
         "foregroundImage": "./assets/icon.png",
         "backgroundColor": "#ffffff"
@@ -53,7 +53,8 @@
             "googleServicesFile": "./google-services.json"
           }
         }
-      ]
+      ],
+      "expo-video"
     ]
   }
 }

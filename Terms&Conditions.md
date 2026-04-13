@@ -1,6 +1,6 @@
 # Términos y Condiciones de Uso de KamiReader
 
-Última actualización: 6 de abril de 2026
+Última actualización: 13 de abril de 2026
 
 ## 1. Aceptación de los términos
 Al descargar, instalar, acceder o utilizar KamiReader (la App), usted declara haber leído, entendido y aceptado íntegramente estos Términos y Condiciones.
@@ -8,7 +8,9 @@ Al descargar, instalar, acceder o utilizar KamiReader (la App), usted declara ha
 Si no está de acuerdo con estos Términos, debe abstenerse de usar la App.
 
 ## 2. Identificación del servicio
-KamiReader es una aplicación que organiza y muestra enlaces y/o referencias de lectura de contenido disponible mediante servicios, fuentes o APIs de terceros.
+KamiReader es una aplicación que organiza y muestra enlaces y/o referencias de lectura y reproducción de contenido disponible mediante servicios, fuentes o APIs de terceros.
+
+La App incluye funciones de cuenta, favoritos, seguimiento de progreso (manga y anime), estadísticas, logros, perfil social y reproducción de video mediante servidores externos.
 
 Correo de contacto legal y soporte: sukisoft.soporte@gmail.com.
 
@@ -56,8 +58,12 @@ KamiReader no controla ni asume responsabilidad por:
 - daños derivados de interacciones del usuario con dichos terceros;
 - cambios, bloqueos o interrupciones de servicios externos.
 
+El reproductor de anime puede abrir o integrar servidores externos de terceros. El acceso, disponibilidad, calidad y continuidad de dichos servidores depende exclusivamente de sus operadores.
+
 ## 9. Datos personales y privacidad
 El tratamiento de datos personales asociado al uso de la App se realiza conforme a la normativa aplicable, incluyendo la Ley N° 19.628 sobre Protección de la Vida Privada (Chile), cuando corresponda.
+
+Entre otros, pueden tratarse datos de cuenta y uso necesarios para funciones como: favoritos de manga/anime, historial en curso, estadísticas, logros y sincronización básica entre dispositivos.
 
 Para ejercicio de derechos y solicitudes sobre cuenta o datos, puede contactar a sukisoft.soporte@gmail.com.
 
@@ -74,6 +80,8 @@ El incumplimiento podrá dar lugar a suspensión temporal o terminación definit
 Si la App incorpora funciones de pago, suscripciones o compras integradas, estas se regirán adicionalmente por los términos de la tienda o pasarela de pago correspondiente (por ejemplo, Google Play) y por la normativa de protección al consumidor aplicable.
 
 Los precios, periodos y condiciones podrán mostrarse dentro de la App antes de confirmar la operación.
+
+Cuando corresponda, en Chile se aplicarán además las normas de protección de los derechos de los consumidores vigentes respecto de información y condiciones comerciales.
 
 ## 12. Exclusión y limitación de responsabilidad
 En la máxima medida permitida por la ley, KamiReader se proporciona en estado tal cual y según disponibilidad.

@@ -1,4 +1,4 @@
-import { backendUrl } from '../config/backend';
+import { BACKEND_URL_CANDIDATES, backendUrlFromBase } from '../config/backend';
 
 type QueryValue = string | number | boolean | null | undefined;
 type Query = Record<string, QueryValue>;
@@ -7,6 +7,8 @@ type FetchOptions = {
     timeoutMs?: number;
     ttlMs?: number;
     forceRefresh?: boolean;
+    strictStreams?: boolean;
+    streamMode?: 'native' | 'web';
 };
 
 type CacheEntry<T> = {
@@ -67,31 +69,58 @@ const fetchJson = async <T>(path: string, query?: Query, options?: FetchOptions)
     if (inFlightRequest) return inFlightRequest;
 
     const queryString = buildQueryString(query);
-    const url = `${backendUrl(path)}${queryString ? `?${queryString}` : ''}`;
-
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    const candidates = Array.isArray(BACKEND_URL_CANDIDATES) && BACKEND_URL_CANDIDATES.length > 0
+        ? BACKEND_URL_CANDIDATES
+        : [];
 
     let requestPromise;
     requestPromise = (async () => {
+        let lastError: any = null;
         try {
-            const response = await fetch(url, { signal: controller.signal });
-            if (!response.ok) throw new Error(`Error HTTP: ${response.status}`);
-            const data = (await response.json()) as T;
+            for (let i = 0; i < candidates.length; i += 1) {
+                const baseUrl = candidates[i];
+                const url = `${backendUrlFromBase(baseUrl, path)}${queryString ? `?${queryString}` : ''}`;
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
-            if (ttlMs > 0) {
-                memoryCache.set(key, { ts: Date.now(), data });
-                trimMemoryCacheIfNeeded();
+                try {
+                    const response = await fetch(url, { signal: controller.signal });
+                    if (!response.ok) throw new Error(`Error HTTP: ${response.status}`);
+                    const data = (await response.json()) as T;
+
+                    if (ttlMs > 0) {
+                        memoryCache.set(key, { ts: Date.now(), data });
+                        trimMemoryCacheIfNeeded();
+                    }
+
+                    if (i > 0) {
+                        console.log(`[backendApi] Failover success via ${baseUrl}`);
+                    }
+
+                    return data;
+                } catch (error: any) {
+                    lastError = error;
+                    const isAbort = error?.name === 'AbortError';
+                    const isLastCandidate = i === candidates.length - 1;
+                    if (!isLastCandidate) {
+                        console.warn(`[backendApi] Candidate failed (${baseUrl}): ${isAbort ? 'timeout' : (error?.message || 'network_error')}`);
+                    }
+                } finally {
+                    clearTimeout(timeoutId);
+                }
             }
 
-            return data;
+            if (lastError?.name === 'AbortError') {
+                throw new Error('Tiempo de espera agotado. No se pudo conectar al backend.');
+            }
+
+            throw lastError || new Error('No se pudo conectar al backend.');
         } catch (error: any) {
             if (error?.name === 'AbortError') {
                 throw new Error('Tiempo de espera agotado. No se pudo conectar al backend.');
             }
             throw error;
         } finally {
-            clearTimeout(timeoutId);
             if (inFlight.get(key) === requestPromise) {
                 inFlight.delete(key);
             }
@@ -117,3 +146,26 @@ export const getChapterImages = (mangaSlug: string, chapterSlug: string, options
 
 export const searchManga = (query?: Query, options?: FetchOptions) =>
     fetchJson<{ results?: any[]; pagination?: { totalPages?: number } }>('/search', query, options);
+
+export const getLatestAnime = (query?: Query, options?: FetchOptions) =>
+    fetchJson<{ results?: any[]; pagination?: { totalPages?: number } }>('/anime/latest', query, options);
+
+export const getAnimeDetails = (slug: string, options?: FetchOptions) =>
+    fetchJson<{ anime?: any }>(`/anime/${encodeURIComponent(slug)}`, undefined, options);
+
+export const getAnimeEpisodes = (slug: string, options?: FetchOptions) =>
+    fetchJson<{ episodes?: any[] }>(`/anime/${encodeURIComponent(slug)}/episodes`, undefined, options);
+
+export const getEpisodeStreams = (animeSlug: string, episodeSlug: string, options?: FetchOptions) =>
+    fetchJson<{ streams?: any[] }>(
+        `/anime/${encodeURIComponent(animeSlug)}/episodes/${encodeURIComponent(episodeSlug)}/streams`,
+        {
+            strict: options?.strictStreams === true ? 1 : 0,
+            mode: options?.streamMode || undefined,
+            t: options?.forceRefresh ? Date.now() : undefined,
+        },
+        options
+    );
+
+export const searchAnime = (query?: Query, options?: FetchOptions) =>
+    fetchJson<{ results?: any[]; pagination?: { totalPages?: number } }>('/anime/search', query, options);

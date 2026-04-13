@@ -16,7 +16,7 @@ import {
     AppState,
     AppStateStatus,
 } from 'react-native';
-import { collection, doc, getDoc, getDocs } from 'firebase/firestore'; // Removed query, where as they are not needed for this subcollection fetch
+import { collection, doc, getDoc, getDocs, onSnapshot } from 'firebase/firestore'; // Home uses realtime listeners for in-progress subcollections
 import { db } from '../firebase/config';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -27,7 +27,7 @@ import { getAppVersion } from '../utils/versionUtils';
 import UpdateRequiredModal from '../components/updateRequiredModal';
 import FloatingChatBubble from '../components/floatingChatBubble';
 import { usePersonalization } from '../contexts/PersonalizationContext';
-import { getLatestManga } from '../services/backendApi';
+import { getLatestManga, getLatestAnime } from '../services/backendApi';
 import { Image as ExpoImage } from 'expo-image';
 
 // Import the new utilities
@@ -51,6 +51,38 @@ const APP_IDS = {
 const DONATION_URL = process.env.EXPO_PUBLIC_DONATION_URL || 'https://ko-fi.com/sukisoft';
 const HOME_LATEST_AUTO_REFRESH_MS = 45 * 1000;
 const MAINTENANCE_ACK_STORAGE_KEY = 'kami.maintenance.dismissed.v1';
+
+const zonatmoorgImageSource = (item: { cover?: string; source?: string }) => {
+    const uri = String(item?.cover || '').trim();
+    if (!uri) return { uri };
+
+    const source = String(item?.source || '').toLowerCase();
+    if (source !== 'zonatmoorg') return { uri };
+
+    return {
+        uri,
+        headers: {
+            Referer: 'https://zonatmo.org/',
+            Origin: 'https://zonatmo.org',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        },
+    };
+};
+
+const normalizeAnimeDisplayTitle = (value: string, source?: string) => {
+    const raw = String(value || '').replace(/\s+/g, ' ').trim();
+    const sourceKey = String(source || '').toLowerCase().trim();
+    if (!raw || (sourceKey !== 'animeflv' && sourceKey !== 'jkanime')) return raw;
+
+    return raw
+        .replace(/^anime\s+/i, '')
+        .replace(/\s*[-|]\s*animeflv(?:\.net|\.com)?\b.*$/i, '')
+        .replace(/\s*[-|]\s*anime\s+online\b.*$/i, '')
+        .replace(/\s*[-|]\s*ver\s+anime\s+online\b.*$/i, '')
+        .replace(/\bver\s+anime\s+online\b.*$/i, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+};
 
 const getStatusLabel = (value?: string, fallbackLabel?: string) => {
     const raw = String(value || '').toLowerCase();
@@ -84,14 +116,31 @@ const getStatusBadgeLabel = (item: LatestManga) => {
     return 'Actualizado';
 };
 
+const HOME_ADULT_GUARD_REGEX = /\b(18\+|\+18|r-?18|adult|hentai|ecchi|smut|nsfw|porn|xxx|penetration|netorare|ntr|hardcore|sexo|sexual|erot|milf|onlyfans|uncensored|sin\s+censura|glory\s*hole)\b/i;
+
+const isLikelyAdultTopItem = (item: any) => {
+    const bag = [
+        item?.title,
+        item?.description,
+        ...(Array.isArray(item?.genres) ? item.genres : []),
+        ...(Array.isArray(item?.badges) ? item.badges : []),
+    ]
+        .map((value) => String(value || '').toLowerCase())
+        .join(' ');
+
+    return HOME_ADULT_GUARD_REGEX.test(bag);
+};
+
 // Types
 type LatestManga = {
     slug: string;
     title: string;
     cover: string;
     source: string;
+    contentType?: 'manga' | 'anime';
     score: string;
     totalChapters: number;
+    totalEpisodes?: number;
     status?: string;
     statusLabel?: string;
     contentRating?: string;
@@ -104,12 +153,16 @@ type Chapter = {
     cover: string;
     slug: string;
     source?: string;
+    contentType?: 'manga' | 'anime';
     content_rating: string;
     lang: string;
     updated_at: any;
     lastReadChapter?: string;
     lastReadChapterHid?: string;
     lastReadImagePage?: number;
+    lastEpisodeSlug?: string;
+    lastEpisodeNumber?: number;
+    sortTimestamp?: number;
 };
 
 type NewsItem = {
@@ -138,8 +191,7 @@ const DEFAULT_APP_CONFIG: AppConfigSnapshot = {
 const HomeScreen = ({ navigation }: any) => {
     const { theme } = usePersonalization();
     // State
-    const [topSafe, setTopSafe] = useState<Chapter[]>([]);
-    const [topErotic, setTopErotic] = useState<Chapter[]>([]);
+
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [news, setNews] = useState<NewsItem[]>([]);
@@ -151,6 +203,7 @@ const HomeScreen = ({ navigation }: any) => {
     const [comicsLoading, setComicsLoading] = useState(true);
     const [continueReadingComics, setContinueReadingComics] = useState<Chapter[]>([]); // New state for continue reading
     const [latestMangas, setLatestMangas] = useState<LatestManga[]>([]);
+    const [latestAnime, setLatestAnime] = useState<LatestManga[]>([]);
     const [latestLoading, setLatestLoading] = useState(true);
     const [homeNotice, setHomeNotice] = useState('');
     const [announcementMessage, setAnnouncementMessage] = useState('');
@@ -206,8 +259,6 @@ const HomeScreen = ({ navigation }: any) => {
             const cachedComics = forceRefresh ? null : await getCachedData('topComics');
             if (cachedComics) {
                 if (isMounted.current) {
-                    setTopSafe(cachedComics.safe);
-                    setTopErotic(cachedComics.erotic);
                     setComicsLoading(false);
                 }
                 return;
@@ -216,7 +267,8 @@ const HomeScreen = ({ navigation }: any) => {
             const topMixedRes = await getLatestManga({
                 page: 1,
                 limit: 60,
-                sort: 'score_desc',
+                sort: 'updated_desc',
+                contentRating: 'safe',
             }, {
                 ttlMs: 2 * 60 * 1000,
                 forceRefresh,
@@ -225,13 +277,20 @@ const HomeScreen = ({ navigation }: any) => {
             if (isMounted.current) {
                 const mapBackendComic = (item: any) => ({
                     hid: `${item.source || 'zonatmo'}:${item.slug || ''}`,
-                    title: item.title || 'Sin título',
+                    title: normalizeAnimeDisplayTitle(item.title || 'Sin título', item.source),
                     source: normalizeProviderSource(item.source),
+                    contentType: String(item.contentType || '').toLowerCase() === 'anime'
+                        || ['animeflv', 'jkanime', 'animeytx'].includes(String(item.source || '').toLowerCase())
+                        ? 'anime'
+                        : 'manga',
                     lang: item.language || 'es-419',
                     updated_at: item.updatedAt || new Date().toISOString(),
                     cover: item.cover || 'https://via.placeholder.com/150x200?text=No+Cover',
                     slug: item.slug || '',
                     content_rating: item.contentRating || 'safe',
+                    description: item.description || '',
+                    genres: Array.isArray(item.genres) ? item.genres : [],
+                    badges: Array.isArray(item.badges) ? item.badges : [],
                 });
 
                 const mixedComics = (topMixedRes?.results || []).map(mapBackendComic);
@@ -239,14 +298,10 @@ const HomeScreen = ({ navigation }: any) => {
 
                 // Top seguros = no erotico (+18)
                 const safeComics = mixedComics
-                    .filter((comic: any) => comic.content_rating !== 'erotica')
+                    .filter((comic: any) => comic.content_rating !== 'erotica' && !isLikelyAdultTopItem(comic))
                     .slice(0, 10);
 
                 const eroticComics = eroticRaw.slice(0, 10);
-
-                setTopSafe(safeComics);
-                setTopErotic(eroticComics);
-
                 await setCacheData('topComics', { safe: safeComics, erotic: eroticComics });
             }
         } catch (error) {
@@ -345,6 +400,91 @@ const HomeScreen = ({ navigation }: any) => {
         }
     }, [maintenanceAckSignature]);
 
+    const mapContinueReadingFromSnapshots = useCallback((mangaSnapshot: any, animeSnapshot: any): Chapter[] => {
+        const readingProgressData: Chapter[] = [];
+
+        mangaSnapshot?.forEach((doc: any) => {
+            const data = doc.data() as {
+                lastReadChapterHid?: string;
+                lastReadChapterNumber?: number;
+                lastReadImagePage?: number;
+                coverUrl?: string;
+                slug?: string;
+                mangaTitle?: string;
+                comicTitle?: string;
+                source?: string;
+                updatedAt?: { toDate?: () => Date };
+                lastUpdated?: { toDate?: () => Date };
+                startedAt?: { toDate?: () => Date };
+            };
+
+            const comicSlug = String(data.slug || doc.id || '').trim();
+            if (!comicSlug) return;
+
+            const lastUpdatedDate = data.lastUpdated?.toDate?.() || data.updatedAt?.toDate?.() || data.startedAt?.toDate?.() || null;
+            const sortTimestamp = lastUpdatedDate ? lastUpdatedDate.getTime() : 0;
+            readingProgressData.push({
+                hid: `${normalizeProviderSource(data.source)}:${comicSlug}`,
+                title: String(data.mangaTitle || data.comicTitle || comicSlug)
+                    .replace(/-/g, ' ')
+                    .replace(/\b\w/g, (s) => s.toUpperCase()),
+                cover: data.coverUrl || 'https://via.placeholder.com/150x200?text=No+Cover',
+                slug: comicSlug,
+                source: normalizeProviderSource(data.source),
+                contentType: 'manga',
+                content_rating: 'safe',
+                lang: 'es-419',
+                updated_at: lastUpdatedDate ? lastUpdatedDate.toISOString() : new Date().toISOString(),
+                sortTimestamp,
+                lastReadChapterHid: String(data.lastReadChapterHid || '').trim() || undefined,
+                lastReadImagePage: Number.isFinite(Number(data.lastReadImagePage)) ? Number(data.lastReadImagePage) : undefined,
+                lastReadChapter: `Cap. ${data.lastReadChapterNumber || 0}${data.lastReadImagePage ? ` · Img. ${data.lastReadImagePage}` : ''}`,
+            });
+        });
+
+        animeSnapshot?.forEach((doc: any) => {
+            const data = doc.data() as {
+                animeSlug?: string;
+                slug?: string;
+                animeTitle?: string;
+                title?: string;
+                source?: string;
+                coverUrl?: string;
+                lastEpisodeSlug?: string;
+                lastEpisodeNumber?: number;
+                updatedAt?: { toDate?: () => Date };
+                lastUpdated?: { toDate?: () => Date };
+                startedAt?: { toDate?: () => Date };
+            };
+
+            const animeSlug = String(data.animeSlug || data.slug || doc.id || '').trim();
+            if (!animeSlug) return;
+
+            const lastUpdatedDate = data.updatedAt?.toDate?.() || data.lastUpdated?.toDate?.() || data.startedAt?.toDate?.() || null;
+            const sortTimestamp = lastUpdatedDate ? lastUpdatedDate.getTime() : 0;
+            const episodeNumber = Number.isFinite(Number(data.lastEpisodeNumber)) ? Number(data.lastEpisodeNumber) : undefined;
+
+            readingProgressData.push({
+                hid: `${normalizeProviderSource(data.source || 'animeflv')}:${animeSlug}`,
+                title: String(data.animeTitle || data.title || animeSlug).trim(),
+                cover: data.coverUrl || 'https://via.placeholder.com/150x200?text=No+Cover',
+                slug: animeSlug,
+                source: normalizeProviderSource(data.source || 'animeflv'),
+                contentType: 'anime',
+                content_rating: 'safe',
+                lang: 'es-419',
+                updated_at: lastUpdatedDate ? lastUpdatedDate.toISOString() : new Date().toISOString(),
+                sortTimestamp,
+                lastEpisodeSlug: String(data.lastEpisodeSlug || '').trim() || undefined,
+                lastEpisodeNumber: episodeNumber,
+                lastReadChapter: episodeNumber ? `Ep. ${episodeNumber}` : 'Retomar anime',
+            });
+        });
+
+        readingProgressData.sort((a, b) => (b.sortTimestamp || 0) - (a.sortTimestamp || 0));
+        return readingProgressData;
+    }, []);
+
     const fetchContinueReadingComics = useCallback(async () => {
         try {
             const auth = getAuth();
@@ -355,91 +495,135 @@ const HomeScreen = ({ navigation }: any) => {
             }
 
             // --- CORRECT WAY: Target the subcollection directly ---
-            const userInProgressRef = collection(db, 'users', user.uid, 'inProgressManga');
+            const userInProgressMangaRef = collection(db, 'users', user.uid, 'inProgressManga');
+            const userInProgressAnimeRef = collection(db, 'users', user.uid, 'inProgressAnime');
 
-            const querySnapshot = await getDocs(userInProgressRef);
+            const [mangaSnapshot, animeSnapshot] = await Promise.all([
+                getDocs(userInProgressMangaRef),
+                getDocs(userInProgressAnimeRef),
+            ]);
 
-            const readingProgressData: {
-                slug: string;
-                title: string;
-                source: string;
-                lastReadChapterHid?: string;
-                lastReadChapterNumber: number;
-                lastReadImagePage?: number;
-                coverUrl: string;
-            }[] = [];
-            querySnapshot.forEach((doc) => {
-                const data = doc.data() as {
-                    lastReadChapterHid?: string;
-                    lastReadChapterNumber?: number;
-                    lastReadImagePage?: number;
-                    coverUrl?: string;
-                    slug?: string;
-                    mangaTitle?: string;
-                    comicTitle?: string;
-                    source?: string;
-                };
+            const readingProgressData = mapContinueReadingFromSnapshots(mangaSnapshot, animeSnapshot);
 
-                const comicSlug = String(data.slug || doc.id || '').trim();
-                if (comicSlug) {
-                    readingProgressData.push({
-                        slug: comicSlug,
-                        title: String(data.mangaTitle || data.comicTitle || comicSlug)
-                            .replace(/-/g, ' ')
-                            .replace(/\b\w/g, (s) => s.toUpperCase()),
-                        source: normalizeProviderSource(data.source),
-                        lastReadChapterHid: String(data.lastReadChapterHid || '').trim() || undefined,
-                        lastReadChapterNumber: data.lastReadChapterNumber || 0,
-                        lastReadImagePage: Number.isFinite(Number(data.lastReadImagePage)) ? Number(data.lastReadImagePage) : undefined,
-                        coverUrl: data.coverUrl || ''
-                    });
-                } else {
-                }
-            });
+            readingProgressData.sort((a, b) => (b.sortTimestamp || 0) - (a.sortTimestamp || 0));
 
             if (readingProgressData.length === 0) {
                 setContinueReadingComics([]);
                 return;
             }
-
-            const comicsToDisplay: Chapter[] = readingProgressData.map((progressItem) => ({
-                hid: `${progressItem.source}:${progressItem.slug}`,
-                title: progressItem.title || 'Manga',
-                cover: progressItem.coverUrl || 'https://via.placeholder.com/150x200?text=No+Cover',
-                slug: progressItem.slug,
-                source: normalizeProviderSource(progressItem.source),
-                content_rating: 'safe',
-                lang: 'es-419',
-                updated_at: new Date().toISOString(),
-                lastReadChapterHid: progressItem.lastReadChapterHid,
-                lastReadImagePage: progressItem.lastReadImagePage,
-                lastReadChapter: `Cap. ${progressItem.lastReadChapterNumber}${progressItem.lastReadImagePage ? ` · Img. ${progressItem.lastReadImagePage}` : ''}`,
-            }));
             if (isMounted.current) {
-                setContinueReadingComics(comicsToDisplay);
+                setContinueReadingComics(readingProgressData);
             }
         } catch (error) {
             if (isMounted.current) {
                 setContinueReadingComics([]);
             }
         }
-    }, []);
+    }, [mapContinueReadingFromSnapshots]);
+
+    useEffect(() => {
+        const auth = getAuth();
+        let unsubscribeManga: (() => void) | null = null;
+        let unsubscribeAnime: (() => void) | null = null;
+        let mangaSnapshot: any = null;
+        let animeSnapshot: any = null;
+
+        const flush = () => {
+            if (!isMounted.current) return;
+            if (!mangaSnapshot || !animeSnapshot) return;
+            const items = mapContinueReadingFromSnapshots(mangaSnapshot, animeSnapshot);
+            setContinueReadingComics(items);
+        };
+
+        const unsubscribeAuth = auth.onAuthStateChanged((user) => {
+            if (unsubscribeManga) {
+                unsubscribeManga();
+                unsubscribeManga = null;
+            }
+            if (unsubscribeAnime) {
+                unsubscribeAnime();
+                unsubscribeAnime = null;
+            }
+
+            mangaSnapshot = null;
+            animeSnapshot = null;
+
+            if (!user) {
+                if (isMounted.current) setContinueReadingComics([]);
+                return;
+            }
+
+            const userInProgressMangaRef = collection(db, 'users', user.uid, 'inProgressManga');
+            const userInProgressAnimeRef = collection(db, 'users', user.uid, 'inProgressAnime');
+
+            unsubscribeManga = onSnapshot(userInProgressMangaRef, (snap) => {
+                mangaSnapshot = snap;
+                flush();
+            }, () => {
+                if (isMounted.current) setContinueReadingComics([]);
+            });
+
+            unsubscribeAnime = onSnapshot(userInProgressAnimeRef, (snap) => {
+                animeSnapshot = snap;
+                flush();
+            }, () => {
+                if (isMounted.current) setContinueReadingComics([]);
+            });
+        });
+
+        return () => {
+            if (unsubscribeManga) unsubscribeManga();
+            if (unsubscribeAnime) unsubscribeAnime();
+            unsubscribeAuth();
+        };
+    }, [mapContinueReadingFromSnapshots]);
 
     const fetchLatestMangas = useCallback(async (options?: { forceRefresh?: boolean; silent?: boolean }) => {
         const silent = options?.silent === true;
         if (!silent) setLatestLoading(true);
         try {
-            const res = await getLatestManga({ page: 1, limit: 10 }, {
+            const res = await getLatestManga({ page: 1, limit: 10, homeDiversity: 1 }, {
                 ttlMs: 60 * 1000,
                 forceRefresh: options?.forceRefresh === true,
             });
             
             if (isMounted.current && Array.isArray(res?.results)) {
-                setLatestMangas(res.results.slice(0, 10));
+                setLatestMangas(
+                    res.results.slice(0, 10).map((item: any) => ({
+                        ...item,
+                        title: normalizeAnimeDisplayTitle(item?.title || 'Sin título', item?.source),
+                    }))
+                );
             }
         } catch (error) {
             if (isMounted.current) {
                 setHomeNotice('La seccion de recientes esta temporalmente no disponible.');
+            }
+        } finally {
+            if (isMounted.current && !silent) setLatestLoading(false);
+        }
+    }, []);
+
+    const fetchLatestAnime = useCallback(async (options?: { forceRefresh?: boolean; silent?: boolean }) => {
+        const silent = options?.silent === true;
+        if (!silent) setLatestLoading(true);
+        try {
+            const res = await getLatestAnime({ page: 1, limit: 10 }, {
+                ttlMs: 60 * 1000,
+                forceRefresh: options?.forceRefresh === true,
+            });
+
+            if (isMounted.current && Array.isArray(res?.results)) {
+                setLatestAnime(
+                    res.results.slice(0, 10).map((item: any) => ({
+                        ...item,
+                        title: normalizeAnimeDisplayTitle(item?.title || 'Sin título', item?.source),
+                    }))
+                );
+            }
+        } catch (error) {
+            if (isMounted.current) {
+                setHomeNotice('La seccion de anime recientes esta temporalmente no disponible.');
             }
         } finally {
             if (isMounted.current && !silent) setLatestLoading(false);
@@ -459,6 +643,7 @@ const HomeScreen = ({ navigation }: any) => {
             fetchUserPlan(),
             fetchContinueReadingComics(),
             fetchLatestMangas(),
+            fetchLatestAnime(),
             fetchAppConfigAlerts(),
         ]);
         await fetchTopComics();
@@ -466,7 +651,7 @@ const HomeScreen = ({ navigation }: any) => {
         if (isMounted.current) {
             setLoading(false);
         }
-    }, [fetchNews, fetchUserPlan, fetchTopComics, fetchContinueReadingComics, fetchLatestMangas, fetchAppConfigAlerts]);
+    }, [fetchNews, fetchUserPlan, fetchTopComics, fetchContinueReadingComics, fetchLatestMangas, fetchLatestAnime, fetchAppConfigAlerts]);
 
 
     // Effects
@@ -553,6 +738,7 @@ const HomeScreen = ({ navigation }: any) => {
             fetchUserPlan(),
             fetchContinueReadingComics(),
             fetchLatestMangas({ forceRefresh: true }),
+            fetchLatestAnime({ forceRefresh: true }),
             fetchAppConfigAlerts(),
         ]);
         if (isMounted.current) {
@@ -563,9 +749,22 @@ const HomeScreen = ({ navigation }: any) => {
                 }
             });
         }
-    }, [fetchTopComics, fetchNews, fetchUserPlan, fetchContinueReadingComics, fetchLatestMangas, fetchAppConfigAlerts]);
+    }, [fetchTopComics, fetchNews, fetchUserPlan, fetchContinueReadingComics, fetchLatestMangas, fetchLatestAnime, fetchAppConfigAlerts]);
 
     const handleComicPress = useCallback((item: Chapter) => {
+        if (item.contentType === 'anime') {
+            if (item.lastEpisodeSlug) {
+                navigation.navigate('Player', {
+                    animeSlug: item.slug,
+                    episodeSlug: item.lastEpisodeSlug,
+                    startAtMs: 0,
+                });
+                return;
+            }
+            navigation.navigate('AnimeDetails', { slug: item.slug });
+            return;
+        }
+
         if (item.lastReadChapterHid) {
             navigation.navigate('Reader', { hid: item.lastReadChapterHid, resumeFromProgress: true });
             return;
@@ -619,7 +818,7 @@ const HomeScreen = ({ navigation }: any) => {
             accessibilityLabel={item.lastReadChapterHid ? `Continuar leyendo ${item.title}` : `Ver detalles de ${item.title}`}
         >
             <ExpoImage
-                source={{ uri: item.cover }}
+                source={zonatmoorgImageSource(item)}
                 style={styles.cover}
                 contentFit="cover"
                 placeholder={require('../../assets/auth-bg.png')}
@@ -634,7 +833,9 @@ const HomeScreen = ({ navigation }: any) => {
 
             <View style={styles.providerBadge}>
                 <Text style={styles.providerBadgeText}>
-                    {getProviderAliasLabel(item.source || item.hid?.split(':')?.[0])}
+                    {item.contentType === 'anime'
+                        ? `ANIME · ${getProviderAliasLabel(item.source || item.hid?.split(':')?.[0])}`
+                        : getProviderAliasLabel(item.source || item.hid?.split(':')?.[0])}
                 </Text>
             </View>
 
@@ -672,7 +873,7 @@ const HomeScreen = ({ navigation }: any) => {
             accessibilityLabel={`Ver detalles de ${item.title}`}
         >
             <ExpoImage
-                source={{ uri: item.cover }}
+                source={zonatmoorgImageSource(item)}
                 style={styles.cover}
                 contentFit="cover"
                 placeholder={require('../../assets/auth-bg.png')}
@@ -714,6 +915,41 @@ const HomeScreen = ({ navigation }: any) => {
         </TouchableOpacity>
     ), [navigation, theme.warning]);
 
+    const renderLatestAnimeItem = useCallback(({ item }: { item: LatestManga }) => (
+        <TouchableOpacity
+            style={styles.comicItem}
+            onPress={() => navigation.navigate('AnimeDetails', { slug: item.slug })}
+            activeOpacity={0.7}
+            accessibilityLabel={`Ver anime ${item.title}`}
+        >
+            <ExpoImage
+                source={zonatmoorgImageSource(item)}
+                style={styles.cover}
+                contentFit="cover"
+                placeholder={require('../../assets/auth-bg.png')}
+                cachePolicy="memory-disk"
+                transition={120}
+            />
+            <LinearGradient
+                colors={['transparent', 'rgba(0,0,0,0.8)']}
+                style={styles.comicGradient}
+            />
+            <Text style={styles.comicTitle} numberOfLines={2}>{item.title}</Text>
+            <View style={styles.latestTopBadgesRow}>
+                <View style={styles.latestProviderBadge}>
+                    <Text style={styles.providerBadgeText} numberOfLines={1}>
+                        {getProviderAliasLabel(item.source)}
+                    </Text>
+                </View>
+                <View style={[styles.latestStatusTag, { backgroundColor: theme.accent }]}>
+                    <Text style={[styles.statusTagText, { color: theme.text }]} numberOfLines={1}>
+                        {item.totalEpisodes ? `Ep. ${item.totalEpisodes}` : 'Anime'}
+                    </Text>
+                </View>
+            </View>
+        </TouchableOpacity>
+    ), [navigation, theme.accent, theme.text]);
+
     const renderSectionHeader = useCallback((icon: string, title: string, color: string, subtitle?: string) => (
         <View style={styles.sectionHeader}>
             <MaterialCommunityIcons name={icon as any} size={24} color={color} />
@@ -751,7 +987,8 @@ const HomeScreen = ({ navigation }: any) => {
                     {/* Header */}
                     <View style={styles.headerContainer} ref={headerRef}>
                         <View style={styles.headerContent}>
-                            <Text style={styles.header}>Bienvenido</Text>
+                            <Text style={styles.header}>Inicio</Text>
+                            <Text style={styles.headerSub}>Tu biblioteca, novedades y progreso en un solo lugar</Text>
                         </View>
                     </View>
 
@@ -761,7 +998,7 @@ const HomeScreen = ({ navigation }: any) => {
                         </View>
                         <View style={styles.heroTextWrap}>
                             <Text style={styles.heroTitle}>Explora nuevos mangas</Text>
-                            <Text style={styles.heroSubtitle}>Top por rating, recientes y tus lecturas en progreso en un solo lugar.</Text>
+                            <Text style={styles.heroSubtitle}>Todo en un solo lugar: biblioteca, recomendaciones y progreso de lectura.</Text>
                         </View>
                     </LinearGradient>
 
@@ -849,45 +1086,16 @@ const HomeScreen = ({ navigation }: any) => {
                         )}
                     </View>
 
-                    {/* Continue Reading Section */}
-                    {continueReadingComics.length > 0 && (
-                        <View style={styles.sectionContainer}>
-                            {renderSectionHeader('book-open-outline', 'En Curso', theme.success, 'Retoma donde te quedaste')}
-                            {comicsLoading ? ( // You might want a separate loading state for this or reuse comicsLoading
-                                <ActivityIndicator size="small" color={theme.success} style={styles.sectionLoadingIndicator} />
-                            ) : (
-                                <FlatList
-                                    data={continueReadingComics}
-                                    keyExtractor={(item) => item.hid}
-                                    renderItem={renderComicItem}
-                                    horizontal
-                                    showsHorizontalScrollIndicator={false}
-                                    contentContainerStyle={styles.comicsList}
-                                    initialNumToRender={3}
-                                    maxToRenderPerBatch={5}
-                                    windowSize={7}
-                                    getItemLayout={getItemLayout}
-                                    removeClippedSubviews={Platform.OS === 'android'}
-                                    nestedScrollEnabled
-                                    decelerationRate="fast"
-                                    snapToInterval={CAROUSEL_SNAP_INTERVAL}
-                                    snapToAlignment="start"
-                                    disableIntervalMomentum
-                                />
-                            )}
-                        </View>
-                    )}
-
-                    {/* Top Safe Comics */}
+                    {/* Latest Anime Section */}
                     <View style={styles.sectionContainer}>
-                        {renderSectionHeader('shield-check', 'Top Seguros', theme.accentStrong, 'Mangas -18 (sin contenido erotico)')}
-                        {comicsLoading ? (
-                            <ActivityIndicator size="small" color={theme.accentStrong} style={styles.sectionLoadingIndicator} />
+                        {renderSectionHeader('play-circle-outline', 'Anime reciente', theme.accent, 'Ultimos estrenos y episodios')}
+                        {latestLoading ? (
+                            <ActivityIndicator size="small" color={theme.accent} style={styles.sectionLoadingIndicator} />
                         ) : (
                             <FlatList
-                                data={topSafe}
-                                keyExtractor={(item) => item.hid}
-                                renderItem={renderComicItem}
+                                data={latestAnime}
+                                keyExtractor={(item) => `${item.source || 'animeflv'}:${item.slug}`}
+                                renderItem={renderLatestAnimeItem}
                                 horizontal
                                 showsHorizontalScrollIndicator={false}
                                 contentContainerStyle={styles.comicsList}
@@ -905,15 +1113,15 @@ const HomeScreen = ({ navigation }: any) => {
                         )}
                     </View>
 
-                    {/* Top Erotic Comics */}
-                    {topErotic.length > 0 && (
+                    {/* Continue Reading Section */}
+                    {continueReadingComics.length > 0 && (
                         <View style={styles.sectionContainer}>
-                            {renderSectionHeader('fire', 'Top Eroticos', theme.accent, 'Mangas +18')}
-                            {comicsLoading ? (
-                                <ActivityIndicator size="small" color={theme.accent} style={styles.sectionLoadingIndicator} />
+                            {renderSectionHeader('book-open-outline', 'En Curso', theme.success, 'Retoma donde te quedaste')}
+                            {comicsLoading ? ( // You might want a separate loading state for this or reuse comicsLoading
+                                <ActivityIndicator size="small" color={theme.success} style={styles.sectionLoadingIndicator} />
                             ) : (
                                 <FlatList
-                                    data={topErotic}
+                                    data={continueReadingComics}
                                     keyExtractor={(item) => item.hid}
                                     renderItem={renderComicItem}
                                     horizontal
@@ -1007,20 +1215,26 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         paddingHorizontal: 20,
-        paddingTop: 15,
-        paddingBottom: 10,
+        paddingTop: 12,
+        paddingBottom: 8,
     },
     headerContent: {
         flex: 1,
     },
     header: {
-        fontSize: 28,
+        fontSize: 26,
         fontWeight: 'bold',
         color: 'white',
         fontFamily: 'Roboto-Bold',
     },
+    headerSub: {
+        marginTop: 4,
+        fontSize: 12,
+        color: '#C6C6D8',
+        fontFamily: 'Roboto-Regular',
+    },
     sectionContainer: {
-        marginBottom: 14,
+        marginBottom: 12,
     },
     sectionHeader: {
         flexDirection: 'row',
@@ -1084,7 +1298,7 @@ const styles = StyleSheet.create({
     },
     heroCard: {
         marginHorizontal: 20,
-        marginBottom: 16,
+        marginBottom: 14,
         borderRadius: 14,
         borderWidth: 1,
         borderColor: 'rgba(255,255,255,0.1)',
@@ -1118,7 +1332,7 @@ const styles = StyleSheet.create({
     },
     noticeCard: {
         marginHorizontal: 20,
-        marginBottom: 16,
+        marginBottom: 14,
         borderRadius: 12,
         borderWidth: 1,
         paddingHorizontal: 12,
@@ -1136,7 +1350,7 @@ const styles = StyleSheet.create({
     },
     announcementCard: {
         marginHorizontal: 20,
-        marginBottom: 16,
+        marginBottom: 14,
         borderRadius: 12,
         borderWidth: 1,
         paddingHorizontal: 12,
@@ -1154,7 +1368,7 @@ const styles = StyleSheet.create({
     },
     donationCard: {
         marginHorizontal: 20,
-        marginBottom: 16,
+        marginBottom: 14,
         borderRadius: 14,
         borderWidth: 1,
         borderColor: 'rgba(255,255,255,0.12)',
@@ -1254,25 +1468,25 @@ const styles = StyleSheet.create({
     },
     newsItem: {
         width: windowWidth * 0.85,
-        backgroundColor: 'rgba(255, 255, 255, 0.1)',
-        borderRadius: 12,
-        padding: 18,
+        backgroundColor: 'rgba(255, 255, 255, 0.08)',
+        borderRadius: 14,
+        padding: 16,
         marginRight: 15,
-        borderLeftWidth: 4,
-        borderLeftColor: '#FF6B6B',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.12)',
     },
     newsTitle: {
-        fontSize: 18,
+        fontSize: 16,
         fontWeight: '800',
         color: 'white',
         fontFamily: 'Roboto-Bold',
         marginBottom: 8,
     },
     newsContent: {
-        fontSize: 15,
+        fontSize: 14,
         color: '#E0E0E0',
         fontFamily: 'Roboto-Regular',
-        lineHeight: 22,
+        lineHeight: 20,
     },
     comicsList: {
         paddingHorizontal: 20,
@@ -1280,7 +1494,7 @@ const styles = StyleSheet.create({
     comicItem: {
         width: itemWidth,
         marginRight: CAROUSEL_ITEM_SPACING,
-        borderRadius: 14,
+        borderRadius: 16,
         overflow: 'hidden',
         position: 'relative',
         backgroundColor: '#2A2A3B',
@@ -1297,14 +1511,14 @@ const styles = StyleSheet.create({
         left: 0,
         right: 0,
         bottom: 0,
-        height: '40%',
+        height: '44%',
     },
     comicTitle: {
         position: 'absolute',
-        bottom: 10,
+        bottom: 9,
         left: 10,
         right: 10,
-        fontSize: 14,
+        fontSize: 13,
         color: 'white',
         fontFamily: 'Roboto-Medium',
         textShadowColor: 'rgba(0, 0, 0, 0.8)',

@@ -26,7 +26,9 @@ import CustomDrawerContent from './src/components/customDrawerContent';
 import HomeScreen from './src/screens/HomeScreen';
 import LibraryScreen from './src/screens/LibraryScreen';
 import DetailsScreen from './src/screens/DetailsScreen';
+import AnimeDetailsScreen from './src/screens/AnimeDetailsScreen';
 import ReaderScreen from './src/screens/ReaderScreen';
+import PlayerScreen from './src/screens/PlayerScreen';
 import ProfileScreen from './src/screens/ProfileScreen';
 import PaymentScreen from './src/screens/PaymentScreen';
 import FavoritesScreen from './src/screens/FavoritesScreen';
@@ -53,7 +55,9 @@ export type RootStackParamList = {
   Personalization: undefined;
   EventStore: undefined;
   Details: { slug: string };
-  Reader: { hid: string };
+  AnimeDetails: { slug: string };
+  Reader: { hid: string; resumeFromProgress?: boolean };
+  Player: { animeSlug: string; episodeSlug: string; resumeFromProgress?: boolean; startAtMs?: number };
   AddFriends: undefined;
   Payment: undefined;
   Chat: { recipientId?: string; recipientName?: string };
@@ -218,6 +222,7 @@ function ThemedNavigationShell({
           <Stack.Screen name="Personalization" component={PersonalizationScreen} />
           <Stack.Screen name="EventStore" component={EventStoreScreen} />
           <Stack.Screen name="Details" component={DetailsScreen} />
+          <Stack.Screen name="AnimeDetails" component={AnimeDetailsScreen} />
           <Stack.Screen name="Payment" component={PaymentScreen} />
           <Stack.Screen name="Profile" component={ProfileScreen} />
           <Stack.Screen name="Comments" component={CommentsScreen} />
@@ -232,6 +237,7 @@ function ThemedNavigationShell({
               gestureEnabled: false,
             }}
           />
+          <Stack.Screen name="Player" component={PlayerScreen} />
         </Stack.Navigator>
 
         <EventThemeBackdrop activeEventId={currentRouteName === 'Reader' ? null : backdropEventId} />

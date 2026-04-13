@@ -94,6 +94,25 @@ const normalizeStatus = (value?: string) => {
     return 'Desconocido';
 };
 
+const buildCoverImageSource = (cover: string, source?: string) => {
+    const uri = String(cover || '').trim();
+    if (!uri) return { uri };
+
+    const normalizedSource = String(source || '').toLowerCase().trim();
+    if (normalizedSource !== 'zonatmoorg') {
+        return { uri };
+    }
+
+    return {
+        uri,
+        headers: {
+            Referer: 'https://zonatmo.org/',
+            Origin: 'https://zonatmo.org',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        },
+    };
+};
+
 const DetailsScreen: React.FC = () => {
     const { theme } = usePersonalization();
     const route = useRoute();
@@ -530,7 +549,7 @@ const DetailsScreen: React.FC = () => {
                 >
                     <View style={[styles.heroCard, { backgroundColor: theme.surface, borderColor: theme.border }]}>
                         <View style={styles.headerContainer}>
-                            <Image source={{ uri: manga.cover }} style={[styles.coverImage, { borderColor: theme.border }]} resizeMode="cover" />
+                            <Image source={buildCoverImageSource(manga.cover, manga.source)} style={[styles.coverImage, { borderColor: theme.border }]} resizeMode="cover" />
                             <View style={styles.infoCard}>
                                 <Text style={[styles.title, { color: theme.text }]} numberOfLines={2}>{manga.title}</Text>
 

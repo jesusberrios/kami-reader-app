@@ -76,6 +76,8 @@ const CustomDrawerContent = (props: CustomDrawerContentProps) => {
     const insets = useSafeAreaInsets();
     const [userData, setUserData] = useState<UserData | null>(null);
     const [favoritesCount, setFavoritesCount] = useState<number>(0);
+    const [mangaFavoritesCount, setMangaFavoritesCount] = useState<number>(0);
+    const [animeFavoritesCount, setAnimeFavoritesCount] = useState<number>(0);
     const [mangasReadCount, setMangasReadCount] = useState<number>(0);
     const [totalReadingTimeMs, setTotalReadingTimeMs] = useState<number>(0);
     const [scaleValue] = useState(new Animated.Value(1));
@@ -97,6 +99,8 @@ const CustomDrawerContent = (props: CustomDrawerContentProps) => {
         if (!user) {
             setUserData(null);
             setFavoritesCount(0);
+            setMangaFavoritesCount(0);
+            setAnimeFavoritesCount(0);
             setMangasReadCount(0);
             setTotalReadingTimeMs(0);
             setDrawerLoading(false);
@@ -105,19 +109,22 @@ const CustomDrawerContent = (props: CustomDrawerContentProps) => {
 
         const userDocRef = doc(db, "users", user.uid);
         const favoritesCollectionRef = collection(db, 'users', user.uid, 'favorites');
+        const animeFavoritesCollectionRef = collection(db, 'users', user.uid, 'animeFavorites');
         const readComicsCollectionRef = collection(db, 'users', user.uid, 'readComics');
         const readComicsQuery = query(readComicsCollectionRef, where("isFullMangaRead", "==", true));
 
         let userUnsubscribe: () => void;
         let favoritesUnsubscribe: () => void;
+        let animeFavoritesUnsubscribe: () => void;
         let readComicsUnsubscribe: () => void;
 
         let userLoaded = false;
         let favoritesLoaded = false;
+        let animeFavoritesLoaded = false;
         let readComicsLoaded = false;
 
         const checkIfAllLoaded = () => {
-            if (userLoaded && favoritesLoaded && readComicsLoaded) {
+            if (userLoaded && favoritesLoaded && animeFavoritesLoaded && readComicsLoaded) {
                 setDrawerLoading(false);
             }
         };
@@ -157,12 +164,22 @@ const CustomDrawerContent = (props: CustomDrawerContentProps) => {
         });
 
         favoritesUnsubscribe = onSnapshot(favoritesCollectionRef, (querySnapshot) => {
-            setFavoritesCount(querySnapshot.size);
+            setMangaFavoritesCount(querySnapshot.size);
             favoritesLoaded = true;
             checkIfAllLoaded();
         }, (error) => {
-            setFavoritesCount(0);
+            setMangaFavoritesCount(0);
             favoritesLoaded = true;
+            checkIfAllLoaded();
+        });
+
+        animeFavoritesUnsubscribe = onSnapshot(animeFavoritesCollectionRef, (querySnapshot) => {
+            setAnimeFavoritesCount(querySnapshot.size);
+            animeFavoritesLoaded = true;
+            checkIfAllLoaded();
+        }, () => {
+            setAnimeFavoritesCount(0);
+            animeFavoritesLoaded = true;
             checkIfAllLoaded();
         });
 
@@ -179,9 +196,14 @@ const CustomDrawerContent = (props: CustomDrawerContentProps) => {
         return () => {
             userUnsubscribe();
             favoritesUnsubscribe();
+            animeFavoritesUnsubscribe();
             readComicsUnsubscribe();
         };
     }, []);
+
+    useEffect(() => {
+        setFavoritesCount(mangaFavoritesCount + animeFavoritesCount);
+    }, [mangaFavoritesCount, animeFavoritesCount]);
 
     const handleSignOut = async () => {
         Animated.spring(scaleValue, {
@@ -463,7 +485,7 @@ const CustomDrawerContent = (props: CustomDrawerContentProps) => {
                 </Animated.View>
 
                 <View style={styles.versionContainer}>
-                    <Text style={[styles.footerText, { color: theme.textMuted }]}>Kamireader v1.1.5</Text>
+                    <Text style={[styles.footerText, { color: theme.textMuted }]}>Kamireader v1.2.0</Text>
                     <Text style={[styles.footerText, { color: theme.textMuted }]}>© {new Date().getFullYear()} KAMI Studios</Text>
                 </View>
             </View>

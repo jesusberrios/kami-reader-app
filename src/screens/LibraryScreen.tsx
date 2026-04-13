@@ -22,20 +22,24 @@ import { Image } from 'expo-image';
 import { useAlertContext } from '../contexts/AlertContext';
 import { usePersonalization } from '../contexts/PersonalizationContext';
 import { backendUrl } from '../config/backend';
+import { getLatestAnime, searchAnime } from '../services/backendApi';
 import { getProviderAliasLabel, normalizeProviderSource } from '../utils/providerBranding';
 
 const REQUEST_TIMEOUT_MS = 8000;
 const PAGE_LIMIT = 30;
 const SEARCH_CACHE_TTL_MS = 5 * 60 * 1000;
 const LIBRARY_CACHE_TTL_MS = 2 * 60 * 1000;
+const AUTO_PREFETCH_MIN_RESULTS = 60;
 
 type Comic = {
     slug: string;
     title: string;
     cover: string;
     source: string;
+    contentType?: 'manga' | 'anime';
     score?: string;
     totalChapters?: number;
+    totalEpisodes?: number;
     description?: string;
     status?: string;
     statusLabel?: string;
@@ -48,7 +52,8 @@ type Comic = {
 };
 
 type SortKey = 'default' | 'title_asc' | 'title_desc' | 'score_desc';
-type SourceKey = 'all' | 'zonatmo' | 'visormanga' | 'manhwaweb' | 'zonaikigai';
+type ContentMode = 'manga' | 'anime';
+type SourceKey = 'all' | 'zonatmo' | 'zonatmoorg' | 'visormanga' | 'manhwaweb' | 'zonaikigai' | 'animeflv' | 'jkanime' | 'animeytx';
 type StatusKey = 'all' | 'ongoing' | 'completed' | 'hiatus' | 'cancelled' | 'unknown';
 type RatingKey = 'all' | 'safe' | 'suggestive' | 'erotica';
 type TagKey = 'all' | 'boyslove';
@@ -67,12 +72,20 @@ const SORT_OPTIONS: FilterOption[] = [
     { label: 'Mejor puntuados', value: 'score_desc' },
 ];
 
-const SOURCE_OPTIONS: FilterOption[] = [
+const MANGA_SOURCE_OPTIONS: FilterOption[] = [
     { label: 'Todas', value: 'all' },
     { label: 'Luna Atlas', value: 'zonatmo' },
+    { label: 'Nova Atlas', value: 'zonatmoorg' },
     { label: 'Neko Shelf', value: 'visormanga' },
     { label: 'Kumo Verse', value: 'manhwaweb' },
     { label: 'Yoru Realm', value: 'zonaikigai' },
+];
+
+const ANIME_SOURCE_OPTIONS: FilterOption[] = [
+    { label: 'Todas', value: 'all' },
+    { label: 'Kitsune Stream (Recomendado)', value: 'jkanime' },
+    { label: 'Hoshi Play', value: 'animeflv' },
+    { label: 'Astra Wave', value: 'animeytx' },
 ];
 
 const STATUS_OPTIONS: FilterOption[] = [
@@ -143,16 +156,35 @@ const tokenize = (value: string) =>
         .map((x) => x.trim())
         .filter((x) => x.length > 1 && !STOP_WORDS.has(x));
 
+const normalizeAnimeDisplayTitle = (value: string, source?: string) => {
+    const raw = String(value || '').replace(/\s+/g, ' ').trim();
+    const sourceKey = String(source || '').toLowerCase().trim();
+    if (!raw || (sourceKey !== 'animeflv' && sourceKey !== 'jkanime')) return raw;
+
+    return raw
+        .replace(/^anime\s+/i, '')
+        .replace(/\s*[-|]\s*animeflv(?:\.net|\.com)?\b.*$/i, '')
+        .replace(/\s*[-|]\s*anime\s+online\b.*$/i, '')
+        .replace(/\s*[-|]\s*ver\s+anime\s+online\b.*$/i, '')
+        .replace(/\bver\s+anime\s+online\b.*$/i, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+};
+
 const mapApiComic = (item: any): Comic => {
-    const title = item.title || 'Sin título';
+    const title = normalizeAnimeDisplayTitle(item.title || 'Sin título', item.source);
     const description = item.description || '';
+    const sourceKey = String(item.source || '').toLowerCase();
+    const contentType = item.contentType || (sourceKey === 'animeflv' || sourceKey === 'jkanime' || sourceKey === 'animeytx' ? 'anime' : 'manga');
     return {
         slug: item.slug,
         title,
         cover: item.cover || '',
         source: normalizeProviderSource(item.source),
+        contentType,
         score: item.score || '0.0',
         totalChapters: item.totalChapters || 0,
+        totalEpisodes: item.totalEpisodes || 0,
         description,
         status: item.status || 'unknown',
         statusLabel: item.statusLabel || '',
@@ -166,6 +198,7 @@ const mapApiComic = (item: any): Comic => {
 };
 
 const buildSearchCacheKey = (
+    mode: ContentMode,
     query: string,
     page: number,
     source: SourceKey,
@@ -173,16 +206,17 @@ const buildSearchCacheKey = (
     rating: RatingKey,
     sort: SortKey,
     tag: TagKey,
-) => `${normalizeText(query)}|p:${page}|s:${source}|st:${status}|r:${rating}|o:${sort}|t:${tag}`;
+) => `${mode}|${normalizeText(query)}|p:${page}|s:${source}|st:${status}|r:${rating}|o:${sort}|t:${tag}`;
 
 const buildLibraryCacheKey = (
+    mode: ContentMode,
     page: number,
     source: SourceKey,
     status: StatusKey,
     rating: RatingKey,
     sort: SortKey,
     tag: TagKey,
-) => `lib|p:${page}|s:${source}|st:${status}|r:${rating}|o:${sort}|t:${tag}`;
+) => `${mode}|lib|p:${page}|s:${source}|st:${status}|r:${rating}|o:${sort}|t:${tag}`;
 
 const applyRelevanceFilter = (list: Comic[], query: string): Comic[] => {
     const q = normalizeText(query);
@@ -301,8 +335,28 @@ const mergeUniqueComics = (base: Comic[], incoming: Comic[]) => {
     return Array.from(map.values());
 };
 
+const buildCardImageSource = (item: Comic) => {
+    const uri = String(item?.cover || '').trim();
+    if (!uri) return { uri };
+
+    if (String(item?.source || '').toLowerCase() !== 'zonatmoorg') {
+        return { uri };
+    }
+
+    return {
+        uri,
+        headers: {
+            Referer: 'https://zonatmo.org/',
+            Origin: 'https://zonatmo.org',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        },
+    };
+};
+
 const LibraryScreen = ({ navigation }: any) => {
     const { theme, settings } = usePersonalization();
+    const [contentMode, setContentMode] = useState<ContentMode>('manga');
+    const [pendingContentMode, setPendingContentMode] = useState<ContentMode>('manga');
     const [allComics, setAllComics] = useState<Comic[]>([]);
     const [comics, setComics] = useState<Comic[]>([]);
     const [loading, setLoading] = useState(false);
@@ -331,10 +385,29 @@ const LibraryScreen = ({ navigation }: any) => {
     const listRef = useRef<FlatList<Comic>>(null);
     const autoPrefetchPageRef = useRef(0);
     const lastScrollOffsetRef = useRef(0);
+    const didMountContentModeRef = useRef(false);
     const searchCacheRef = useRef<Map<string, { timestamp: number; results: Comic[]; totalPages?: number }>>(new Map());
     const libraryCacheRef = useRef<Map<string, { timestamp: number; results: Comic[]; hasMore: boolean }>>(new Map());
 
     const { alertError } = useAlertContext();
+
+    const sourceOptions = contentMode === 'anime' ? ANIME_SOURCE_OPTIONS : MANGA_SOURCE_OPTIONS;
+
+    const filteredStatusOptions = contentMode === 'anime' ? [
+        { label: 'Todos', value: 'all' },
+        { label: 'En curso', value: 'ongoing' },
+        { label: 'Completado', value: 'completed' },
+        { label: 'En pausa', value: 'hiatus' },
+        { label: 'Cancelado', value: 'cancelled' },
+        { label: 'Desconocido', value: 'unknown' },
+    ] : STATUS_OPTIONS;
+
+    const filteredRatingOptions = contentMode === 'anime' ? [
+        { label: 'Todos', value: 'all' },
+        { label: 'Seguro', value: 'safe' },
+    ] : RATING_OPTIONS;
+
+    const filteredTagOptions = contentMode === 'anime' ? [{ label: 'Todas', value: 'all' }] : TAG_OPTIONS;
 
     const activeFilterCount = useMemo(
         () => [selectedSort !== 'default', selectedSource !== 'all', selectedStatus !== 'all', selectedRating !== 'all', selectedTag !== 'all'].filter(Boolean).length,
@@ -356,6 +429,34 @@ const LibraryScreen = ({ navigation }: any) => {
     }, []);
 
     useEffect(() => {
+        if (!isMounted.current) return;
+        if (!didMountContentModeRef.current) {
+            didMountContentModeRef.current = true;
+            return;
+        }
+        const nextMode = pendingContentMode;
+        setContentMode(nextMode);
+        setCurrentPage(1);
+        setHasMore(true);
+        setSearchQuery('');
+        setCommittedSearchQuery('');
+        setSelectedSort('default');
+        setPendingSort('default');
+        setSelectedSource('all');
+        setPendingSource('all');
+        setSelectedStatus('all');
+        setPendingStatus('all');
+        setSelectedRating('all');
+        setPendingRating('all');
+        setSelectedTag('all');
+        setPendingTag('all');
+        allComicsRef.current = [];
+        setAllComics([]);
+        setComics([]);
+        loadLatest({ page: 1, append: false, mode: nextMode });
+    }, [pendingContentMode, loadLatest]);
+
+    useEffect(() => {
         allComicsRef.current = allComics;
     }, [allComics]);
 
@@ -371,10 +472,11 @@ const LibraryScreen = ({ navigation }: any) => {
         if (isMounted.current) setComics(filtered);
     }, []);
 
-    const loadLatest = useCallback(async (options?: { page?: number; append?: boolean }) => {
+    const loadLatest = useCallback(async (options?: { page?: number; append?: boolean; mode?: ContentMode }) => {
         const page = options?.page ?? 1;
         const append = options?.append ?? false;
-        const cacheKey = buildLibraryCacheKey(page, selectedSource, selectedStatus, selectedRating, selectedSort, selectedTag);
+        const mode = options?.mode ?? contentMode;
+        const cacheKey = buildLibraryCacheKey(mode, page, selectedSource, selectedStatus, selectedRating, selectedSort, selectedTag);
 
         const cached = libraryCacheRef.current.get(cacheKey);
         const isCacheFresh = !!cached && (Date.now() - cached.timestamp) <= LIBRARY_CACHE_TTL_MS;
@@ -405,19 +507,27 @@ const LibraryScreen = ({ navigation }: any) => {
             query.append('page', String(page));
             query.append('limit', String(PAGE_LIMIT));
 
-            const data = await fetchJsonWithTimeout(`${backendUrl('/library')}${query.toString() ? `?${query.toString()}` : ''}`);
+            const endpoint = mode === 'anime' ? '/anime/latest' : '/library';
+            const data = mode === 'anime'
+                ? await getLatestAnime(Object.fromEntries(query.entries()), { ttlMs: LIBRARY_CACHE_TTL_MS })
+                : await fetchJsonWithTimeout(`${backendUrl(endpoint)}${query.toString() ? `?${query.toString()}` : ''}`);
             const list: Comic[] = (data.results || []).map(mapApiComic);
 
             const hasMoreRaw = data?.pagination?.hasMore;
             const totalPagesRaw = Number(data?.pagination?.totalPages);
+            const hasActiveServerFilters = selectedSource !== 'all' || selectedStatus !== 'all' || selectedRating !== 'all' || selectedTag !== 'all';
+            const previousCount = allComicsRef.current.length;
+            const merged = append ? mergeUniqueComics(allComicsRef.current, list) : list;
+            const appendedUniqueCount = append ? Math.max(0, merged.length - previousCount) : list.length;
             const nextHasMore = typeof hasMoreRaw === 'boolean'
                 ? hasMoreRaw
                 : Number.isFinite(totalPagesRaw)
                     ? page < totalPagesRaw
-                    : list.length >= PAGE_LIMIT;
+                    : append
+                        ? (appendedUniqueCount > 0 && (hasActiveServerFilters ? list.length > 0 : list.length >= PAGE_LIMIT))
+                        : (hasActiveServerFilters ? list.length > 0 : list.length >= PAGE_LIMIT);
 
             if (isMounted.current) {
-                const merged = append ? mergeUniqueComics(allComicsRef.current, list) : list;
                 allComicsRef.current = merged;
                 setAllComics(merged);
                 applyFiltersAndSort(merged, selectedSort, selectedSource, selectedStatus, selectedRating, selectedTag);
@@ -434,7 +544,7 @@ const LibraryScreen = ({ navigation }: any) => {
             // Warm next page in cache so infinite-scroll feels instant.
             if (!append && nextHasMore) {
                 const nextPage = page + 1;
-                const nextKey = buildLibraryCacheKey(nextPage, selectedSource, selectedStatus, selectedRating, selectedSort, selectedTag);
+                const nextKey = buildLibraryCacheKey(mode, nextPage, selectedSource, selectedStatus, selectedRating, selectedSort, selectedTag);
                 const nextCached = libraryCacheRef.current.get(nextKey);
                 const nextFresh = !!nextCached && (Date.now() - nextCached.timestamp) <= LIBRARY_CACHE_TTL_MS;
                 if (!nextFresh) {
@@ -447,7 +557,12 @@ const LibraryScreen = ({ navigation }: any) => {
                     nextQuery.append('page', String(nextPage));
                     nextQuery.append('limit', String(PAGE_LIMIT));
 
-                    fetchJsonWithTimeout(`${backendUrl('/library')}${nextQuery.toString() ? `?${nextQuery.toString()}` : ''}`)
+                    const nextEndpoint = mode === 'anime' ? '/anime/latest' : '/library';
+                    const nextFetch = mode === 'anime'
+                        ? getLatestAnime(Object.fromEntries(nextQuery.entries()), { ttlMs: LIBRARY_CACHE_TTL_MS })
+                        : fetchJsonWithTimeout(`${backendUrl(nextEndpoint)}${nextQuery.toString() ? `?${nextQuery.toString()}` : ''}`);
+
+                    Promise.resolve(nextFetch)
                         .then((nextData) => {
                             const nextList: Comic[] = (nextData.results || []).map(mapApiComic);
                             const hasMoreValue = typeof nextData?.pagination?.hasMore === 'boolean'
@@ -471,7 +586,7 @@ const LibraryScreen = ({ navigation }: any) => {
                 setIsFetchingMore(false);
             }
         }
-    }, [selectedSort, selectedSource, selectedStatus, selectedRating, selectedTag, applyFiltersAndSort]);
+    }, [contentMode, selectedSort, selectedSource, selectedStatus, selectedRating, selectedTag, applyFiltersAndSort]);
 
     const searchComics = useCallback(async (options?: { page?: number; append?: boolean; query?: string }) => {
         const page = options?.page ?? 1;
@@ -502,7 +617,7 @@ const LibraryScreen = ({ navigation }: any) => {
 
         setError(null);
         try {
-            const cacheKey = buildSearchCacheKey(q, page, selectedSource, selectedStatus, selectedRating, selectedSort, selectedTag);
+            const cacheKey = buildSearchCacheKey(contentMode, q, page, selectedSource, selectedStatus, selectedRating, selectedSort, selectedTag);
             const cached = searchCacheRef.current.get(cacheKey);
             const isCacheFresh = !!cached && (Date.now() - cached.timestamp) <= SEARCH_CACHE_TTL_MS;
 
@@ -536,7 +651,9 @@ const LibraryScreen = ({ navigation }: any) => {
             query.append('page', String(page));
             query.append('limit', String(PAGE_LIMIT));
 
-            const data = await fetchJsonWithTimeout(`${backendUrl('/search')}?${query.toString()}`);
+            const data = contentMode === 'anime'
+                ? await searchAnime(Object.fromEntries(query.entries()), { ttlMs: SEARCH_CACHE_TTL_MS })
+                : await fetchJsonWithTimeout(`${backendUrl('/search')}?${query.toString()}`);
             const list: Comic[] = (data.results || []).map(mapApiComic);
 
             const relevant = applyRelevanceFilter(list, q);
@@ -569,7 +686,7 @@ const LibraryScreen = ({ navigation }: any) => {
                 setIsFetchingMore(false);
             }
         }
-    }, [committedSearchQuery, selectedSort, selectedSource, selectedStatus, selectedRating, selectedTag, applyFiltersAndSort, loadLatest]);
+    }, [contentMode, committedSearchQuery, selectedSort, selectedSource, selectedStatus, selectedRating, selectedTag, applyFiltersAndSort, loadLatest]);
 
     const runSearch = useCallback(() => {
         const q = searchQuery.trim();
@@ -623,7 +740,7 @@ const LibraryScreen = ({ navigation }: any) => {
     useEffect(() => {
         // If filtered results are too short to scroll, fetch the next page automatically.
         if (loading || isFetchingMore || !hasMore) return;
-        if (comics.length === 0 || comics.length >= 30) return;
+        if (comics.length === 0 || comics.length >= AUTO_PREFETCH_MIN_RESULTS) return;
         if (autoPrefetchPageRef.current === currentPage) return;
 
         autoPrefetchPageRef.current = currentPage;
@@ -655,7 +772,6 @@ const LibraryScreen = ({ navigation }: any) => {
         setCurrentPage(1);
         setHasMore(true);
         autoPrefetchPageRef.current = 0;
-        autoPrefetchPageRef.current = 0;
         setLoading(true);
         setError(null);
 
@@ -670,19 +786,34 @@ const LibraryScreen = ({ navigation }: any) => {
             params.append('page', '1');
             params.append('limit', String(PAGE_LIMIT));
 
-            const endpoint = trimmedQuery ? '/search' : '/library';
-            const data = await fetchJsonWithTimeout(`${backendUrl(endpoint)}?${params.toString()}`);
+            const endpoint = contentMode === 'anime'
+                ? (trimmedQuery ? '/anime/search' : '/anime/latest')
+                : (trimmedQuery ? '/search' : '/library');
+            const data = contentMode === 'anime'
+                ? await (trimmedQuery
+                    ? searchAnime(Object.fromEntries(params.entries()), { ttlMs: SEARCH_CACHE_TTL_MS })
+                    : getLatestAnime(Object.fromEntries(params.entries()), { ttlMs: LIBRARY_CACHE_TTL_MS }))
+                : await fetchJsonWithTimeout(`${backendUrl(endpoint)}?${params.toString()}`);
             const mapped = (data.results || []).map(mapApiComic);
             const list = trimmedQuery ? applyRelevanceFilter(mapped, trimmedQuery) : mapped;
             const hasMoreRaw = data?.pagination?.hasMore;
             const totalPagesRaw = Number(data?.pagination?.totalPages);
+            const hasActiveServerFilters = source !== 'all' || status !== 'all' || rating !== 'all' || tag !== 'all';
+            const previousCount = allComicsRef.current.length;
+            const merged = list;
+            const appendedUniqueCount = Math.max(0, merged.length - previousCount);
+            const nextHasMore = typeof hasMoreRaw === 'boolean'
+                ? hasMoreRaw
+                : Number.isFinite(totalPagesRaw)
+                    ? 1 < totalPagesRaw
+                    : (hasActiveServerFilters ? list.length > 0 : list.length >= PAGE_LIMIT);
 
             if (!isMounted.current) return;
-            allComicsRef.current = list;
-            setAllComics(list);
-            applyFiltersAndSort(list, sort, source, status, rating, tag);
+            allComicsRef.current = merged;
+            setAllComics(merged);
+            applyFiltersAndSort(merged, sort, source, status, rating, tag);
             setCurrentPage(1);
-            setHasMore(typeof hasMoreRaw === 'boolean' ? hasMoreRaw : (Number.isFinite(totalPagesRaw) ? 1 < totalPagesRaw : list.length >= PAGE_LIMIT));
+            setHasMore(nextHasMore && (appendedUniqueCount > 0 || list.length > 0));
         } catch (e: any) {
             if (isMounted.current) setError(e.message);
         } finally {
@@ -691,7 +822,7 @@ const LibraryScreen = ({ navigation }: any) => {
                 setIsFetchingMore(false);
             }
         }
-    }, [applyFiltersAndSort]);
+    }, [contentMode, applyFiltersAndSort]);
 
     const applyFilters = useCallback(() => {
         const hasServerBackedChange =
@@ -770,7 +901,7 @@ const LibraryScreen = ({ navigation }: any) => {
         return (
             <LinearGradient colors={[theme.background, theme.backgroundSecondary]} style={styles.loadingContainer}>
                 <ActivityIndicator size="large" color={theme.accent} />
-                <Text style={styles.loadingText}>Cargando mangas...</Text>
+                <Text style={styles.loadingText}>{contentMode === 'anime' ? 'Cargando anime...' : 'Cargando mangas...'}</Text>
             </LinearGradient>
         );
     }
@@ -818,13 +949,29 @@ const LibraryScreen = ({ navigation }: any) => {
                     </TouchableOpacity>
                 </View>
 
+                <View style={styles.contentModeTabs}>
+                    {([['manga', 'Manga'], ['anime', 'Anime']] as const).map(([value, label]) => (
+                        <TouchableOpacity
+                            key={value}
+                            style={[
+                                styles.contentModeTab,
+                                { backgroundColor: theme.surface, borderColor: theme.border },
+                                contentMode === value && { backgroundColor: theme.accent, borderColor: theme.accent },
+                            ]}
+                            onPress={() => setPendingContentMode(value)}
+                        >
+                            <Text style={[styles.contentModeTabText, { color: theme.textMuted }, contentMode === value && { color: theme.text }]}>{label}</Text>
+                        </TouchableOpacity>
+                    ))}
+                </View>
+
                 {/* Search Bar */}
                 <View style={styles.searchContainer}>
                     <View style={[styles.searchInputContainer, { backgroundColor: theme.surface, borderColor: theme.border }]}>
                         <MaterialCommunityIcons name="magnify" size={20} color={theme.textMuted} style={styles.searchIcon} />
                         <TextInput
                             style={[styles.searchInput, { color: theme.text }]}
-                            placeholder="Buscar por título o descripción..."
+                            placeholder={contentMode === 'anime' ? 'Buscar anime por título...' : 'Buscar por título o descripción...'}
                             placeholderTextColor={theme.textMuted}
                             value={searchQuery}
                             onChangeText={setSearchQuery}
@@ -844,9 +991,9 @@ const LibraryScreen = ({ navigation }: any) => {
 
                 <View style={[styles.resultsMetaRow, { backgroundColor: theme.surface, borderColor: theme.border }] }>
                     <Text style={[styles.resultsMetaText, { color: theme.textMuted }]}>
-                        {committedSearchQuery ? `Resultados para "${committedSearchQuery}"` : 'Explora los más recientes'} · {comics.length} títulos
+                        {committedSearchQuery ? `Resultados para "${committedSearchQuery}"` : `Explora los mas recientes de ${contentMode === 'anime' ? 'anime' : 'manga'}`} · {comics.length} titulos
                     </Text>
-                    {settings.compactCards ? <Text style={[styles.resultsMetaText, { color: theme.accent, textAlign: 'right' }]}>Modo compacto</Text> : null}
+                    {settings.compactCards ? <Text style={[styles.resultsMetaCompactTag, { color: theme.accent }]}>Compacto</Text> : null}
                 </View>
 
                 {/* Active Filters */}
@@ -861,7 +1008,7 @@ const LibraryScreen = ({ navigation }: any) => {
                             )}
                             {selectedSource !== 'all' && (
                                 <TouchableOpacity style={[styles.activeFilter, { backgroundColor: theme.accentSoft, borderColor: theme.accent }]} onPress={() => removeSingleFilter('source')}>
-                                    <Text style={[styles.activeFilterText, { color: theme.accent }]}>{SOURCE_OPTIONS.find(o => o.value === selectedSource)?.label}</Text>
+                                    <Text style={[styles.activeFilterText, { color: theme.accent }]}>{sourceOptions.find(o => o.value === selectedSource)?.label}</Text>
                                 </TouchableOpacity>
                             )}
                             {selectedStatus !== 'all' && (
@@ -900,7 +1047,7 @@ const LibraryScreen = ({ navigation }: any) => {
                     updateCellsBatchingPeriod={50}
                     removeClippedSubviews={Platform.OS === 'android'}
                     onEndReached={handleLoadMore}
-                    onEndReachedThreshold={0.4}
+                    onEndReachedThreshold={0.7}
                     onScroll={handleListScroll}
                     scrollEventThrottle={16}
                     ListFooterComponent={
@@ -912,9 +1059,10 @@ const LibraryScreen = ({ navigation }: any) => {
                         !loading ? (
                             <View style={styles.emptyContainer}>
                                 <MaterialCommunityIcons name="book-alert" size={50} color={theme.textMuted} />
-                                <Text style={[styles.emptyText, { color: theme.text }]}>No se encontraron mangas</Text>
+                                <Text style={[styles.emptyText, { color: theme.text }]}>No encontramos resultados de {contentMode === 'anime' ? 'anime' : 'manga'}</Text>
+                                <Text style={[styles.emptySubText, { color: theme.textMuted }]}>Prueba otra busqueda o quita filtros para ver mas opciones.</Text>
                                 <TouchableOpacity style={[styles.resetButton, { backgroundColor: theme.accent }]} onPress={() => loadLatest({ page: 1, append: false })}>
-                                    <Text style={[styles.resetButtonText, { color: theme.text }]}>Mostrar recientes</Text>
+                                    <Text style={[styles.resetButtonText, { color: theme.text }]}>{contentMode === 'anime' ? 'Mostrar anime recientes' : 'Mostrar recientes'}</Text>
                                 </TouchableOpacity>
                             </View>
                         ) : null
@@ -930,10 +1078,10 @@ const LibraryScreen = ({ navigation }: any) => {
                                     shadowColor: theme.accent,
                                 },
                             ]}
-                            onPress={() => navigation.navigate('Details', { slug: item.slug })}
+                            onPress={() => navigation.navigate(contentMode === 'anime' ? 'AnimeDetails' : 'Details', { slug: item.slug })}
                         >
                             <Image
-                                source={{ uri: item.cover }}
+                                source={buildCardImageSource(item)}
                                 style={[styles.comicCover, { height: compactCoverHeight, backgroundColor: theme.surfaceMuted }]}
                                 contentFit="cover"
                                 cachePolicy="memory-disk"
@@ -966,7 +1114,7 @@ const LibraryScreen = ({ navigation }: any) => {
                                         { color: getStatusBadgeStyles(item.status).textColor },
                                     ]}
                                 >
-                                    {getStatusBadgeLabel(item)}
+                                    {contentMode === 'anime' && item.totalEpisodes ? `Ep. ${item.totalEpisodes}` : getStatusBadgeLabel(item)}
                                 </Text>
                             </View>
                         </TouchableOpacity>
@@ -1048,7 +1196,7 @@ const LibraryScreen = ({ navigation }: any) => {
                                     <View style={styles.filterGroup}>
                                         <Text style={[styles.filterGroupTitle, { color: theme.accent }]}>Fuente</Text>
                                         <View style={styles.filterOptions}>
-                                            {SOURCE_OPTIONS.map((option) => (
+                                            {sourceOptions.map((option) => (
                                                 <TouchableOpacity
                                                     key={option.value}
                                                     style={[
@@ -1075,7 +1223,7 @@ const LibraryScreen = ({ navigation }: any) => {
                                     <View style={styles.filterGroup}>
                                         <Text style={[styles.filterGroupTitle, { color: theme.accent }]}>Estado</Text>
                                         <View style={styles.filterOptions}>
-                                            {STATUS_OPTIONS.map((option) => (
+                                            {filteredStatusOptions.map((option) => (
                                                 <TouchableOpacity
                                                     key={option.value}
                                                     style={[
@@ -1102,7 +1250,7 @@ const LibraryScreen = ({ navigation }: any) => {
                                     <View style={styles.filterGroup}>
                                         <Text style={[styles.filterGroupTitle, { color: theme.accent }]}>Clasificación</Text>
                                         <View style={styles.filterOptions}>
-                                            {RATING_OPTIONS.map((option) => (
+                                            {filteredRatingOptions.map((option) => (
                                                 <TouchableOpacity
                                                     key={option.value}
                                                     style={[
@@ -1129,7 +1277,7 @@ const LibraryScreen = ({ navigation }: any) => {
                                     <View style={styles.filterGroup}>
                                         <Text style={[styles.filterGroupTitle, { color: theme.accent }]}>Etiqueta</Text>
                                         <View style={styles.filterOptions}>
-                                            {TAG_OPTIONS.map((option) => (
+                                            {filteredTagOptions.map((option) => (
                                                 <TouchableOpacity
                                                     key={option.value}
                                                     style={[
@@ -1230,8 +1378,8 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'space-between',
         paddingHorizontal: 20,
-        paddingTop: 14,
-        paddingBottom: 8,
+        paddingTop: 12,
+        paddingBottom: 10,
         backgroundColor: 'transparent',
         borderBottomWidth: 0,
         elevation: 0,
@@ -1240,13 +1388,30 @@ const styles = StyleSheet.create({
     headerSideSpacer: {
         width: 48,
     },
+    contentModeTabs: {
+        flexDirection: 'row',
+        gap: 10,
+        paddingHorizontal: 20,
+        marginTop: 8,
+        marginBottom: 4,
+    },
+    contentModeTab: {
+        flex: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingVertical: 10,
+        borderRadius: 14,
+        borderWidth: 1,
+    },
+    contentModeTabText: {
+        fontSize: 13,
+        fontFamily: 'Roboto-Bold',
+        letterSpacing: 0.2,
+    },
     title: {
-        fontSize: 26,
+        fontSize: 24,
         fontFamily: 'Roboto-Bold',
         color: '#FFFFFF',
-        textShadowColor: 'rgba(0, 0, 0, 0.2)',
-        textShadowOffset: { width: 1, height: 1 },
-        textShadowRadius: 2,
     },
     filterButton: {
         padding: 10,
@@ -1262,8 +1427,8 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         paddingHorizontal: 20,
-        marginTop: 6,
-        marginBottom: 12,
+        marginTop: 8,
+        marginBottom: 10,
     },
     searchInputContainer: {
         flex: 1,
@@ -1277,9 +1442,9 @@ const styles = StyleSheet.create({
         borderColor: 'rgba(255,255,255,0.08)',
         shadowColor: '#000',
         shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.16,
-        shadowRadius: 4,
-        elevation: 3,
+        shadowOpacity: 0.1,
+        shadowRadius: 3,
+        elevation: 1,
     },
     searchIcon: {
         marginRight: 10,
@@ -1315,17 +1480,26 @@ const styles = StyleSheet.create({
         justifyContent: 'space-between',
         alignItems: 'center',
         marginHorizontal: 20,
-        marginBottom: 12,
+        marginBottom: 10,
         borderWidth: 1,
-        borderRadius: 12,
+        borderRadius: 14,
         paddingHorizontal: 12,
-        paddingVertical: 8,
+        paddingVertical: 9,
         gap: 12,
     },
     resultsMetaText: {
         fontSize: 12,
         fontFamily: 'Roboto-Medium',
         flex: 1,
+    },
+    resultsMetaCompactTag: {
+        fontSize: 11,
+        fontFamily: 'Roboto-Bold',
+        textAlign: 'right',
+        backgroundColor: 'rgba(255,255,255,0.08)',
+        borderRadius: 999,
+        paddingHorizontal: 8,
+        paddingVertical: 4,
     },
     activeFiltersContainer: {
         paddingLeft: 20,
@@ -1372,7 +1546,7 @@ const styles = StyleSheet.create({
     },
     comicsList: {
         paddingHorizontal: 11,
-        paddingBottom: 26,
+        paddingBottom: 36,
     },
     row: {
         justifyContent: 'space-between',
@@ -1380,15 +1554,15 @@ const styles = StyleSheet.create({
     },
     comicGridItem: {
         backgroundColor: 'rgba(255, 255, 255, 0.08)',
-        borderRadius: 16,
+        borderRadius: 18,
         overflow: 'hidden',
         width: (width / 2) - 20,
         marginHorizontal: 5,
         borderWidth: 1,
-        elevation: 5,
+        elevation: 2,
         shadowOffset: { width: 0, height: 3 },
-        shadowOpacity: 0.16,
-        shadowRadius: 7,
+        shadowOpacity: 0.1,
+        shadowRadius: 5,
     },
     comicCover: {
         width: '100%',
@@ -1401,8 +1575,8 @@ const styles = StyleSheet.create({
         left: 0,
         right: 0,
         paddingHorizontal: 10,
-        paddingTop: 36,
-        paddingBottom: 10,
+        paddingTop: 44,
+        paddingBottom: 11,
     },
     comicGridTitle: {
         color: '#FFFFFF',
@@ -1462,7 +1636,7 @@ const styles = StyleSheet.create({
         position: 'absolute',
         top: 10,
         left: 10,
-        backgroundColor: 'rgba(10,10,16,0.82)',
+        backgroundColor: 'rgba(10,10,16,0.72)',
         borderColor: 'rgba(255,255,255,0.24)',
         borderWidth: 1,
         borderRadius: 10,
@@ -1500,6 +1674,13 @@ const styles = StyleSheet.create({
         fontSize: 16,
         marginTop: 10,
         textAlign: 'center',
+    },
+    emptySubText: {
+        marginTop: 6,
+        fontSize: 12,
+        fontFamily: 'Roboto-Regular',
+        textAlign: 'center',
+        lineHeight: 18,
     },
     resetButton: {
         marginTop: 20,

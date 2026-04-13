@@ -6,7 +6,7 @@
 ██║  ██╗██║  ██║██║ ╚═╝ ██║██║    ██║  ██║███████╗██║  ██║██████╔╝███████╗██║  ██║
 ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝    ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚═════╝ ╚══════╝╚═╝  ╚═╝
 
-  Tu lector de manga favorito • v1.1.5 • Android
+  Tu lector de manga favorito • v1.2.0 • Android
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -14,7 +14,7 @@
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
   Descarga directa (última versión):
-  https://github.com/jesusberrios/kami-reader-app/releases/download/1.1.5/kamireader-1.1.5-pre-release.apk
+  https://github.com/jesusberrios/kami-reader-app/releases/download/1.2.0/kamireader-1.2.0-pre-release.apk
 
   Todas las versiones:
   https://github.com/jesusberrios/kami-reader-app/releases

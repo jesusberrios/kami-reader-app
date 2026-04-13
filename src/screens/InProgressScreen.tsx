@@ -23,13 +23,16 @@ import { getProviderAliasLabel } from '../utils/providerBranding';
 // Define the type for an in-progress item
 type InProgressItem = {
     id: string;
-    mangaTitle: string;
+    title: string;
     coverUrl: string;
     slug: string;
     source?: string;
+    contentType: 'manga' | 'anime';
     lastReadChapterHid?: string;
     lastReadChapterNumber?: string;
     lastReadImagePage?: number;
+    lastEpisodeSlug?: string;
+    lastEpisodeNumber?: number;
     startedAt?: string;
     activityText?: string;
     sortTimestamp?: number;
@@ -54,7 +57,7 @@ const formatRelativeDate = (date?: Date | null) => {
 export default function InProgressScreen() {
     const { theme } = usePersonalization();
     const navigation = useNavigation<any>();
-    const [inProgressComics, setInProgressComics] = useState<InProgressItem[]>([]);
+    const [inProgressItems, setInProgressItems] = useState<InProgressItem[]>([]);
     const [loading, setLoading] = useState(true);
     const [removingId, setRemovingId] = useState<string | null>(null);
     const [currentUserUid, setCurrentUserUid] = useState<string | null>(null);
@@ -86,49 +89,108 @@ export default function InProgressScreen() {
 
     useEffect(() => {
         if (!currentUserUid) {
-            setInProgressComics([]);
+            setInProgressItems([]);
             setLoading(false);
             return;
         }
 
-        const inProgressCollectionRef = collection(db, 'users', currentUserUid, 'inProgressManga');
+        const mangaRef = collection(db, 'users', currentUserUid, 'inProgressManga');
+        const animeRef = collection(db, 'users', currentUserUid, 'inProgressAnime');
 
-        const unsubscribe = onSnapshot(
-            inProgressCollectionRef,
+        let mangaItems: InProgressItem[] = [];
+        let animeItems: InProgressItem[] = [];
+
+        const flush = () => {
+            const merged = [...mangaItems, ...animeItems]
+                .sort((a, b) => (b.sortTimestamp || 0) - (a.sortTimestamp || 0));
+            setInProgressItems(merged);
+            setLoading(false);
+        };
+
+        const unsubscribeManga = onSnapshot(
+            mangaRef,
             (querySnapshot) => {
-                const inProgress: InProgressItem[] = [];
+                const next: InProgressItem[] = [];
                 querySnapshot.forEach((document) => {
                     const data = document.data();
-                    const lastUpdatedDate = data.lastUpdated?.toDate?.() || data.startedAt?.toDate?.() || null;
+                    const lastUpdatedDate = data.lastUpdated?.toDate?.() || data.updatedAt?.toDate?.() || data.startedAt?.toDate?.() || null;
                     const startedAtDate = data.startedAt?.toDate?.() || null;
-                    inProgress.push({
+                    next.push({
                         id: document.id,
-                        mangaTitle: data.mangaTitle,
-                        coverUrl: data.coverUrl,
-                        slug: data.slug,
+                        title: String(data.mangaTitle || data.comicTitle || data.title || document.id),
+                        coverUrl: String(data.coverUrl || ''),
+                        slug: String(data.slug || document.id),
                         source: data.source || 'zonatmo',
+                        contentType: 'manga',
                         lastReadChapterHid: data.lastReadChapterHid,
-                        lastReadChapterNumber: data.lastReadChapterNumber,
+                        lastReadChapterNumber: String(data.lastReadChapterNumber || ''),
                         lastReadImagePage: Number.isFinite(Number(data.lastReadImagePage)) ? Number(data.lastReadImagePage) : undefined,
                         startedAt: startedAtDate ? startedAtDate.toLocaleDateString() : undefined,
                         activityText: formatRelativeDate(lastUpdatedDate),
                         sortTimestamp: lastUpdatedDate ? lastUpdatedDate.getTime() : 0,
                     });
                 });
-                inProgress.sort((a, b) => (b.sortTimestamp || 0) - (a.sortTimestamp || 0));
-                setInProgressComics(inProgress);
-                setLoading(false);
+                mangaItems = next;
+                flush();
             },
             () => {
-                alertError("No se pudieron cargar los cómics en curso.");
+                alertError('No se pudo cargar la lista En Curso (manga).');
                 setLoading(false);
             }
         );
 
-        return () => unsubscribe();
+        const unsubscribeAnime = onSnapshot(
+            animeRef,
+            (querySnapshot) => {
+                const next: InProgressItem[] = [];
+                querySnapshot.forEach((document) => {
+                    const data = document.data();
+                    const lastUpdatedDate = data.updatedAt?.toDate?.() || data.lastUpdated?.toDate?.() || data.startedAt?.toDate?.() || null;
+                    const startedAtDate = data.startedAt?.toDate?.() || null;
+                    const animeSlug = String(data.animeSlug || data.slug || document.id).trim();
+                    next.push({
+                        id: document.id,
+                        title: String(data.animeTitle || data.title || animeSlug || 'Anime'),
+                        coverUrl: String(data.coverUrl || ''),
+                        slug: animeSlug,
+                        source: String(data.source || 'animeflv').toLowerCase(),
+                        contentType: 'anime',
+                        lastEpisodeSlug: String(data.lastEpisodeSlug || '').trim() || undefined,
+                        lastEpisodeNumber: Number.isFinite(Number(data.lastEpisodeNumber)) ? Number(data.lastEpisodeNumber) : undefined,
+                        startedAt: startedAtDate ? startedAtDate.toLocaleDateString() : undefined,
+                        activityText: formatRelativeDate(lastUpdatedDate),
+                        sortTimestamp: lastUpdatedDate ? lastUpdatedDate.getTime() : 0,
+                    });
+                });
+                animeItems = next;
+                flush();
+            },
+            () => {
+                alertError('No se pudo cargar la lista En Curso (anime).');
+                setLoading(false);
+            }
+        );
+
+        return () => {
+            unsubscribeManga();
+            unsubscribeAnime();
+        };
     }, [currentUserUid, alertError]);
 
     const handleInProgressPress = useCallback((item: InProgressItem) => {
+        if (item.contentType === 'anime') {
+            if (item.lastEpisodeSlug) {
+                navigation.navigate('Player', {
+                    animeSlug: item.slug,
+                    episodeSlug: item.lastEpisodeSlug,
+                    startAtMs: 0,
+                });
+                return;
+            }
+            navigation.navigate('AnimeDetails', { slug: item.slug });
+            return;
+        }
+
         if (item.lastReadChapterHid) {
             navigation.navigate('Reader', { hid: item.lastReadChapterHid, resumeFromProgress: true });
             return;
@@ -136,23 +198,26 @@ export default function InProgressScreen() {
         navigation.navigate('Details', { slug: item.slug });
     }, [navigation]);
 
-    const handleDeleteComic = useCallback((mangaId: string, mangaTitle: string) => {
+    const handleDeleteComic = useCallback((item: InProgressItem) => {
         if (!currentUserUid) {
-            alertError("No se pudo eliminar el cómic. No hay usuario autenticado.");
+            alertError('No se pudo eliminar de En Curso. No hay usuario autenticado.');
             return;
         }
 
+        const collectionName = item.contentType === 'anime' ? 'inProgressAnime' : 'inProgressManga';
+        const contentLabel = item.contentType === 'anime' ? 'anime' : 'manga';
+
         setTimeout(() => {
             alertConfirm(
-                `¿Estás seguro de que quieres eliminar "${mangaTitle}" de tus cómics en curso?`,
+                `¿Eliminar "${item.title}" de tu lista En Curso (${contentLabel})?`,
                 async () => {
                     try {
-                        setRemovingId(mangaId);
-                        const comicRef = doc(db, 'users', currentUserUid, 'inProgressManga', mangaId);
+                        setRemovingId(item.id);
+                        const comicRef = doc(db, 'users', currentUserUid, collectionName, item.id);
                         await deleteDoc(comicRef);
-                        alertSuccess(`'${mangaTitle}' ha sido eliminado.`);
+                        alertSuccess(`'${item.title}' ha sido eliminado.`);
                     } catch {
-                        alertError(`No se pudo eliminar '${mangaTitle}'.`);
+                        alertError(`No se pudo eliminar '${item.title}'.`);
                     } finally {
                         setRemovingId(null);
                     }
@@ -179,7 +244,7 @@ export default function InProgressScreen() {
     ), [navigation, theme.accent, theme.text]);
 
     const renderSummaryHeader = useMemo(() => {
-        if (inProgressComics.length === 0) return null;
+        if (inProgressItems.length === 0) return null;
 
         return (
             <LinearGradient colors={summaryGradientColors as [string, string]} style={[styles.summaryCard, { borderColor: theme.border }]}>
@@ -189,12 +254,12 @@ export default function InProgressScreen() {
                 <View style={styles.summaryTextWrap}>
                     <Text style={[styles.summaryTitle, { color: theme.text }]}>Sigue donde te quedaste</Text>
                     <Text style={[styles.summarySubtitle, { color: theme.textMuted }]}>
-                        {inProgressComics.length} {inProgressComics.length === 1 ? 'serie activa' : 'series activas'} en tu historial reciente.
+                        {inProgressItems.length} {inProgressItems.length === 1 ? 'serie activa' : 'series activas'} en tu historial reciente.
                     </Text>
                 </View>
             </LinearGradient>
         );
-    }, [inProgressComics.length, summaryGradientColors, theme.accentSoft, theme.border, theme.text, theme.textMuted]);
+    }, [inProgressItems.length, summaryGradientColors, theme.accentSoft, theme.border, theme.text, theme.textMuted]);
 
     const renderInProgressItem = useCallback(({ item }: { item: InProgressItem }) => (
         <View style={[styles.item, { backgroundColor: theme.surface, borderColor: theme.border }]}>
@@ -203,7 +268,7 @@ export default function InProgressScreen() {
                 onPress={() => handleInProgressPress(item)}
                 activeOpacity={0.82}
                 accessible
-                accessibilityLabel={`Continuar leyendo ${item.mangaTitle}`}
+                    accessibilityLabel={`Continuar ${item.title}`}
             >
                 {item.coverUrl && (
                     <Image
@@ -221,10 +286,17 @@ export default function InProgressScreen() {
                         <View style={[styles.sourcePill, { backgroundColor: theme.accentSoft, borderColor: theme.accent }] }>
                             <Text style={[styles.sourcePillText, { color: theme.text }]}>{getProviderAliasLabel(item.source)}</Text>
                         </View>
+                            <View style={[styles.sourcePill, { backgroundColor: theme.surfaceMuted, borderColor: theme.border }] }>
+                                <Text style={[styles.sourcePillText, { color: theme.text }]}>{item.contentType === 'anime' ? 'ANIME' : 'MANGA'}</Text>
+                            </View>
                         <Text style={[styles.activityText, { color: theme.textMuted }]}>{item.activityText}</Text>
                     </View>
-                    <Text style={[styles.title, { color: theme.text }]} numberOfLines={2}>{item.mangaTitle}</Text>
-                    {item.lastReadChapterNumber ? (
+                        <Text style={[styles.title, { color: theme.text }]} numberOfLines={2}>{item.title}</Text>
+                        {item.contentType === 'anime' ? (
+                            <Text style={[styles.lastReadText, { color: theme.text }]}>
+                                {item.lastEpisodeNumber ? `Episodio actual: ${item.lastEpisodeNumber}` : 'Progreso guardado'}
+                            </Text>
+                        ) : item.lastReadChapterNumber ? (
                         <Text style={[styles.lastReadText, { color: theme.text }]}>
                             {`Capítulo actual: ${item.lastReadChapterNumber}${item.lastReadImagePage ? ` · Img. ${item.lastReadImagePage}` : ''}`}
                         </Text>
@@ -241,16 +313,16 @@ export default function InProgressScreen() {
                 <TouchableOpacity
                     style={[styles.continueButton, { backgroundColor: theme.accent }]}
                     onPress={() => handleInProgressPress(item)}
-                    accessibilityLabel={`Abrir ${item.mangaTitle}`}
+                        accessibilityLabel={`Abrir ${item.title}`}
                 >
                     <Ionicons name="play" size={16} color={theme.text} />
                     <Text style={[styles.continueButtonText, { color: theme.text }]}>Continuar</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                     style={[styles.deleteButton, { backgroundColor: theme.danger }, removingId === item.id && styles.deleteButtonDisabled]}
-                    onPress={() => handleDeleteComic(item.id, item.mangaTitle)}
+                    onPress={() => handleDeleteComic(item)}
                     disabled={removingId === item.id}
-                    accessibilityLabel={`Eliminar ${item.mangaTitle} de cómics en curso`}
+                    accessibilityLabel={`Eliminar ${item.title} de En Curso`}
                 >
                     {removingId === item.id ? (
                         <ActivityIndicator size="small" color={theme.text} />
@@ -291,7 +363,7 @@ export default function InProgressScreen() {
         );
     }
 
-    if (inProgressComics.length === 0) {
+    if (inProgressItems.length === 0) {
         return (
             <LinearGradient colors={[theme.background, theme.backgroundSecondary]} style={styles.container}>
                 <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
@@ -299,8 +371,8 @@ export default function InProgressScreen() {
                     {renderTopBar}
                     <View style={styles.emptyContent}>
                         <Ionicons name="book-outline" size={80} color={theme.textMuted} />
-                        <Text style={[styles.emptyStateText, { color: theme.text }]}>No tienes cómics en curso</Text>
-                        <Text style={[styles.emptyStateSubText, { color: theme.textMuted }]}>Empieza a leer un cómic y lo verás aquí</Text>
+                        <Text style={[styles.emptyStateText, { color: theme.text }]}>No tienes series en curso</Text>
+                        <Text style={[styles.emptyStateSubText, { color: theme.textMuted }]}>Empieza a leer o ver anime y lo verás aquí</Text>
                         <TouchableOpacity
                             style={[styles.browseButton, { backgroundColor: theme.accentStrong, shadowColor: theme.accentStrong }]}
                             onPress={() => navigation.navigate('Library')}
@@ -322,7 +394,7 @@ export default function InProgressScreen() {
                 {renderTopBar}
 
                 <FlatList
-                    data={inProgressComics}
+                                    data={inProgressItems}
                     keyExtractor={(item) => item.id}
                     renderItem={renderInProgressItem}
                     ListHeaderComponent={renderSummaryHeader}

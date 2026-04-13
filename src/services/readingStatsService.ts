@@ -20,34 +20,40 @@ export type ReaderAchievement = {
 
 export type ReadingStats = {
     totalRead: number;
+    mangaCompleted: number;
+    animeCompleted: number;
     totalReadingTimeMs: number;
+    totalWatchingTimeMs: number;
+    totalTimeSpentMs: number;
     hoursSpent: number;
     favorites: number;
+    mangaFavorites: number;
+    animeFavorites: number;
     coinsEarned: number;
 };
 
 export const READER_ACHIEVEMENTS: ReaderAchievement[] = [
     {
         id: 'first-read',
-        name: 'Primer Manga',
+        name: 'Primera Serie',
         icon: 'book-outline',
-        description: 'Marca tu primer manga como leido.',
+        description: 'Completa tu primera serie (manga o anime).',
         target: 1,
         valueType: 'totalRead',
     },
     {
         id: 'avid-reader',
-        name: 'Lector Frecuente',
+        name: 'Explorador Frecuente',
         icon: 'library-outline',
-        description: 'Completa 5 mangas.',
+        description: 'Completa 5 series entre manga y anime.',
         target: 5,
         valueType: 'totalRead',
     },
     {
         id: 'bookworm',
-        name: 'Devorador de Mangas',
+        name: 'Otaku Constante',
         icon: 'flame-outline',
-        description: 'Completa 20 mangas.',
+        description: 'Completa 20 series entre manga y anime.',
         target: 20,
         valueType: 'totalRead',
     },
@@ -55,7 +61,7 @@ export const READER_ACHIEVEMENTS: ReaderAchievement[] = [
         id: 'marathon',
         name: 'Maratonista',
         icon: 'time-outline',
-        description: 'Acumula 10 horas de lectura.',
+        description: 'Acumula 10 horas entre lectura y reproduccion.',
         target: 10,
         valueType: 'hoursSpent',
     },
@@ -63,7 +69,7 @@ export const READER_ACHIEVEMENTS: ReaderAchievement[] = [
         id: 'collector',
         name: 'Coleccionista',
         icon: 'heart-outline',
-        description: 'Guarda 10 favoritos.',
+        description: 'Guarda 10 favoritos entre manga y anime.',
         target: 10,
         valueType: 'favorites',
     },
@@ -83,23 +89,40 @@ export const formatReadingTime = (milliseconds: number): string => {
 export const getUserReadingStats = async (userId: string): Promise<ReadingStats> => {
     const userDocRef = doc(db, 'users', userId);
     const favoritesRef = collection(db, 'users', userId, 'favorites');
+    const animeFavoritesRef = collection(db, 'users', userId, 'animeFavorites');
     const readComicsRef = collection(db, 'users', userId, 'readComics');
+    const watchedAnimeRef = collection(db, 'users', userId, 'watchedAnime');
     const readComicsQuery = query(readComicsRef, where('isFullMangaRead', '==', true));
+    const watchedAnimeQuery = query(watchedAnimeRef, where('isCompleted', '==', true));
 
-    const [userDocSnap, favoritesSnap, readComicsSnap] = await Promise.all([
+    const [userDocSnap, favoritesSnap, animeFavoritesSnap, readComicsSnap, watchedAnimeSnap] = await Promise.all([
         getDoc(userDocRef),
         getDocs(favoritesRef),
+        getDocs(animeFavoritesRef),
         getDocs(readComicsQuery),
+        getDocs(watchedAnimeQuery),
     ]);
 
     const totalReadingTimeMs = Number(userDocSnap.data()?.totalReadingTime || 0);
+    const totalWatchingTimeMs = Number(userDocSnap.data()?.totalWatchingTime || 0);
     const coinsEarned = Number(userDocSnap.data()?.coins || 0);
+    const mangaCompleted = readComicsSnap.size;
+    const animeCompleted = watchedAnimeSnap.size;
+    const mangaFavorites = favoritesSnap.size;
+    const animeFavorites = animeFavoritesSnap.size;
+    const totalTimeSpentMs = totalReadingTimeMs + totalWatchingTimeMs;
 
     return {
-        totalRead: readComicsSnap.size,
+        totalRead: mangaCompleted + animeCompleted,
+        mangaCompleted,
+        animeCompleted,
         totalReadingTimeMs,
-        hoursSpent: totalReadingTimeMs / (1000 * 60 * 60),
-        favorites: favoritesSnap.size,
+        totalWatchingTimeMs,
+        totalTimeSpentMs,
+        hoursSpent: totalTimeSpentMs / (1000 * 60 * 60),
+        favorites: mangaFavorites + animeFavorites,
+        mangaFavorites,
+        animeFavorites,
         coinsEarned,
     };
 };

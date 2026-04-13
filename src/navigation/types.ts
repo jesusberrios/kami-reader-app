@@ -7,7 +7,9 @@ export type RootStackParamList = {
     Personalization: undefined;
     EventStore: undefined;
     Details: { slug: string };
+    AnimeDetails: { slug: string };
     Reader: { hid: string; resumeFromProgress?: boolean };
+    Player: { animeSlug: string; episodeSlug: string; resumeFromProgress?: boolean; startAtMs?: number };
     News: undefined;
     NewsDetail: { newsItem: { id: string; title: string; message: string; createdAt?: any; date?: any; isNew?: boolean } };
     Payment: undefined;
@@ -40,7 +42,9 @@ export type AppStackParamList = {
 export type HomeStackParamList = {
     Home: undefined;
     Details: { slug: string };
+    AnimeDetails: { slug: string };
     Reader: { hid: string; resumeFromProgress?: boolean };
+    Player: { animeSlug: string; episodeSlug: string; resumeFromProgress?: boolean; startAtMs?: number };
 };
 
 export type ProfileStackParamList = {

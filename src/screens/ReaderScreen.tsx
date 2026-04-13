@@ -63,17 +63,17 @@ const resolveDevWebReaderBaseUrl = () => {
         const backend = new URL(String(BACKEND_URL || '').trim());
         const backendHost = String(backend.hostname || '').trim();
         if (backendHost) {
-            return `http://${backendHost}:55355/reader`;
+            return `http://${backendHost}:52856/reader`;
         }
     } catch {
         // Ignore and fallback to platform defaults.
     }
 
     if (Platform.OS === 'android') {
-        return 'http://10.0.2.2:55355/reader';
+        return 'http://10.0.2.2:52856/reader';
     }
 
-    return 'http://localhost:55355/reader';
+    return 'http://localhost:52856/reader';
 };
 
 const WEB_READER_BASE_URL = (
@@ -91,6 +91,7 @@ type ReaderImage = {
     w: number;
     h: number;
     hasIntrinsicSize: boolean;
+    requestHeaders?: Record<string, string>;
 };
 
 type ChapterMeta = {
@@ -289,10 +290,22 @@ const ReaderImageItem = React.memo(({ item }: { item: ReaderImage; index: number
         return pixels >= HUGE_BITMAP_PIXEL_THRESHOLD;
     }, [item.hasIntrinsicSize, item.w, item.h]);
 
+    const imageSource = useMemo(() => {
+        const headers = item.requestHeaders && typeof item.requestHeaders === 'object'
+            ? item.requestHeaders
+            : undefined;
+
+        if (headers && Object.keys(headers).length > 0) {
+            return { uri: item.url, cache: 'force-cache' as const, headers };
+        }
+
+        return { uri: item.url, cache: 'force-cache' as const };
+    }, [item.requestHeaders, item.url]);
+
     return (
         <View style={styles.imageContainer}>
             <RNImage
-                source={{ uri: item.url, cache: 'force-cache' }}
+                source={imageSource}
                 style={{ width: screenWidth, height }}
                 resizeMode="contain"
                 resizeMethod={shouldForceResize ? 'resize' : 'none'}
@@ -359,6 +372,13 @@ const ReaderScreen = () => {
     const chapterBundlePrefetchInFlightRef = useRef<Set<string>>(new Set());
 
     const parsed = useMemo(() => parseComposite(currentCompositeSlug), [currentCompositeSlug]);
+    const chapterSourceKey = useMemo(() => {
+        const token = String(parsed.mangaSlug || '').trim();
+        const delimiterIdx = token.indexOf('__');
+        if (delimiterIdx === -1) return 'zonatmo';
+        return token.slice(0, delimiterIdx).toLowerCase();
+    }, [parsed.mangaSlug]);
+    const forceNativeReader = chapterSourceKey === 'zonatmoorg';
 
     const enterReaderImmersiveMode = useCallback(() => {
         NativeModules.ImmersiveModule?.hideNavigationBar?.();
@@ -407,7 +427,10 @@ const ReaderScreen = () => {
             }
 
             prefetchedImageUrlsRef.current.add(url);
-            toPrefetch.push(url);
+            const hasRequestHeaders = !!(list[i]?.requestHeaders && Object.keys(list[i].requestHeaders || {}).length > 0);
+            if (!hasRequestHeaders) {
+                toPrefetch.push(url);
+            }
         }
 
         if (!toPrefetch.length) return;
@@ -447,6 +470,15 @@ const ReaderScreen = () => {
                 w: Number(img.w || 800),
                 h: Number(img.h || 1200),
                 hasIntrinsicSize: Number(img.w || 0) > 0 && Number(img.h || 0) > 0,
+                requestHeaders: img?.headers && typeof img.headers === 'object'
+                    ? Object.keys(img.headers).reduce((acc: Record<string, string>, key: string) => {
+                        const safeKey = String(key || '').trim();
+                        const safeVal = String(img.headers[key] || '').trim();
+                        if (!safeKey || !safeVal) return acc;
+                        acc[safeKey] = safeVal;
+                        return acc;
+                    }, {})
+                    : undefined,
             });
 
             return acc;
@@ -872,8 +904,13 @@ const ReaderScreen = () => {
                 },
             );
             if (candidateWebViewUrl) {
-                setWebViewUrl(candidateWebViewUrl);
-                setUseWebView(true);
+                if (forceNativeReader) {
+                    setUseWebView(false);
+                    setWebViewUrl(null);
+                } else {
+                    setWebViewUrl(candidateWebViewUrl);
+                    setUseWebView(true);
+                }
             }
             pendingResumeIndexRef.current = currentVisibleImageIndexRef.current;
             pendingResumeOffsetRef.current = typeof resumePosition?.scrollOffset === 'number' ? resumePosition.scrollOffset : null;
@@ -892,7 +929,7 @@ const ReaderScreen = () => {
                 setLoadingChapter(false);
             }
         }
-    }, [alertError, chapterChangeMode, currentCompositeSlug, fetchChapterBundle, getMangaData, parsed.chapterSlug, parsed.mangaSlug, plan, prefetchImageWindow]);
+    }, [alertError, chapterChangeMode, currentCompositeSlug, fetchChapterBundle, forceNativeReader, getMangaData, parsed.chapterSlug, parsed.mangaSlug, plan, prefetchImageWindow]);
 
     useEffect(() => {
         loadChapterData();
@@ -956,7 +993,7 @@ const ReaderScreen = () => {
     }, [controlsOpacity, useWebView]);
 
     useEffect(() => {
-        if (!useWebView || !parsed.mangaSlug || !parsed.chapterSlug) return;
+        if (!useWebView || forceNativeReader || !parsed.mangaSlug || !parsed.chapterSlug) return;
 
         const nextUrl = buildWebReaderUrl(
             parsed.mangaSlug,
@@ -978,6 +1015,7 @@ const ReaderScreen = () => {
         currentChapterMeta?.title,
         parsed.chapterSlug,
         parsed.mangaSlug,
+        forceNativeReader,
         useWebView,
         webViewUrl,
     ]);
