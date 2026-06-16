@@ -16,5 +16,5 @@ export const isVersionOutdated = (current: string, required: string): boolean =>
 };
 
 export const getAppVersion = (): string => {
-    return Constants.expoConfig?.version || '1.2.0';
+    return Constants.expoConfig?.version || '1.2.1';
 };
