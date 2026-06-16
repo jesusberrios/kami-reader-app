@@ -5,14 +5,11 @@ import {
     Platform,
     View,
     Text,
-    Image as RNImage,
     ActivityIndicator,
     StyleSheet,
-    Dimensions,
     TouchableOpacity,
     StatusBar,
     Animated,
-    RefreshControl,
     NativeModules,
 } from 'react-native';
 import { WebView } from 'react-native-webview';
@@ -21,9 +18,7 @@ import { RootStackParamList } from '../navigation/types';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
-import { FlashList } from '@shopify/flash-list';
 import { BannerAd, BannerAdSize, MobileAds, TestIds } from 'react-native-google-mobile-ads';
-import { FlingGestureHandler, Directions, State } from 'react-native-gesture-handler';
 import { auth, db } from '../firebase/config';
 import { collection, doc, getDoc, serverTimestamp, setDoc, writeBatch } from 'firebase/firestore';
 import { useAlertContext } from '../contexts/AlertContext';
@@ -35,22 +30,14 @@ import {
     syncFullMangaReadState,
 } from '../services/readingStatsService';
 
-const { width: screenWidth } = Dimensions.get('window');
-const { height: screenHeight } = Dimensions.get('window');
+
 const REQUEST_TIMEOUT_MS = 8000;
 const AUTO_HIDE_DELAY = 4500;
 const READING_SYNC_INTERVAL_MS = 60000;
 const MIN_READING_SYNC_MS = 10000;
 const PROGRESS_SAVE_DEBOUNCE_MS = 900;
-const RESUME_SCROLL_DELAY_MS = 180;
-const VERTICAL_END_THRESHOLD_PX = 48;
-const MIN_VERTICAL_SCROLL_TO_ARM_ADVANCE_PX = 72;
-const HUGE_BITMAP_PIXEL_THRESHOLD = 18_000_000;
 const MAX_CHAPTER_BUNDLE_CACHE = 18;
-const PREFETCH_INITIAL_PAGES = 5;
-const PREFETCH_AHEAD_PAGES = 6;
-const PREFETCH_NEIGHBOR_CHAPTER_PAGES = 8;
-const PREFETCH_URL_SET_MAX = 4000;
+const MIN_VERTICAL_SCROLL_TO_ARM_ADVANCE_PX = 72;
 const PROD_WEB_READER_BASE_URL = 'https://suki-s-soft.github.io/sukisoft-web/reader';
 const FORCED_WEB_READER_BASE_URL = process.env.EXPO_PUBLIC_WEB_READER_URL || '';
 const LOCAL_WEB_READER_BASE_URL = process.env.EXPO_PUBLIC_WEB_READER_LOCAL_URL || '';
@@ -63,17 +50,17 @@ const resolveDevWebReaderBaseUrl = () => {
         const backend = new URL(String(BACKEND_URL || '').trim());
         const backendHost = String(backend.hostname || '').trim();
         if (backendHost) {
-            return `http://${backendHost}:52856/reader`;
+            return `http://${backendHost}:53613/reader`;
         }
     } catch {
         // Ignore and fallback to platform defaults.
     }
 
     if (Platform.OS === 'android') {
-        return 'http://10.0.2.2:52856/reader';
+        return 'http://10.0.2.2:53613/reader';
     }
 
-    return 'http://localhost:52856/reader';
+    return 'http://localhost:53613/reader';
 };
 
 const WEB_READER_BASE_URL = (
@@ -84,16 +71,6 @@ const WEB_READER_BASE_URL = (
 const AD_UNIT_ID = __DEV__ ? TestIds.BANNER : 'ca-app-pub-6584977537844104/1888694522';
 MobileAds().initialize();
 
-type ReaderImage = {
-    id: string;
-    url: string;
-    page: number;
-    w: number;
-    h: number;
-    hasIntrinsicSize: boolean;
-    requestHeaders?: Record<string, string>;
-};
-
 type ChapterMeta = {
     slug: string;
     chapterSlug: string;
@@ -103,13 +80,11 @@ type ChapterMeta = {
 
 type SavedReadingPosition = {
     imageIndex: number;
-    imagePage: number;
     scrollOffset?: number;
 };
 
 type ChapterBundle = {
     compositeSlug: string;
-    images: ReaderImage[];
     chapterTitle: string;
     currentChapter: ChapterMeta | null;
     nextCompositeSlug: string | null;
@@ -211,7 +186,6 @@ const parseComposite = (compositeSlug: string) => {
 const buildWebReaderUrl = (
     mangaSlug: string,
     chapterSlug: string,
-    chapterTitle?: string,
     options?: {
         chapterChangeMode?: ChapterChangeMode;
         resumeIndex?: number;
@@ -224,7 +198,6 @@ const buildWebReaderUrl = (
         backend: backendUrl(''),
         manga: mangaSlug,
         chapter: chapterSlug,
-        title: chapterTitle || chapterSlug,
         mode: options?.chapterChangeMode || 'horizontal',
     });
 
@@ -235,7 +208,8 @@ const buildWebReaderUrl = (
     if (Number.isFinite(options?.resumeOffset) && Number(options?.resumeOffset) > 0) {
         params.set('resumeOffset', String(Math.max(0, Math.round(Number(options?.resumeOffset)))));
     }
-
+    console.log(`${WEB_READER_BASE_URL}#${params.toString()}`);
+    
     return `${WEB_READER_BASE_URL}#${params.toString()}`;
 };
 
@@ -250,73 +224,6 @@ const trimChapterBundleCache = (cache: Map<string, ChapterBundle>) => {
     }
 };
 
-const ReaderImageItem = React.memo(({ item }: { item: ReaderImage; index: number }) => {
-    const initialRatio = useMemo(() => {
-        if (item.hasIntrinsicSize && item.w > 0 && item.h > 0) {
-            return item.h / item.w;
-        }
-        // Deterministic fallback ratio to avoid runtime relayout jitter/crashes.
-        return 1.45;
-    }, [item.hasIntrinsicSize, item.w, item.h]);
-    const [ratio, setRatio] = useState(initialRatio);
-
-    useEffect(() => {
-        setRatio(initialRatio);
-    }, [initialRatio, item.url]);
-
-    const handleLoad = useCallback((event: any) => {
-        if (item.hasIntrinsicSize) return;
-        const w = Number(event?.nativeEvent?.source?.width || 0);
-        const h = Number(event?.nativeEvent?.source?.height || 0);
-        if (w <= 0 || h <= 0) return;
-
-        const loadedRatio = h / w;
-        if (!Number.isFinite(loadedRatio) || loadedRatio <= 0) return;
-        if (Math.abs(loadedRatio - ratio) > 0.12) {
-            setRatio(loadedRatio);
-        }
-    }, [item.hasIntrinsicSize, ratio]);
-
-    const height = useMemo(() => {
-        if (!Number.isFinite(ratio) || ratio <= 0) {
-            return Math.round(screenWidth * 1.45);
-        }
-        return Math.max(1, Math.round(screenWidth * ratio));
-    }, [ratio]);
-
-    const shouldForceResize = useMemo(() => {
-        if (!item.hasIntrinsicSize) return false;
-        const pixels = Math.max(0, Number(item.w || 0)) * Math.max(0, Number(item.h || 0));
-        return pixels >= HUGE_BITMAP_PIXEL_THRESHOLD;
-    }, [item.hasIntrinsicSize, item.w, item.h]);
-
-    const imageSource = useMemo(() => {
-        const headers = item.requestHeaders && typeof item.requestHeaders === 'object'
-            ? item.requestHeaders
-            : undefined;
-
-        if (headers && Object.keys(headers).length > 0) {
-            return { uri: item.url, cache: 'force-cache' as const, headers };
-        }
-
-        return { uri: item.url, cache: 'force-cache' as const };
-    }, [item.requestHeaders, item.url]);
-
-    return (
-        <View style={styles.imageContainer}>
-            <RNImage
-                source={imageSource}
-                style={{ width: screenWidth, height }}
-                resizeMode="contain"
-                resizeMethod={shouldForceResize ? 'resize' : 'none'}
-                progressiveRenderingEnabled={true}
-                fadeDuration={0}
-                onLoad={handleLoad}
-            />
-        </View>
-    );
-});
-
 const ReaderScreen = () => {
     const route = useRoute();
     const navigation = useNavigation<any>();
@@ -327,7 +234,6 @@ const ReaderScreen = () => {
     const insets = useSafeAreaInsets();
 
     const [currentCompositeSlug, setCurrentCompositeSlug] = useState(() => normalizeCompositeSlug(initialCompositeSlug));
-    const [images, setImages] = useState<ReaderImage[]>([]);
     const [chapterTitle, setChapterTitle] = useState('Capitulo');
     const [loadingChapter, setLoadingChapter] = useState(true);
     const [nextCompositeSlug, setNextCompositeSlug] = useState<string | null>(null);
@@ -338,16 +244,12 @@ const ReaderScreen = () => {
     const [chapterIndex, setChapterIndex] = useState(-1);
     const [totalChapters, setTotalChapters] = useState(0);
     const [hudLocked, setHudLocked] = useState(false);
-    const [prevChapterRefreshing, setPrevChapterRefreshing] = useState(false);
     const [currentChapterMeta, setCurrentChapterMeta] = useState<ChapterMeta | null>(null);
     const [chapterLoadError, setChapterLoadError] = useState('');
-    const [useWebView, setUseWebView] = useState(false);
     const [webViewUrl, setWebViewUrl] = useState<string | null>(null);
 
-    const flashListRef = useRef<any>(null);
     const controlsOpacity = useRef(new Animated.Value(1)).current;
     const autoHideTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const imagesRef = useRef<ReaderImage[]>([]);
     const chapterSwitchInProgressRef = useRef(false);
     const readingSessionStartedAtRef = useRef<number | null>(null);
     const readingSyncIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -356,8 +258,6 @@ const ReaderScreen = () => {
     const currentVisibleImageIndexRef = useRef(0);
     const currentMaxVisibleImageIndexRef = useRef(0);
     const currentScrollOffsetRef = useRef(0);
-    const pendingResumeIndexRef = useRef<number | null>(null);
-    const pendingResumeOffsetRef = useRef<number | null>(null);
     const shouldResumeFromProgressRef = useRef(readerParams.resumeFromProgress === true);
     const progressSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const lastSavedProgressKeyRef = useRef('');
@@ -367,18 +267,8 @@ const ReaderScreen = () => {
     const sessionChapterProgressRef = useRef<Map<string, SavedReadingPosition>>(new Map());
     const verticalAdvanceTriggeredRef = useRef(false);
     const verticalAutoAdvanceArmedRef = useRef(false);
-    const prefetchedImageUrlsRef = useRef<Set<string>>(new Set());
-    const lastPrefetchAnchorRef = useRef(-1);
-    const chapterBundlePrefetchInFlightRef = useRef<Set<string>>(new Set());
 
     const parsed = useMemo(() => parseComposite(currentCompositeSlug), [currentCompositeSlug]);
-    const chapterSourceKey = useMemo(() => {
-        const token = String(parsed.mangaSlug || '').trim();
-        const delimiterIdx = token.indexOf('__');
-        if (delimiterIdx === -1) return 'zonatmo';
-        return token.slice(0, delimiterIdx).toLowerCase();
-    }, [parsed.mangaSlug]);
-    const forceNativeReader = chapterSourceKey === 'zonatmoorg';
 
     const enterReaderImmersiveMode = useCallback(() => {
         NativeModules.ImmersiveModule?.hideNavigationBar?.();
@@ -394,51 +284,17 @@ const ReaderScreen = () => {
         const current = String(webViewUrl || '').replace(/\/+$/, '');
         const next = String(request?.url || '').replace(/\/+$/, '');
         if (!current || !next) return false;
-        return next === current;
+        if (next === current) return true;
+        // Android strips the fragment (#hash) from request.url in shouldOverrideUrlLoading.
+        // Allow the load if the base path matches to avoid blocking the initial page load.
+        const nextBase = next.split('#')[0].replace(/\/+$/, '');
+        const currentBase = current.split('#')[0].replace(/\/+$/, '');
+        return !!(nextBase && currentBase && nextBase === currentBase);
     }, [webViewUrl]);
 
-    const handleWebViewLoadError = useCallback((event: any) => {
-        const description = String(event?.nativeEvent?.description || '').trim();
-        const code = Number(event?.nativeEvent?.code);
-        const failingUrl = String(event?.nativeEvent?.url || '').trim();
-        console.warn('Reader WebView load error', { code, description, url: failingUrl });
-        setUseWebView(false);
-        setWebViewUrl(null);
-    }, []);
-
-    useEffect(() => {
-        imagesRef.current = images;
-    }, [images]);
-
-    const prefetchImageWindow = useCallback((list: ReaderImage[], startIndex: number, count: number) => {
-        if (!Array.isArray(list) || !list.length || count <= 0) return;
-
-        const start = Math.max(0, Number.isFinite(startIndex) ? Math.floor(startIndex) : 0);
-        const end = Math.min(list.length, start + Math.max(1, Math.floor(count)));
-        const toPrefetch: string[] = [];
-
-        for (let i = start; i < end; i += 1) {
-            const url = String(list[i]?.url || '').trim();
-            if (!url) continue;
-            if (prefetchedImageUrlsRef.current.has(url)) continue;
-
-            if (prefetchedImageUrlsRef.current.size >= PREFETCH_URL_SET_MAX) {
-                prefetchedImageUrlsRef.current.clear();
-            }
-
-            prefetchedImageUrlsRef.current.add(url);
-            const hasRequestHeaders = !!(list[i]?.requestHeaders && Object.keys(list[i].requestHeaders || {}).length > 0);
-            if (!hasRequestHeaders) {
-                toPrefetch.push(url);
-            }
-        }
-
-        if (!toPrefetch.length) return;
-        Promise.all(
-            toPrefetch.map((url) => RNImage.prefetch(url).catch(() => false)),
-        ).catch(() => {
-            // Best effort: failed prefetch should not block reading.
-        });
+    const handleWebViewLoadError = useCallback((_event: any) => {
+        const message = String(_event?.nativeEvent?.description || '').trim();
+        setChapterLoadError(message || 'No se pudo cargar el lector web.');
     }, []);
 
     const getMangaData = useCallback(async () => {
@@ -451,38 +307,8 @@ const ReaderScreen = () => {
         return mangaData;
     }, [parsed.mangaSlug]);
 
-    const buildChapterBundle = useCallback((compositeSlug: string, imagesData: any, mangaData: any): ChapterBundle => {
+    const buildChapterBundle = useCallback((compositeSlug: string, mangaData: any): ChapterBundle => {
         const composite = parseComposite(compositeSlug);
-        const duplicateCount = new Map<string, number>();
-        const imgs: ReaderImage[] = (imagesData.images || []).reduce((acc: ReaderImage[], img: any, idx: number) => {
-            const url = String(img?.url || '').trim();
-            if (!url) return acc;
-
-            const page = Number(img.page || idx + 1);
-            const baseKey = `${page}:${url}`;
-            const seen = duplicateCount.get(baseKey) || 0;
-            duplicateCount.set(baseKey, seen + 1);
-
-            acc.push({
-                id: `${composite.chapterSlug}:${idx}:${seen}:${baseKey}`,
-                url,
-                page,
-                w: Number(img.w || 800),
-                h: Number(img.h || 1200),
-                hasIntrinsicSize: Number(img.w || 0) > 0 && Number(img.h || 0) > 0,
-                requestHeaders: img?.headers && typeof img.headers === 'object'
-                    ? Object.keys(img.headers).reduce((acc: Record<string, string>, key: string) => {
-                        const safeKey = String(key || '').trim();
-                        const safeVal = String(img.headers[key] || '').trim();
-                        if (!safeKey || !safeVal) return acc;
-                        acc[safeKey] = safeVal;
-                        return acc;
-                    }, {})
-                    : undefined,
-            });
-
-            return acc;
-        }, []);
 
         const chapters: ChapterMeta[] = (mangaData.manga?.chapters || []).map((ch: any) => ({
             slug: ch.slug,
@@ -498,7 +324,6 @@ const ReaderScreen = () => {
 
         return {
             compositeSlug,
-            images: imgs,
             chapterTitle: currentChapter ? `Cap. ${currentChapter.number || ''} ${currentChapter.title || ''}`.trim() : 'Capitulo',
             currentChapter,
             nextCompositeSlug: nextChapter?.slug || null,
@@ -517,65 +342,27 @@ const ReaderScreen = () => {
             }
         }
 
-        const composite = parseComposite(normalizedCompositeSlug);
-        const [imagesData, mangaData] = await Promise.all([
-            fetchJsonWithTimeout(backendUrl(`/chapter/${encodeURIComponent(composite.mangaSlug)}/${encodeURIComponent(composite.chapterSlug)}/images`)),
-            getMangaData(),
-        ]);
-        const bundle = buildChapterBundle(normalizedCompositeSlug, imagesData, mangaData);
-        if (!bundle.images.length) {
-            throw new Error('No se encontraron imagenes para este capitulo.');
-        }
+        const mangaData = await getMangaData();
+        const bundle = buildChapterBundle(normalizedCompositeSlug, mangaData);
 
         chapterBundleCacheRef.current.set(normalizedCompositeSlug, bundle);
         trimChapterBundleCache(chapterBundleCacheRef.current);
         return bundle;
     }, [buildChapterBundle, getMangaData]);
 
-    const prefetchChapterBundleInBackground = useCallback((targetCompositeSlug: string | null) => {
-        const normalizedTarget = normalizeCompositeSlug(String(targetCompositeSlug || ''));
-        if (!normalizedTarget || normalizedTarget === currentCompositeSlug) return;
-
-        const cached = chapterBundleCacheRef.current.get(normalizedTarget);
-        if (cached) {
-            prefetchImageWindow(cached.images, 0, PREFETCH_NEIGHBOR_CHAPTER_PAGES);
-            return;
-        }
-
-        if (chapterBundlePrefetchInFlightRef.current.has(normalizedTarget)) {
-            return;
-        }
-
-        chapterBundlePrefetchInFlightRef.current.add(normalizedTarget);
-        fetchChapterBundle(normalizedTarget)
-            .then((bundle) => {
-                prefetchImageWindow(bundle.images, 0, PREFETCH_NEIGHBOR_CHAPTER_PAGES);
-            })
-            .catch(() => {
-                // Silent prefetch failure; user-facing load flow keeps normal error handling.
-            })
-            .then(() => {
-                chapterBundlePrefetchInFlightRef.current.delete(normalizedTarget);
-            });
-    }, [currentCompositeSlug, fetchChapterBundle, prefetchImageWindow]);
-
     const persistReadingPosition = useCallback(async (imageIndex?: number) => {
         const user = auth.currentUser;
-        if (!user || plan !== 'premium' || !parsed.mangaSlug || !currentChapterMeta || !imagesRef.current.length) {
+        if (!user || plan !== 'premium' || !parsed.mangaSlug || !currentChapterMeta) {
             return;
         }
 
-        const safeIndex = Math.max(0, Math.min(
+        const safeIndex = Math.max(0,
             Number.isFinite(imageIndex as number) ? Number(imageIndex) : currentVisibleImageIndexRef.current,
-            imagesRef.current.length - 1,
-        ));
-        const currentImage = imagesRef.current[safeIndex];
-        if (!currentImage) return;
-
+        );
         const scrollOffset = Math.max(0, currentScrollOffsetRef.current || 0);
+
         sessionChapterProgressRef.current.set(currentCompositeSlug, {
             imageIndex: safeIndex,
-            imagePage: currentImage.page,
             scrollOffset,
         });
 
@@ -583,7 +370,6 @@ const ReaderScreen = () => {
             parsed.mangaSlug,
             currentChapterMeta.slug,
             safeIndex,
-            currentImage.page,
             Math.round(scrollOffset),
         ].join(':');
 
@@ -603,9 +389,7 @@ const ReaderScreen = () => {
             number: currentChapterMeta.number || '',
             title: currentChapterMeta.title || '',
             imageIndex: safeIndex,
-            imagePage: currentImage.page,
             scrollOffset,
-            imageUrl: currentImage.url,
             readAt: serverTimestamp(),
         };
 
@@ -620,9 +404,7 @@ const ReaderScreen = () => {
             lastReadChapterSlug: currentChapterMeta.chapterSlug,
             lastReadChapterNumber: currentChapterMeta.number || '',
             lastReadImageIndex: safeIndex,
-            lastReadImagePage: currentImage.page,
             lastReadScrollOffset: scrollOffset,
-            lastReadImageUrl: currentImage.url,
             lastUpdated: serverTimestamp(),
         }, { merge: true });
 
@@ -774,7 +556,6 @@ const ReaderScreen = () => {
             const bundle = cachedBundle || await fetchChapterBundle(currentCompositeSlug);
             const mangaData = await getMangaData();
             if (requestId !== loadRequestIdRef.current) return;
-            const imgs = bundle.images;
 
             let resumePosition: SavedReadingPosition | null = null;
             const sessionProgress = sessionChapterProgressRef.current.get(currentCompositeSlug) || null;
@@ -787,13 +568,11 @@ const ReaderScreen = () => {
                         const savedLastRead = progressSnap.data()?.lastReadChapter;
                         const savedSlug = String(savedLastRead?.slug || '').trim();
                         const savedImageIndex = Number(savedLastRead?.imageIndex);
-                        const savedImagePage = Number(savedLastRead?.imagePage);
                         const savedScrollOffset = Number(savedLastRead?.scrollOffset);
 
                         if (savedSlug && savedSlug === bundle.currentChapter.slug) {
                             resumePosition = {
                                 imageIndex: Number.isFinite(savedImageIndex) ? savedImageIndex : 0,
-                                imagePage: Number.isFinite(savedImagePage) ? savedImagePage : 1,
                                 scrollOffset: Number.isFinite(savedScrollOffset) ? savedScrollOffset : undefined,
                             };
                         }
@@ -882,43 +661,17 @@ const ReaderScreen = () => {
             setTotalChapters(bundle.totalChapters);
             setNextCompositeSlug(bundle.nextCompositeSlug);
             setPrevCompositeSlug(bundle.prevCompositeSlug);
-            setImages(imgs);
+
             currentVisibleImageIndexRef.current = resumePosition
-                ? Math.max(0, Math.min(resumePosition.imageIndex, imgs.length - 1))
+                ? Math.max(0, resumePosition.imageIndex)
                 : 0;
             currentMaxVisibleImageIndexRef.current = currentVisibleImageIndexRef.current;
             currentScrollOffsetRef.current = resumePosition?.scrollOffset || 0;
-            prefetchImageWindow(
-                imgs,
-                currentVisibleImageIndexRef.current,
-                PREFETCH_INITIAL_PAGES,
-            );
-            const candidateWebViewUrl = buildWebReaderUrl(
-                parsed.mangaSlug,
-                parsed.chapterSlug,
-                bundle.chapterTitle,
-                {
-                    chapterChangeMode,
-                    resumeIndex: currentVisibleImageIndexRef.current,
-                    resumeOffset: currentScrollOffsetRef.current,
-                },
-            );
-            if (candidateWebViewUrl) {
-                if (forceNativeReader) {
-                    setUseWebView(false);
-                    setWebViewUrl(null);
-                } else {
-                    setWebViewUrl(candidateWebViewUrl);
-                    setUseWebView(true);
-                }
-            }
-            pendingResumeIndexRef.current = currentVisibleImageIndexRef.current;
-            pendingResumeOffsetRef.current = typeof resumePosition?.scrollOffset === 'number' ? resumePosition.scrollOffset : null;
+
             lastSavedProgressKeyRef.current = '';
             verticalAdvanceTriggeredRef.current = false;
             verticalAutoAdvanceArmedRef.current = false;
         } catch (error: any) {
-            setUseWebView(false);
             setWebViewUrl(null);
             if (requestId !== loadRequestIdRef.current) return;
             const message = error?.message || 'No se pudo cargar el capitulo.';
@@ -929,7 +682,7 @@ const ReaderScreen = () => {
                 setLoadingChapter(false);
             }
         }
-    }, [alertError, chapterChangeMode, currentCompositeSlug, fetchChapterBundle, forceNativeReader, getMangaData, parsed.chapterSlug, parsed.mangaSlug, plan, prefetchImageWindow]);
+    }, [alertError, currentCompositeSlug, fetchChapterBundle, getMangaData, parsed.chapterSlug, parsed.mangaSlug, plan]);
 
     useEffect(() => {
         loadChapterData();
@@ -939,23 +692,7 @@ const ReaderScreen = () => {
         };
     }, [loadChapterData]);
 
-    useEffect(() => {
-        if (loadingChapter) return;
-
-        prefetchChapterBundleInBackground(nextCompositeSlug);
-        if (chapterChangeMode === 'vertical') {
-            prefetchChapterBundleInBackground(prevCompositeSlug);
-        }
-    }, [
-        chapterChangeMode,
-        loadingChapter,
-        nextCompositeSlug,
-        prefetchChapterBundleInBackground,
-        prevCompositeSlug,
-    ]);
-
     const resetAutoHide = useCallback(() => {
-        if (useWebView) return;
         if (autoHideTimeoutRef.current) clearTimeout(autoHideTimeoutRef.current);
         autoHideTimeoutRef.current = setTimeout(() => {
             Animated.timing(controlsOpacity, {
@@ -964,7 +701,7 @@ const ReaderScreen = () => {
                 useNativeDriver: true,
             }).start(() => setShowControls(false));
         }, AUTO_HIDE_DELAY);
-    }, [controlsOpacity, useWebView]);
+    }, [controlsOpacity]);
 
     const showAndResetControls = useCallback(() => {
         if (!showControls) {
@@ -987,62 +724,15 @@ const ReaderScreen = () => {
     }, [resetAutoHide]);
 
     useEffect(() => {
-        if (!useWebView) return;
-        setShowControls(true);
-        controlsOpacity.setValue(1);
-    }, [controlsOpacity, useWebView]);
+        if (loadingChapter || !parsed.mangaSlug || !parsed.chapterSlug) return;
 
-    useEffect(() => {
-        if (!useWebView || forceNativeReader || !parsed.mangaSlug || !parsed.chapterSlug) return;
-
-        const nextUrl = buildWebReaderUrl(
-            parsed.mangaSlug,
-            parsed.chapterSlug,
-            currentChapterMeta?.title || chapterTitle,
-            {
-                chapterChangeMode,
-                resumeIndex: currentVisibleImageIndexRef.current,
-                resumeOffset: currentScrollOffsetRef.current,
-            },
-        );
-
-        if (nextUrl && nextUrl !== webViewUrl) {
-            setWebViewUrl(nextUrl);
-        }
-    }, [
-        chapterChangeMode,
-        chapterTitle,
-        currentChapterMeta?.title,
-        parsed.chapterSlug,
-        parsed.mangaSlug,
-        forceNativeReader,
-        useWebView,
-        webViewUrl,
-    ]);
-
-    useEffect(() => {
-        if (loadingChapter || !images.length || pendingResumeIndexRef.current == null) {
-            return;
-        }
-
-        const targetIndex = Math.max(0, Math.min(pendingResumeIndexRef.current, images.length - 1));
-        const targetOffset = pendingResumeOffsetRef.current;
-        const timeoutId = setTimeout(() => {
-            try {
-                if (typeof targetOffset === 'number' && targetOffset > 0) {
-                    flashListRef.current?.scrollToOffset?.({ offset: targetOffset, animated: false });
-                } else {
-                    flashListRef.current?.scrollToIndex?.({ index: targetIndex, animated: false, viewPosition: 0 });
-                }
-            } catch {
-                flashListRef.current?.scrollToOffset?.({ offset: 0, animated: false });
-            }
-            pendingResumeIndexRef.current = null;
-            pendingResumeOffsetRef.current = null;
-        }, RESUME_SCROLL_DELAY_MS);
-
-        return () => clearTimeout(timeoutId);
-    }, [images, loadingChapter]);
+        const url = buildWebReaderUrl(parsed.mangaSlug, parsed.chapterSlug, {
+            chapterChangeMode,
+            resumeIndex: currentVisibleImageIndexRef.current,
+            resumeOffset: currentScrollOffsetRef.current,
+        });
+        if (url) setWebViewUrl(url);
+    }, [loadingChapter, chapterChangeMode, parsed.mangaSlug, parsed.chapterSlug]);
 
     const changeChapter = useCallback((compositeSlug: string | null) => {
         if (!compositeSlug) return;
@@ -1058,20 +748,6 @@ const ReaderScreen = () => {
         setCurrentCompositeSlug(normalized);
     }, [currentCompositeSlug, persistReadingPosition]);
 
-    const handleSwipeLeft = useCallback(({ nativeEvent }: any) => {
-        if (nativeEvent.state === State.END) {
-            showAndResetControls();
-            changeChapter(nextCompositeSlug);
-        }
-    }, [nextCompositeSlug, showAndResetControls]);
-
-    const handleSwipeRight = useCallback(({ nativeEvent }: any) => {
-        if (nativeEvent.state === State.END) {
-            showAndResetControls();
-            changeChapter(prevCompositeSlug);
-        }
-    }, [prevCompositeSlug, showAndResetControls]);
-
     const handleVerticalEndReached = useCallback(() => {
         if (chapterChangeMode !== 'vertical') return;
         if (loadingChapter) return;
@@ -1084,14 +760,13 @@ const ReaderScreen = () => {
         chapterSwitchInProgressRef.current = true;
         showAndResetControls();
         changeChapter(nextCompositeSlug);
-    }, [chapterChangeMode, loadingChapter, nextCompositeSlug, showAndResetControls]);
+    }, [chapterChangeMode, loadingChapter, nextCompositeSlug, showAndResetControls, changeChapter]);
 
     const handlePullToPrevChapter = useCallback(() => {
         if (!prevCompositeSlug || chapterSwitchInProgressRef.current) return;
         chapterSwitchInProgressRef.current = true;
-        setPrevChapterRefreshing(true);
         changeChapter(prevCompositeSlug);
-    }, [prevCompositeSlug]);
+    }, [prevCompositeSlug, changeChapter]);
 
     const handleWebViewMessage = useCallback((event: any) => {
         const raw = String(event?.nativeEvent?.data || '').trim();
@@ -1112,16 +787,16 @@ const ReaderScreen = () => {
             const maxVisibleImageIndex = Number(payload?.maxVisibleImageIndex);
             const scrollOffset = Number(payload?.scrollOffset);
 
-            if (Number.isFinite(imageIndex) && imageIndex >= 0 && imagesRef.current.length) {
-                const safeIndex = Math.max(0, Math.min(Math.round(imageIndex), imagesRef.current.length - 1));
+            if (Number.isFinite(imageIndex) && imageIndex >= 0) {
+                const safeIndex = Math.max(0, Math.round(imageIndex));
                 currentVisibleImageIndexRef.current = safeIndex;
                 scheduleProgressSave(safeIndex);
             }
 
-            if (Number.isFinite(maxVisibleImageIndex) && maxVisibleImageIndex >= 0 && imagesRef.current.length) {
+            if (Number.isFinite(maxVisibleImageIndex) && maxVisibleImageIndex >= 0) {
                 currentMaxVisibleImageIndexRef.current = Math.max(
                     currentMaxVisibleImageIndexRef.current,
-                    Math.min(Math.round(maxVisibleImageIndex), imagesRef.current.length - 1),
+                    Math.max(0, Math.round(maxVisibleImageIndex)),
                 );
             }
 
@@ -1216,80 +891,9 @@ const ReaderScreen = () => {
 
     useEffect(() => {
         chapterSwitchInProgressRef.current = false;
-        setPrevChapterRefreshing(false);
         verticalAutoAdvanceArmedRef.current = false;
-        lastPrefetchAnchorRef.current = -1;
-        setUseWebView(false);
         setWebViewUrl(null);
     }, [currentCompositeSlug]);
-
-    const handleReaderScrollBeginDrag = useCallback(() => {
-        if (!hudLocked) {
-            showAndResetControls();
-        }
-
-        if (chapterChangeMode === 'vertical') {
-            verticalAutoAdvanceArmedRef.current = true;
-        }
-    }, [chapterChangeMode, hudLocked, showAndResetControls]);
-
-    const renderImageItem = useCallback(({ item, index }: { item: ReaderImage; index: number }) => {
-        return <ReaderImageItem item={item} index={index} />;
-    }, []);
-
-    const handleViewableItemsChanged = useRef(({ viewableItems }: { viewableItems: Array<{ index: number | null }> }) => {
-        const minVisibleIndex = viewableItems.reduce((acc, it) => {
-            if (it.index == null) return acc;
-            if (acc === -1) return it.index;
-            return Math.min(acc, it.index);
-        }, -1);
-        const maxVisibleIndex = viewableItems.reduce((acc, it) => {
-            if (it.index == null) return acc;
-            return Math.max(acc, it.index);
-        }, -1);
-
-        if (minVisibleIndex >= 0) {
-            currentVisibleImageIndexRef.current = minVisibleIndex;
-            scheduleProgressSave(minVisibleIndex);
-        }
-
-        if (maxVisibleIndex >= 0) {
-            currentMaxVisibleImageIndexRef.current = maxVisibleIndex;
-
-            const nextAnchor = maxVisibleIndex + 1;
-            if (nextAnchor > lastPrefetchAnchorRef.current) {
-                lastPrefetchAnchorRef.current = nextAnchor;
-                prefetchImageWindow(imagesRef.current, nextAnchor, PREFETCH_AHEAD_PAGES);
-            }
-        }
-    }).current;
-
-    const handleScroll = useCallback((event: any) => {
-        const offsetY = Number(event?.nativeEvent?.contentOffset?.y || 0);
-        const layoutHeight = Number(event?.nativeEvent?.layoutMeasurement?.height || 0);
-        const contentHeight = Number(event?.nativeEvent?.contentSize?.height || 0);
-
-        currentScrollOffsetRef.current = Math.max(0, offsetY);
-
-        if (chapterChangeMode === 'vertical' && offsetY > MIN_VERTICAL_SCROLL_TO_ARM_ADVANCE_PX) {
-            verticalAutoAdvanceArmedRef.current = true;
-        }
-
-        if (chapterChangeMode !== 'vertical' || loadingChapter || !nextCompositeSlug || chapterSwitchInProgressRef.current) {
-            return;
-        }
-
-        const distanceToEnd = contentHeight - (offsetY + layoutHeight);
-        const lastVisibleIndex = Math.max(0, imagesRef.current.length - 1);
-        if (distanceToEnd <= VERTICAL_END_THRESHOLD_PX && currentMaxVisibleImageIndexRef.current >= lastVisibleIndex) {
-            handleVerticalEndReached();
-            return;
-        }
-
-        if (distanceToEnd > VERTICAL_END_THRESHOLD_PX * 4) {
-            verticalAdvanceTriggeredRef.current = false;
-        }
-    }, [chapterChangeMode, handleVerticalEndReached, loadingChapter, nextCompositeSlug]);
 
     return (
         <View style={styles.container}>
@@ -1327,104 +931,26 @@ const ReaderScreen = () => {
                 </View>
             )}
 
-            {chapterChangeMode === 'horizontal' ? (
-                <FlingGestureHandler direction={Directions.LEFT} onHandlerStateChange={handleSwipeLeft}>
-                    <FlingGestureHandler direction={Directions.RIGHT} onHandlerStateChange={handleSwipeRight}>
-                        <View style={styles.readerContent}>
-                            {useWebView && webViewUrl ? (
-                                <WebView
-                                    source={{ uri: webViewUrl }}
-                                    style={{ flex: 1 }}
-                                    onLoad={showAndResetControls}
-                                    onError={handleWebViewLoadError}
-                                    onHttpError={handleWebViewLoadError}
-                                    onMessage={handleWebViewMessage}
-                                    onShouldStartLoadWithRequest={handleWebViewShouldStart}
-                                    setSupportMultipleWindows={false}
-                                    javaScriptEnabled={true}
-                                    startInLoadingState={true}
-                                    renderLoading={() => <ActivityIndicator size="large" color="#FF5555" style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }} />}
-                                    showsVerticalScrollIndicator={false}
-                                    bounces={false}
-                                    overScrollMode="never"
-                                />
-                            ) : (
-                                <FlashList
-                                    key={currentCompositeSlug}
-                                    ref={flashListRef}
-                                    data={images}
-                                    keyExtractor={(item) => item.id}
-                                    renderItem={renderImageItem}
-                                    showsVerticalScrollIndicator={false}
-                                    removeClippedSubviews={true}
-                                    onScrollBeginDrag={handleReaderScrollBeginDrag}
-                                    onMomentumScrollBegin={hudLocked ? undefined : showAndResetControls}
-                                    drawDistance={screenHeight * 1.15}
-                                    getItemType={() => 0}
-                                    maxItemsInRecyclePool={22}
-                                    maintainVisibleContentPosition={{ disabled: true }}
-                                    onViewableItemsChanged={handleViewableItemsChanged}
-                                    onScroll={handleScroll}
-                                    viewabilityConfig={{ itemVisiblePercentThreshold: 10 }}
-                                    scrollEventThrottle={16}
-                                />
-                            )}
-                        </View>
-                    </FlingGestureHandler>
-                </FlingGestureHandler>
-            ) : (
-                <View style={styles.readerContent}>
-                    {useWebView && webViewUrl ? (
-                        <WebView
-                            source={{ uri: webViewUrl }}
-                            style={{ flex: 1 }}
-                            onLoad={showAndResetControls}
-                            onError={handleWebViewLoadError}
-                            onHttpError={handleWebViewLoadError}
-                            onMessage={handleWebViewMessage}
-                            onShouldStartLoadWithRequest={handleWebViewShouldStart}
-                            setSupportMultipleWindows={false}
-                            javaScriptEnabled={true}
-                            startInLoadingState={true}
-                            renderLoading={() => <ActivityIndicator size="large" color="#FF5555" style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }} />}
-                            showsVerticalScrollIndicator={false}
-                            bounces={false}
-                            overScrollMode="never"
-                        />
-                    ) : (
-                        <FlashList
-                            key={currentCompositeSlug}
-                            ref={flashListRef}
-                            data={images}
-                            keyExtractor={(item) => item.id}
-                            renderItem={renderImageItem}
-                            showsVerticalScrollIndicator={false}
-                            removeClippedSubviews={true}
-                            onScrollBeginDrag={handleReaderScrollBeginDrag}
-                            onMomentumScrollBegin={hudLocked ? undefined : showAndResetControls}
-                            drawDistance={screenHeight * 1.15}
-                            getItemType={() => 0}
-                            maxItemsInRecyclePool={22}
-                            maintainVisibleContentPosition={{ disabled: true }}
-                            onViewableItemsChanged={handleViewableItemsChanged}
-                            onScroll={handleScroll}
-                            onEndReached={handleVerticalEndReached}
-                            onEndReachedThreshold={0.01}
-                            viewabilityConfig={{ itemVisiblePercentThreshold: 10 }}
-                            scrollEventThrottle={16}
-                            refreshControl={
-                                prevCompositeSlug ? (
-                                    <RefreshControl
-                                        refreshing={prevChapterRefreshing}
-                                        onRefresh={handlePullToPrevChapter}
-                                        colors={['#FF5555']}
-                                    />
-                                ) : undefined
-                            }
-                        />
-                    )}
-                </View>
-            )}
+            <View style={styles.readerContent}>
+                {webViewUrl ? (
+                    <WebView
+                        source={{ uri: webViewUrl }}
+                        style={{ flex: 1 }}
+                        onLoad={showAndResetControls}
+                        onError={handleWebViewLoadError}
+                        onHttpError={handleWebViewLoadError}
+                        onMessage={handleWebViewMessage}
+                        onShouldStartLoadWithRequest={handleWebViewShouldStart}
+                        setSupportMultipleWindows={false}
+                        javaScriptEnabled={true}
+                        startInLoadingState={true}
+                        renderLoading={() => <ActivityIndicator size="large" color="#FF5555" style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }} />}
+                        showsVerticalScrollIndicator={false}
+                        bounces={false}
+                        overScrollMode="never"
+                    />
+                ) : null}
+            </View>
 
             {showControls && (
                 <Animated.View style={[styles.bottomBar, { opacity: controlsOpacity, paddingBottom: insets.bottom + (plan === 'free' ? 62 : 6) }]}>
@@ -1496,12 +1022,6 @@ const styles = StyleSheet.create({
     },
     readerContent: {
         flex: 1,
-    },
-    imageContainer: {
-        marginBottom: 0,
-        backgroundColor: '#111',
-        alignItems: 'center',
-        justifyContent: 'center',
     },
     loadingOverlay: {
         ...StyleSheet.absoluteFillObject,

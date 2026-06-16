@@ -5,6 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { VideoView, useVideoPlayer } from 'expo-video';
+import * as ScreenOrientation from 'expo-screen-orientation';
 import { WebView } from 'react-native-webview';
 import { Picker } from '@react-native-picker/picker';
 import { usePersonalization } from '../contexts/PersonalizationContext';
@@ -1014,6 +1015,23 @@ const PlayerScreen: React.FC = () => {
         setPlayerLoading(selectedStreamIsPlayable);
     }, [selectedStreamId, selectedStreamIsPlayable, useWebViewMode]);
 
+    // Rotate to landscape only while the video is in fullscreen; restore portrait on exit.
+    const handleFullscreenEnter = useCallback(() => {
+        ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE).catch(() => {});
+    }, []);
+
+    const handleFullscreenExit = useCallback(() => {
+        ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {});
+    }, []);
+
+    // Safety net: always return to portrait when leaving the player, so navigating away
+    // straight from fullscreen never leaves the rest of the app stuck sideways.
+    useEffect(() => {
+        return () => {
+            ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {});
+        };
+    }, []);
+
     return (
         <LinearGradient colors={[theme.background, theme.backgroundSecondary]} style={styles.container}>
             <StatusBar barStyle="light-content" backgroundColor={theme.background} />
@@ -1127,8 +1145,11 @@ const PlayerScreen: React.FC = () => {
                                         style={styles.video}
                                         player={player}
                                         nativeControls
+                                        allowsFullscreen
                                         contentFit="contain"
                                         onFirstFrameRender={() => setPlayerLoading(false)}
+                                        onFullscreenEnter={handleFullscreenEnter}
+                                        onFullscreenExit={handleFullscreenExit}
                                     />
                                     {playerLoading && (
                                         <View style={styles.videoLoadingOverlay}>

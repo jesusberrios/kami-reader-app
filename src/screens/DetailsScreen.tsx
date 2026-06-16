@@ -138,32 +138,12 @@ const buildCoverImageSource = (cover: string, source?: string) => {
         };
     }
 
-    if (normalizedSource === 'visormanga') {
-        // ALL visormanga URLs need proxy for hotlink protection
-        const needsProxy = /^https?:\/\/([a-z0-9.-]*)?visormanga\.com/i.test(uri);
-        const proxyUri = needsProxy
-            ? `${backendUrl}/cover-proxy?u=${encodeURIComponent(uri)}`
-            : uri;
-        return { uri: proxyUri };
-    }
-
     if (normalizedSource === 'manhwaweb') {
         return {
             uri,
             headers: {
                 Referer: 'https://manhwaweb.com/',
                 Origin: 'https://manhwaweb.com',
-                'User-Agent': UA,
-            },
-        };
-    }
-
-    if (normalizedSource === 'zonaikigai') {
-        return {
-            uri,
-            headers: {
-                Referer: 'https://zonaikigai.sakanamenu.online/',
-                Origin: 'https://zonaikigai.sakanamenu.online',
                 'User-Agent': UA,
             },
         };

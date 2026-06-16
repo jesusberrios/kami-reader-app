@@ -129,6 +129,18 @@ const mangaCoverSource = (item: { cover?: string; source?: string }) => {
         };
     }
 
+    if (source === 'manhwaweb') {
+        // img1mw/img2mw enforce a Referer; without it covers 403.
+        return {
+            uri,
+            headers: {
+                Referer: 'https://manhwaweb.com/',
+                Origin: 'https://manhwaweb.com',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+            },
+        };
+    }
+
     return { uri };
 };
 

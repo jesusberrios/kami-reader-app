@@ -56,7 +56,7 @@ type Comic = {
 
 type SortKey = 'default' | 'title_asc' | 'title_desc' | 'score_desc';
 type ContentMode = 'manga' | 'anime';
-type SourceKey = 'all' | 'zonatmo' | 'zonatmoorg' | 'visormanga' | 'manhwaweb' | 'zonaikigai' | 'jkanime' | 'animeytx';
+type SourceKey = 'all' | 'zonatmo' | 'zonatmoorg' | 'manhwaweb' | 'mwonline' | 'animeav1';
 type StatusKey = 'all' | 'ongoing' | 'completed' | 'hiatus' | 'cancelled' | 'unknown';
 type RatingKey = 'all' | 'safe' | 'suggestive' | 'erotica';
 type TagKey = 'all' | 'boyslove';
@@ -79,15 +79,13 @@ const MANGA_SOURCE_OPTIONS: FilterOption[] = [
     { label: 'Todas', value: 'all' },
     { label: 'Luna Atlas', value: 'zonatmo' },
     { label: 'Nova Atlas', value: 'zonatmoorg' },
-    { label: 'Neko Shelf', value: 'visormanga' },
     { label: 'Kumo Verse', value: 'manhwaweb' },
-    { label: 'Yoru Realm', value: 'zonaikigai' },
+    { label: 'Hoshi Comics', value: 'mwonline' },
 ];
 
 const ANIME_SOURCE_OPTIONS: FilterOption[] = [
     { label: 'Todas', value: 'all' },
-    { label: 'Kitsune Stream (Recomendado)', value: 'jkanime' },
-    { label: 'Astra Wave', value: 'animeytx' },
+    { label: 'AnimeAV1', value: 'animeav1' },
 ];
 
 const STATUS_OPTIONS: FilterOption[] = [
@@ -179,7 +177,7 @@ const mapApiComic = (item: any): Comic => {
     const title = normalizeAnimeDisplayTitle(item.title || 'Sin título', item.source);
     const description = item.description || '';
     const sourceKey = String(item.source || '').toLowerCase();
-    const contentType = item.contentType || (sourceKey === 'jkanime' || sourceKey === 'animeytx' ? 'anime' : 'manga');
+    const contentType = item.contentType || (sourceKey === 'animeav1' ? 'anime' : 'manga');
     return {
         slug: item.slug,
         title,
@@ -400,35 +398,12 @@ const buildCardImageSource = (item: Comic) => {
         };
     }
 
-    if (source === 'visormanga') {
-        // ALL visormanga URLs need to go through proxy for hotlink protection
-        // because the CDN requires proper Referer headers
-        const needsProxy = /^https?:\/\/([a-z0-9.-]*)?visormanga\.com/i.test(uri);
-        const proxyUri = needsProxy
-            ? `${backendUrl}/cover-proxy?u=${encodeURIComponent(uri)}`
-            : uri;
-        return {
-            uri: proxyUri,
-        };
-    }
-
     if (source === 'manhwaweb') {
         return {
             uri,
             headers: {
                 Referer: 'https://manhwaweb.com/',
                 Origin: 'https://manhwaweb.com',
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-            },
-        };
-    }
-
-    if (source === 'zonaikigai') {
-        return {
-            uri,
-            headers: {
-                Referer: 'https://zonaikigai.sakanamenu.online/',
-                Origin: 'https://zonaikigai.sakanamenu.online',
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
             },
         };
@@ -531,7 +506,7 @@ const LibraryScreen = ({ navigation }: any) => {
         resolvingCoverKeysRef.current.add(key);
         try {
             const isAnime = String(item?.contentType || '').toLowerCase() === 'anime'
-                || ['jkanime', 'animeytx'].includes(String(item?.source || '').toLowerCase());
+                || String(item?.source || '').toLowerCase() === 'animeav1';
 
             let nextCover = '';
             if (isAnime) {

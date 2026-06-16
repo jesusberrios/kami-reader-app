@@ -1,5 +1,5 @@
 const PROD_BACKEND_URL = 'https://backend-kami-api-production.up.railway.app';
-const LOCAL_BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_LOCAL_URL || 'http://192.168.1.134:3000';
+const LOCAL_BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_LOCAL_URL || 'http://192.168.1.26:3000';
 const FORCED_BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || '';
 
 export const BACKEND_URL = (FORCED_BACKEND_URL || (__DEV__ ? LOCAL_BACKEND_URL : PROD_BACKEND_URL)).trim();
